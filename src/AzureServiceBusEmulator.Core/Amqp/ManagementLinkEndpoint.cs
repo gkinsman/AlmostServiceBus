@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using global::Amqp;
 using global::Amqp.Framing;
 using global::Amqp.Listener;
 using global::Amqp.Types;
 using AzureServiceBusEmulator.Core.Broker;
+using Microsoft.Extensions.Logging;
 
 namespace AzureServiceBusEmulator.Core.Amqp;
 
@@ -13,15 +15,19 @@ public class ManagementLinkEndpoint : IRequestProcessor
 {
     public int Credit => 100;
 
+    private static readonly ILogger Log = AmqpLog.CreateLogger<ManagementLinkEndpoint>();
+
     private readonly NamespaceContext _context;
     private readonly ScheduledMessageProcessor? _scheduledProcessor;
     private readonly QueueEntity? _scopedQueue;
+    private readonly ConcurrentDictionary<string, string>? _senderLinkNames;
 
-    public ManagementLinkEndpoint(NamespaceContext context, ScheduledMessageProcessor? scheduledProcessor = null, QueueEntity? scopedQueue = null)
+    public ManagementLinkEndpoint(NamespaceContext context, ScheduledMessageProcessor? scheduledProcessor = null, QueueEntity? scopedQueue = null, ConcurrentDictionary<string, string>? senderLinkNames = null)
     {
         _context = context;
         _scheduledProcessor = scheduledProcessor;
         _scopedQueue = scopedQueue;
+        _senderLinkNames = senderLinkNames;
     }
 
     public void Process(RequestContext requestContext)
@@ -99,8 +105,38 @@ public class ManagementLinkEndpoint : IRequestProcessor
                         if (messageId is not null)
                             brokered.MessageId = messageId;
 
-                        // Resolve the entity to schedule on
-                        var address = entityName?.TrimStart('/') ?? string.Empty;
+                        // Resolve the entity to schedule on.
+                        // The associated-link-name is typically a GUID sender link name (e.g.,
+                        // "sender-abc123"), NOT the entity path. Attempt to resolve it as an
+                        // entity path first; if that fails, look up the link name in the sender
+                        // link registry, then fall back to the scoped queue on entity-level
+                        // management links.
+                        var candidateAddress = entityName?.TrimStart('/');
+                        string? address = null;
+                        if (!string.IsNullOrEmpty(candidateAddress))
+                        {
+                            var (resolvedQueue, resolvedTopic) = _context.ResolveSendTarget(candidateAddress);
+                            if (resolvedQueue is not null || resolvedTopic is not null)
+                                address = candidateAddress;
+                        }
+
+                        // If not resolved as an entity path, try the sender link name registry.
+                        if (address is null
+                            && !string.IsNullOrEmpty(entityName)
+                            && _senderLinkNames?.TryGetValue(entityName, out var registeredPath) == true)
+                        {
+                            Log.LogDebug("schedule-message: resolved link name '{LinkName}' → entity '{Entity}'", entityName, registeredPath);
+                            address = registeredPath;
+                        }
+
+                        address ??= _scopedQueue?.Name;
+
+                        if (string.IsNullOrEmpty(address))
+                        {
+                            Log.LogWarning("schedule-message: no entity address could be resolved (associated-link-name='{LinkName}', scopedQueue=null). Message dropped.", entityName);
+                            continue;
+                        }
+
                         var seqNo = _scheduledProcessor.Schedule(address, brokered);
                         sequenceNumbers.Add(seqNo);
                     }

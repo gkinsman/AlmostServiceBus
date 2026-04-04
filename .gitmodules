@@ -1,0 +1,9 @@
+[submodule "external/MassTransit"]
+	path = external/MassTransit
+	url = https://github.com/MassTransit/MassTransit.git
+[submodule "external/wolverine"]
+	path = external/wolverine
+	url = https://github.com/JasperFx/wolverine.git
+[submodule "external/NServiceBus.Transport.AzureServiceBus"]
+	path = external/NServiceBus.Transport.AzureServiceBus
+	url = https://github.com/Particular/NServiceBus.Transport.AzureServiceBus.git

@@ -1,0 +1,240 @@
+diff --git a/src/Transports/MassTransit.Azure.ServiceBus.Core/AzureServiceBusTransport/ConnectionContextFactory.cs b/src/Transports/MassTransit.Azure.ServiceBus.Core/AzureServiceBusTransport/ConnectionContextFactory.cs
+index d618e98..0970a37 100644
+--- a/src/Transports/MassTransit.Azure.ServiceBus.Core/AzureServiceBusTransport/ConnectionContextFactory.cs
++++ b/src/Transports/MassTransit.Azure.ServiceBus.Core/AzureServiceBusTransport/ConnectionContextFactory.cs
+@@ -1,9 +1,12 @@
+ namespace MassTransit.AzureServiceBusTransport
+ {
+     using System;
++    using System.Net;
++    using System.Net.Sockets;
+     using System.Threading;
+     using System.Threading.Tasks;
+     using Agents;
++    using Azure.Core.Pipeline;
+     using Azure.Identity;
+     using Azure.Messaging.ServiceBus;
+     using Azure.Messaging.ServiceBus.Administration;
+@@ -45,7 +48,8 @@ async Task<ConnectionContext> CreateSharedConnection(Task<ConnectionContext> con
+ 
+         async Task<ConnectionContext> CreateConnection(ISupervisor supervisor)
+         {
+-            var endpoint = new UriBuilder(_hostConfiguration.HostAddress) { Path = "" }.Uri.Host;
++            var hostUri = new UriBuilder(_hostConfiguration.HostAddress) { Path = "" }.Uri;
++            var endpoint = hostUri.Host;
+ 
+             if (supervisor.Stopping.IsCancellationRequested)
+                 throw new ServiceBusConnectionException($"The connection is stopping and cannot be used: {endpoint}");
+@@ -74,7 +78,8 @@ async Task<ConnectionContext> CreateConnection(ISupervisor supervisor)
+                     MaxRetries = settings.RetryLimit,
+                     Mode = Azure.Core.RetryMode.Exponential,
+                     MaxDelay = settings.RetryMaxBackoff
+-                }
++                },
++                Transport = BuildManagementTransport(hostUri),
+             };
+ 
+             if (settings.TokenCredential != null)
+@@ -118,5 +123,40 @@ static bool HasSharedAccess(string connectionString)
+             return !string.IsNullOrEmpty(connectionStringProperties.SharedAccessKeyName)
+                 && !string.IsNullOrEmpty(connectionStringProperties.SharedAccessKey) || !string.IsNullOrEmpty(connectionStringProperties.SharedAccessSignature);
+         }
++
++        /// <summary>
++        /// When the host URI contains a non-default port (e.g. sb://localhost:5672/ for an
++        /// emulator), the Azure SDK's ServiceBusAdministrationClient strips the port from
++        /// FullyQualifiedNamespace and always connects to HTTPS port 443.  Install a custom
++        /// SocketsHttpHandler that redirects TCP connections to the correct port so that
++        /// management API calls reach the emulator.  TLS certificate validation is bypassed
++        /// so the emulator's self-signed development certificate is always accepted.
++        /// Returns the shared default transport when no custom port is needed.
++        /// </summary>
++        static HttpPipelineTransport BuildManagementTransport(Uri hostUri)
++        {
++            if (hostUri.Port <= 0 || hostUri.IsDefaultPort)
++                return HttpClientTransport.Shared;
++
++            var targetPort = hostUri.Port;
++
++            var handler = new System.Net.Http.SocketsHttpHandler
++            {
++                // Redirect every TCP connection to the emulator port.
++                ConnectCallback = async (ctx, ct) =>
++                {
++                    var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
++                    await socket.ConnectAsync(new IPEndPoint(IPAddress.Loopback, targetPort), ct).ConfigureAwait(false);
++                    return new NetworkStream(socket, ownsSocket: true);
++                },
++                // Accept the emulator's self-signed development certificate without validation.
++                SslOptions = new System.Net.Security.SslClientAuthenticationOptions
++                {
++                    RemoteCertificateValidationCallback = (_, _, _, _) => true,
++                },
++            };
++
++            return new HttpClientTransport(new System.Net.Http.HttpClient(handler));
++        }
+     }
+ }
+diff --git a/src/Transports/MassTransit.Azure.ServiceBus.Core/ServiceBusHostAddress.cs b/src/Transports/MassTransit.Azure.ServiceBus.Core/ServiceBusHostAddress.cs
+index 2584e0d..83451a3 100644
+--- a/src/Transports/MassTransit.Azure.ServiceBus.Core/ServiceBusHostAddress.cs
++++ b/src/Transports/MassTransit.Azure.ServiceBus.Core/ServiceBusHostAddress.cs
+@@ -11,12 +11,14 @@ public readonly struct ServiceBusHostAddress
+         public readonly string Scheme;
+         public readonly string Host;
+         public readonly string Scope;
++        public readonly int Port;
+ 
+         public ServiceBusHostAddress(Uri address)
+         {
+             Scheme = default;
+             Host = default;
+             Scope = default;
++            Port = -1;
+ 
+             var scheme = address.Scheme.ToLowerInvariant();
+             switch (scheme)
+@@ -24,6 +26,7 @@ public ServiceBusHostAddress(Uri address)
+                 case "sb":
+                     Scheme = address.Scheme;
+                     Host = address.Host;
++                    Port = address.IsDefaultPort ? -1 : address.Port;
+ 
+                     ParseLeft(address, out Scheme, out Host, out Scope);
+                     break;
+@@ -52,6 +55,9 @@ public static implicit operator Uri(in ServiceBusHostAddress address)
+                     : $"/{Uri.EscapeDataString(address.Scope)}"
+             };
+ 
++            if (address.Port > 0)
++                builder.Port = address.Port;
++
+             return builder.Uri;
+         }
+ 
+diff --git a/src/Transports/MassTransit.Azure.ServiceBus.Core/Testing/AzureServiceBusTestHarness.cs b/src/Transports/MassTransit.Azure.ServiceBus.Core/Testing/AzureServiceBusTestHarness.cs
+index 9e1a099..12fc333 100644
+--- a/src/Transports/MassTransit.Azure.ServiceBus.Core/Testing/AzureServiceBusTestHarness.cs
++++ b/src/Transports/MassTransit.Azure.ServiceBus.Core/Testing/AzureServiceBusTestHarness.cs
+@@ -3,8 +3,11 @@
+     using System;
+     using System.Collections.Generic;
+     using System.Linq;
++    using System.Net;
++    using System.Net.Sockets;
+     using System.Threading.Tasks;
+     using Azure;
++    using Azure.Core.Pipeline;
+     using Azure.Messaging.ServiceBus.Administration;
+     using Internals;
+ 
+@@ -78,9 +81,50 @@ public override async Task Clean()
+ 
+         ServiceBusAdministrationClient CreateManagementClient()
+         {
+-            var endpoint = new UriBuilder(HostAddress) { Path = "" }.Uri.ToString();
++            // HostAddress is sb://host[:port]/ — preserve the port for the management transport.
++            var hostUri = new UriBuilder(HostAddress) { Path = "" }.Uri;
+ 
+-            return new ServiceBusAdministrationClient(endpoint, NamedKeyCredential);
++            // Install a custom transport that redirects HTTPS calls to the port embedded in
++            // the host URI (rather than the SDK's default of port 443).
++            var options = new ServiceBusAdministrationClientOptions
++            {
++                Transport = BuildManagementTransport(hostUri),
++            };
++
++            var endpoint = hostUri.ToString();
++            return new ServiceBusAdministrationClient(endpoint, NamedKeyCredential, options);
++        }
++
++        /// <summary>
++        /// When hostUri contains a non-default port, returns a transport that redirects
++        /// every TCP connection to that port so management HTTPS calls reach an emulator
++        /// instead of the default port 443.  TLS certificate validation is bypassed so
++        /// the emulator's self-signed development certificate is always accepted.
++        /// </summary>
++        static HttpPipelineTransport BuildManagementTransport(Uri hostUri)
++        {
++            if (hostUri.Port <= 0 || hostUri.IsDefaultPort)
++                return HttpClientTransport.Shared;
++
++            var targetPort = hostUri.Port;
++
++            var handler = new System.Net.Http.SocketsHttpHandler
++            {
++                // Redirect every TCP connection to the emulator port.
++                ConnectCallback = async (ctx, ct) =>
++                {
++                    var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
++                    await socket.ConnectAsync(new IPEndPoint(IPAddress.Loopback, targetPort), ct).ConfigureAwait(false);
++                    return new NetworkStream(socket, ownsSocket: true);
++                },
++                // Accept the emulator's self-signed development certificate without validation.
++                SslOptions = new System.Net.Security.SslClientAuthenticationOptions
++                {
++                    RemoteCertificateValidationCallback = (_, _, _, _) => true,
++                },
++            };
++
++            return new HttpClientTransport(new System.Net.Http.HttpClient(handler));
+         }
+ 
+         protected override async Task<IBusControl> CreateBus()
+diff --git a/tests/MassTransit.Azure.ServiceBus.Core.Tests/AzureServiceBusEndpointUriCreator.cs b/tests/MassTransit.Azure.ServiceBus.Core.Tests/AzureServiceBusEndpointUriCreator.cs
+index cef4cd3..2484d62 100644
+--- a/tests/MassTransit.Azure.ServiceBus.Core.Tests/AzureServiceBusEndpointUriCreator.cs
++++ b/tests/MassTransit.Azure.ServiceBus.Core.Tests/AzureServiceBusEndpointUriCreator.cs
+@@ -7,6 +7,15 @@ public static class AzureServiceBusEndpointUriCreator
+     {
+         public static Uri Create(string serviceBusNamespace, string entityPath = null, string azureEndPoint = "servicebus.windows.net")
+         {
++            // Allow overriding the entire sb:// endpoint via environment variable for emulator use.
++            var emulatorEndpoint = Environment.GetEnvironmentVariable("MT_ASB_ENDPOINT");
++            if (emulatorEndpoint != null)
++            {
++                var baseUri = emulatorEndpoint.TrimEnd('/');
++                var fullUri = entityPath != null ? $"{baseUri}/{entityPath}" : $"{baseUri}/";
++                return new Uri(fullUri);
++            }
++
+             var endpoint = $"sb://{serviceBusNamespace}.{azureEndPoint}/{entityPath}";
+ 
+             return new Uri(endpoint);
+diff --git a/tests/MassTransit.Azure.ServiceBus.Core.Tests/Configuration.cs b/tests/MassTransit.Azure.ServiceBus.Core.Tests/Configuration.cs
+index cc0d52e..0e5d7f6 100644
+--- a/tests/MassTransit.Azure.ServiceBus.Core.Tests/Configuration.cs
++++ b/tests/MassTransit.Azure.ServiceBus.Core.Tests/Configuration.cs
+@@ -37,6 +37,11 @@ static class Configuration
+ 
+         public static ServiceBusAdministrationClient GetManagementClient()
+         {
++            // When an emulator endpoint is configured, build the management client from
++            // a connection string so that the correct host and port are used.
++            if (EmulatorEndpoint != null)
++                return new ServiceBusAdministrationClient(CreateConnectionString(ServiceNamespace, KeyName, SharedAccessKey));
++
+             var hostAddress = AzureServiceBusEndpointUriCreator.Create(ServiceNamespace);
+             var accountSettings = new TestAzureServiceBusAccountSettings();
+ 
+@@ -56,9 +61,18 @@ public static ServiceBusAdministrationClient GetManagementClient()
+ 
+         public static string CreateConnectionString(string? ns, string? keyName, string? key)
+         {
+-            return $"Endpoint=sb://{ns}.servicebus.windows.net/;SharedAccessKeyName={keyName};SharedAccessKey={key}";
++            var endpoint = EmulatorEndpoint ?? $"sb://{ns}.servicebus.windows.net/";
++            return $"Endpoint={endpoint};SharedAccessKeyName={keyName};SharedAccessKey={key}";
+         }
+ 
++        /// <summary>
++        /// Optional custom sb:// endpoint for emulator testing, e.g. "sb://localhost:5672".
++        /// When set, connection strings and URI creation use this endpoint instead of
++        /// the default {namespace}.servicebus.windows.net pattern.
++        /// </summary>
++        public static string? EmulatorEndpoint =>
++            Environment.GetEnvironmentVariable("MT_ASB_ENDPOINT");
++
+         public static void UsingTestAzureServiceBus(this IBusRegistrationConfigurator configurator,
+             Action<IBusRegistrationContext, IServiceBusBusFactoryConfigurator>? configure = null, bool configureEndpoints = true)
+         {

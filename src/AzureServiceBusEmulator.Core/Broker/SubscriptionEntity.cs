@@ -41,16 +41,34 @@ public sealed class SubscriptionEntity
     public QueueEntity? ResolvedForwardToQueue { get; set; }
 
     // --- Configuration ---
+    // These properties forward to the underlying Queue so that the
+    // AMQP layer (which works directly with QueueEntity) picks them up.
 
-    public int MaxDeliveryCount { get; set; } = 10;
+    public int MaxDeliveryCount
+    {
+        get => Queue.MaxDeliveryCount;
+        set => Queue.MaxDeliveryCount = value;
+    }
 
-    public TimeSpan LockDuration { get; set; } = TimeSpan.FromSeconds(30);
+    public TimeSpan LockDuration
+    {
+        get => Queue.LockDuration;
+        set => Queue.LockDuration = value;
+    }
 
-    public bool DeadLetteringOnMessageExpiration { get; set; }
+    public bool DeadLetteringOnMessageExpiration
+    {
+        get => Queue.DeadLetteringOnMessageExpiration;
+        set => Queue.DeadLetteringOnMessageExpiration = value;
+    }
 
     public bool EnableBatchedOperations { get; set; }
 
-    public bool RequiresSession { get; set; }
+    public bool RequiresSession
+    {
+        get => Queue.RequiresSession;
+        set => Queue.RequiresSession = value;
+    }
 
     public TimeSpan DefaultMessageTimeToLive { get; set; } = TimeSpan.MaxValue;
 

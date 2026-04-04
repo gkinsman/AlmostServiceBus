@@ -164,4 +164,49 @@ public class AtomXmlReaderTests
 
         Assert.Equal(TimeSpan.MaxValue, props.DefaultMessageTimeToLive);
     }
+
+    [Fact]
+    public void ReadSubscriptionProperties_WithDefaultRuleDescription_ParsesRule()
+    {
+        // Simulate the XML the Azure SDK sends when calling
+        // CreateSubscriptionAsync(options, CreateRuleOptions) — it embeds the rule under
+        // <DefaultRuleDescription> inside the <SubscriptionDescription>.
+        var xml = """
+            <entry xmlns="http://www.w3.org/2005/Atom">
+              <content type="application/xml">
+                <SubscriptionDescription xmlns="http://schemas.microsoft.com/netservices/2010/10/servicebus/connect"
+                                         xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+                  <LockDuration>PT30S</LockDuration>
+                  <RequiresSession>false</RequiresSession>
+                  <DefaultMessageTimeToLive>P10675199DT2H48M5.4775807S</DefaultMessageTimeToLive>
+                  <MaxDeliveryCount>10</MaxDeliveryCount>
+                  <DefaultRuleDescription>
+                    <Name>my-guid-rule</Name>
+                    <Filter i:type="SqlFilter">
+                      <SqlExpression>ClientId = 27</SqlExpression>
+                    </Filter>
+                  </DefaultRuleDescription>
+                </SubscriptionDescription>
+              </content>
+            </entry>
+            """;
+
+        var props = AtomXmlReader.ReadSubscriptionProperties(xml);
+
+        Assert.NotNull(props.DefaultRule);
+        Assert.Equal("my-guid-rule", props.DefaultRule!.Name);
+        Assert.Equal(FilterType.SqlFilter, props.DefaultRule.FilterType);
+        Assert.Equal("ClientId = 27", props.DefaultRule.SqlExpression);
+    }
+
+    [Fact]
+    public void ReadSubscriptionProperties_WithoutDefaultRuleDescription_DefaultRuleIsNull()
+    {
+        var sub = new AzureServiceBusEmulator.Core.Broker.SubscriptionEntity("sub1", "topic1");
+        var xml = AtomXmlWriter.WriteSubscriptionEntry(sub);
+
+        var props = AtomXmlReader.ReadSubscriptionProperties(xml);
+
+        Assert.Null(props.DefaultRule);
+    }
 }

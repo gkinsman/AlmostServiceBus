@@ -80,11 +80,14 @@ public class ReceiverLinkEndpoint : LinkEndpoint
                     var amqpMessage = ConvertToAmqpMessage(brokered);
                     link.SendMessage(amqpMessage);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Send failed — link is dead, stop the pump.
-                    // Don't re-enqueue: the message is already tracked as pending
-                    // and re-enqueueing would create duplicates (R-DUPE).
+                    // Send failed — link is closing/draining.
+                    // Abandon the message so it re-enters the queue for the next consumer.
+                    // (Using Abandon removes it from _pending AND re-enqueues, avoiding duplicates.)
+                    Log.LogDebug(ex, "PUMP SendMessage failed for '{Queue}', abandoning message {MessageId}", _queue.Name, brokered.MessageId);
+                    if (brokered.LockToken is not null)
+                        _queue.Abandon(brokered.LockToken);
                     break;
                 }
             }
@@ -215,6 +218,9 @@ public class ReceiverLinkEndpoint : LinkEndpoint
                     : DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(5)).UtcDateTime
             }
         };
+
+        if (brokered.PartitionKey is not null)
+            message.MessageAnnotations[new Symbol("x-opt-partition-key")] = brokered.PartitionKey;
 
         if (brokered.ApplicationProperties.Count > 0
             || brokered.DeadLetterReason is not null

@@ -490,6 +490,30 @@ public static class ManagementApiEndpoints
                 entity.ForwardTo = props.ForwardTo;
                 entity.ResolvedForwardToQueue = ns.GetQueue(props.ForwardTo);
             }
+
+            // If the request embeds a DefaultRuleDescription, replace the $Default rule
+            // with the specified rule.  This is how the Azure SDK implements
+            // CreateSubscriptionAsync(options, CreateRuleOptions) — it sends a single PUT
+            // with the desired rule inlined rather than making separate DELETE + PUT calls.
+            if (props.DefaultRule is not null)
+            {
+                entity.RemoveRule("$Default");
+                var rule = new RuleEntity
+                {
+                    Name = props.DefaultRule.Name,
+                    FilterType = props.DefaultRule.FilterType,
+                    SqlExpression = props.DefaultRule.SqlExpression,
+                    CorrelationId = props.DefaultRule.CorrelationId,
+                    Subject = props.DefaultRule.Subject,
+                    To = props.DefaultRule.To,
+                    ReplyTo = props.DefaultRule.ReplyTo,
+                    SessionId = props.DefaultRule.SessionId,
+                    ContentType = props.DefaultRule.ContentType,
+                    CorrelationFilterProperties = props.DefaultRule.CorrelationFilterProperties,
+                    ActionExpression = props.DefaultRule.ActionExpression,
+                };
+                entity.AddOrUpdateRule(rule);
+            }
         }
         catch
         {

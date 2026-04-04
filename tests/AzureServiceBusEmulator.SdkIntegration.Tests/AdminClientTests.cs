@@ -113,4 +113,49 @@ public class AdminClientTests : IAsyncLifetime
 
         Assert.Equal(5, updated.Value.MaxDeliveryCount);
     }
+
+    [Fact]
+    public async Task CreateSubscription_WithDefaultRule_ReplacesDefaultTrueFilter()
+    {
+        // This exercises the Azure SDK overload that embeds DefaultRuleDescription in the
+        // subscription XML (CreateSubscriptionAsync(options, CreateRuleOptions)).
+        await _adminClient.CreateTopicAsync("default-rule-topic");
+
+        var ruleOptions = new CreateRuleOptions(Guid.NewGuid().ToString())
+        {
+            Filter = new SqlRuleFilter("ClientId = 27")
+        };
+        await _adminClient.CreateSubscriptionAsync(
+            new CreateSubscriptionOptions("default-rule-topic", "default-rule-sub"),
+            ruleOptions);
+
+        var rules = await _adminClient.GetRulesAsync("default-rule-topic", "default-rule-sub")
+            .ToListAsync();
+
+        Assert.Single(rules);
+        var filter = Assert.IsType<SqlRuleFilter>(rules[0].Filter);
+        Assert.Equal("ClientId = 27", filter.SqlExpression);
+    }
+
+    [Fact]
+    public async Task UpdateRule_SqlFilter_PersistsNewExpression()
+    {
+        // Verifies that PUT rule correctly updates an existing rule's filter expression.
+        await _adminClient.CreateTopicAsync("update-rule-topic");
+        await _adminClient.CreateSubscriptionAsync("update-rule-topic", "update-rule-sub");
+
+        var rules = await _adminClient.GetRulesAsync("update-rule-topic", "update-rule-sub")
+            .ToListAsync();
+        Assert.Single(rules);
+
+        var existingRule = rules[0];
+        existingRule.Filter = new SqlRuleFilter("0 = 1");
+        await _adminClient.UpdateRuleAsync("update-rule-topic", "update-rule-sub", existingRule);
+
+        var updatedRules = await _adminClient.GetRulesAsync("update-rule-topic", "update-rule-sub")
+            .ToListAsync();
+        Assert.Single(updatedRules);
+        var updatedFilter = Assert.IsType<SqlRuleFilter>(updatedRules[0].Filter);
+        Assert.Equal("0 = 1", updatedFilter.SqlExpression);
+    }
 }

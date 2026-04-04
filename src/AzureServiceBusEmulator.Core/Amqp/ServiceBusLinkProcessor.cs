@@ -3,6 +3,7 @@ using global::Amqp.Framing;
 using global::Amqp.Listener;
 using global::Amqp.Types;
 using AzureServiceBusEmulator.Core.Broker;
+using BrokerSessionState = AzureServiceBusEmulator.Core.Broker.SessionState;
 
 namespace AzureServiceBusEmulator.Core.Amqp;
 
@@ -86,16 +87,51 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         }
         else
         {
-            // Check for session filter on receiver link
+            // Check for session filter on receiver link.
+            // The Azure SDK sends a com.microsoft:session-filter entry in the filter-set for
+            // both AcceptSessionAsync (value = specific session ID) and AcceptNextSessionAsync
+            // (value = null or empty string, meaning "accept any available session").
+            // AMQPNetLite may deserialize the AMQP null value as either C# null or empty string.
+            var sessionFilterKey = new Symbol("com.microsoft:session-filter");
+            string? requestedSessionId = null;
+            bool hasSessionFilter = false;
+
             if (attachContext.Attach.Source is Source src && src.FilterSet is Map filterMap)
             {
-                var sessionFilterKey = new Symbol("com.microsoft:session-filter");
                 if (filterMap.ContainsKey(sessionFilterKey))
                 {
-                    var requestedSessionId = filterMap[sessionFilterKey] as string;
-                    HandleSessionReceiver(attachContext, context, address, requestedSessionId);
-                    return;
+                    var raw = filterMap[sessionFilterKey];
+                    hasSessionFilter = true;
+                    // Null or empty string both mean "accept next available session".
+                    requestedSessionId = raw switch
+                    {
+                        string s when string.IsNullOrEmpty(s) => null,
+                        string s => s,
+                        DescribedValue dv when string.IsNullOrEmpty(dv.Value as string) => null,
+                        DescribedValue dv => dv.Value as string,
+                        _ => null,
+                    };
                 }
+                else
+                {
+                    // Also check if any filter value is a DescribedValue whose descriptor
+                    // matches the session filter symbol (some serializers wrap the entry).
+                    foreach (var kvp in filterMap)
+                    {
+                        if (kvp.Value is DescribedValue dv && dv.Descriptor is Symbol sym && (string)sym == "com.microsoft:session-filter")
+                        {
+                            hasSessionFilter = true;
+                            requestedSessionId = string.IsNullOrEmpty(dv.Value as string) ? null : dv.Value as string;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (hasSessionFilter)
+            {
+                HandleSessionReceiver(attachContext, context, address, requestedSessionId);
+                return;
             }
 
             // Client is receiving messages from us -- resolve queue
@@ -132,19 +168,56 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         var receiverId = attachContext.Link.Name ?? Guid.NewGuid().ToString();
         var session = queue.Sessions.TryAcceptSession(requestedSessionId, receiverId);
 
-        if (session is null)
+        if (session is not null)
         {
+            CompleteSessionAttach(attachContext, queue, session);
+            return;
+        }
+
+        // No session available yet.  Emulate the real Azure Service Bus behavior: hold the
+        // AMQP link attach pending and poll until a session becomes available or 65 seconds
+        // elapse (at which point a timeout error is sent back to the client).
+        // This allows ServiceBusSessionProcessor's concurrent "session pump" tasks to stay
+        // alive and pick up sessions as soon as messages arrive.
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(65));
+
+        // Cancel if the client disconnects while we are waiting
+        attachContext.Link.Closed += (_, _) => cts.Cancel();
+
+        Task.Run(async () =>
+        {
+            try
+            {
+                while (!cts.IsCancellationRequested)
+                {
+                    await Task.Delay(100, cts.Token);
+
+                    var accepted = queue.Sessions.TryAcceptSession(requestedSessionId, receiverId);
+                    if (accepted is not null)
+                    {
+                        CompleteSessionAttach(attachContext, queue, accepted);
+                        return;
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+
+            // Timeout (or client disconnected) — reject with the standard timeout error
             attachContext.Complete(new Error(new Symbol("com.microsoft:timeout"))
             {
                 Description = requestedSessionId is not null
                     ? $"Session '{requestedSessionId}' is not available."
                     : "No sessions are available."
             });
-            return;
-        }
+        });
+    }
 
-        // Set the accepted session ID in the attach properties so the SDK knows which session was locked
-        attachContext.Attach.Properties ??= new Fields();
+    private static void CompleteSessionAttach(AttachContext attachContext, QueueEntity queue, BrokerSessionState session)
+    {
+        // Create a fresh Properties map — do NOT inherit the client's Attach properties
+        // (e.g. com.microsoft:timeout), which would confuse the SDK into thinking the
+        // response is a timeout notification rather than a successful session accept.
+        attachContext.Attach.Properties = new Fields();
         attachContext.Attach.Properties[new Symbol("com.microsoft:locked-until-utc")] = session.LockedUntil.UtcDateTime;
         attachContext.Attach.Properties[new Symbol("com.microsoft:session-id")] = session.SessionId;
 

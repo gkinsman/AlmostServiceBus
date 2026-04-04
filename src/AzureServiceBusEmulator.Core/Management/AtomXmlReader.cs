@@ -37,7 +37,8 @@ public record SubscriptionProperties(
     int MaxDeliveryCount,
     bool EnableBatchedOperations,
     string? ForwardTo,
-    string? UserMetadata);
+    string? UserMetadata,
+    RuleProperties? DefaultRule = null);
 
 public record RuleProperties(
     string Name,
@@ -99,6 +100,15 @@ public static class AtomXmlReader
     public static SubscriptionProperties ReadSubscriptionProperties(string xml)
     {
         var desc = ParseDescription(xml, Sb + "SubscriptionDescription");
+
+        RuleProperties? defaultRule = null;
+        var defaultRuleEl = desc.Element(Sb + "DefaultRuleDescription");
+        if (defaultRuleEl is not null)
+        {
+            var ruleName = ParseOptionalString(defaultRuleEl, "Name") ?? "$Default";
+            defaultRule = ParseRuleFromElement(ruleName, defaultRuleEl);
+        }
+
         return new SubscriptionProperties(
             LockDuration: ParseOptionalTimeSpan(desc, "LockDuration") ?? TimeSpan.FromSeconds(30),
             RequiresSession: ParseOptionalBool(desc, "RequiresSession") ?? false,
@@ -107,18 +117,24 @@ public static class AtomXmlReader
             MaxDeliveryCount: ParseOptionalInt(desc, "MaxDeliveryCount") ?? 10,
             EnableBatchedOperations: ParseOptionalBool(desc, "EnableBatchedOperations") ?? true,
             ForwardTo: NormalizeForwardTo(ParseOptionalString(desc, "ForwardTo")),
-            UserMetadata: ParseOptionalString(desc, "UserMetadata"));
+            UserMetadata: ParseOptionalString(desc, "UserMetadata"),
+            DefaultRule: defaultRule);
     }
 
     public static RuleProperties ReadRuleProperties(string xml)
     {
         var desc = ParseDescription(xml, Sb + "RuleDescription");
+        var name = ParseString(desc, "Name");
+        return ParseRuleFromElement(name, desc);
+    }
 
-        var filterEl = desc.Element(Sb + "Filter")
-            ?? throw new InvalidOperationException("Missing <Filter> element.");
+    private static RuleProperties ParseRuleFromElement(string name, XElement ruleEl)
+    {
+        var filterEl = ruleEl.Element(Sb + "Filter");
+        if (filterEl is null)
+            return new RuleProperties(name, FilterType.TrueFilter, null, null, null);
 
-        var xsiType = filterEl.Attribute(Xsi + "type")?.Value
-            ?? throw new InvalidOperationException("Missing xsi:type on <Filter>.");
+        var xsiType = filterEl.Attribute(Xsi + "type")?.Value ?? "TrueFilter";
 
         FilterType filterType = xsiType switch
         {
@@ -165,7 +181,7 @@ public static class AtomXmlReader
             }
         }
 
-        var actionEl = desc.Element(Sb + "Action");
+        var actionEl = ruleEl.Element(Sb + "Action");
         string? actionExpression = null;
         if (actionEl is not null)
         {
@@ -173,8 +189,6 @@ public static class AtomXmlReader
             if (actionType == "SqlRuleAction")
                 actionExpression = ParseOptionalString(actionEl, "SqlExpression");
         }
-
-        var name = ParseString(desc, "Name");
 
         return new RuleProperties(name, filterType, sqlExpression, correlationId, actionExpression,
             subject, to, replyTo, sessionId, contentType, correlationFilterProperties);
