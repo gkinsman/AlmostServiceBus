@@ -175,14 +175,15 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         }
 
         // No session available yet.  Emulate the real Azure Service Bus behavior: hold the
-        // AMQP link attach pending and poll until a session becomes available or 65 seconds
+        // AMQP link attach pending and poll until a session becomes available or 60 seconds
         // elapse (at which point a timeout error is sent back to the client).
         // This allows ServiceBusSessionProcessor's concurrent "session pump" tasks to stay
         // alive and pick up sessions as soon as messages arrive.
-        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(65));
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var clientDisconnected = false;
 
         // Cancel if the client disconnects while we are waiting
-        attachContext.Link.Closed += (_, _) => cts.Cancel();
+        attachContext.Link.Closed += (_, _) => { clientDisconnected = true; cts.Cancel(); };
 
         Task.Run(async () =>
         {
@@ -202,22 +203,40 @@ public class ServiceBusLinkProcessor : ILinkProcessor
             }
             catch (OperationCanceledException) { }
 
-            // Timeout (or client disconnected) — reject with the standard timeout error
-            attachContext.Complete(new Error(new Symbol("com.microsoft:timeout"))
+            // Client disconnected — nothing to do
+            if (clientDisconnected)
+                return;
+
+            // Timeout — reject with the standard timeout error so the SDK retries
+            try
             {
-                Description = requestedSessionId is not null
-                    ? $"Session '{requestedSessionId}' is not available."
-                    : "No sessions are available."
-            });
+                attachContext.Complete(new Error(new Symbol("com.microsoft:timeout"))
+                {
+                    Description = requestedSessionId is not null
+                        ? $"Session '{requestedSessionId}' is not available."
+                        : "No sessions are available."
+                });
+            }
+            catch { /* link may have closed concurrently */ }
         });
     }
 
     private static void CompleteSessionAttach(AttachContext attachContext, QueueEntity queue, BrokerSessionState session)
     {
-        // Create a fresh Properties map — do NOT inherit the client's Attach properties
-        // (e.g. com.microsoft:timeout), which would confuse the SDK into thinking the
-        // response is a timeout notification rather than a successful session accept.
-        attachContext.Attach.Properties = new Fields();
+        // The Microsoft.Azure.Amqp library reads the accepted session ID back from the
+        // server's Attach response by looking at Source.FilterSet["com.microsoft:session-filter"].
+        // If this value is null, the SDK throws "AmqpFieldSessionId" → GeneralError.
+        // We must echo the accepted session ID in the Source filter so the SDK knows which
+        // session was granted.
+        var sessionFilterKey = new Symbol("com.microsoft:session-filter");
+        if (attachContext.Attach.Source is Source src)
+        {
+            src.FilterSet ??= new Map();
+            src.FilterSet[sessionFilterKey] = session.SessionId;
+        }
+
+        // Also publish locked-until-utc and session-id in Properties for completeness.
+        attachContext.Attach.Properties ??= new Fields();
         attachContext.Attach.Properties[new Symbol("com.microsoft:locked-until-utc")] = session.LockedUntil.UtcDateTime;
         attachContext.Attach.Properties[new Symbol("com.microsoft:session-id")] = session.SessionId;
 
