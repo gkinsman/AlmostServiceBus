@@ -63,14 +63,17 @@ public class ReceiverLinkEndpoint : LinkEndpoint
                 // sends Flow frames (including after completing messages).
                 if (GetLinkCredit(link) <= 0)
                 {
-                    await Task.Delay(10, ct);
+                    await Task.Delay(1, ct);
                     continue;
                 }
 
                 var brokered = _queue.TryDequeueImmediate();
                 if (brokered is null)
                 {
-                    await Task.Delay(10, ct);
+                    // Block until a message is enqueued rather than busy-polling.
+                    // WaitToReadAsync wakes up immediately when Enqueue() or Abandon()
+                    // writes to the channel, so re-delivery after an abandon is instant.
+                    await _queue.WaitToReadAsync(ct);
                     continue;
                 }
 

@@ -54,13 +54,14 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
                 // Check AMQPNetLite's internal credit before dequeuing
                 if (ReceiverLinkEndpoint.GetLinkCreditStatic(link) <= 0)
                 {
-                    await Task.Delay(10, ct);
+                    await Task.Delay(1, ct);
                     continue;
                 }
 
                 if (!_session.Messages.Reader.TryRead(out var brokered))
                 {
-                    await Task.Delay(10, ct);
+                    // Block until a session message is available rather than busy-polling.
+                    await _session.Messages.Reader.WaitToReadAsync(ct);
                     continue;
                 }
 

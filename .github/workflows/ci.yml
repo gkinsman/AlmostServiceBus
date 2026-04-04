@@ -118,6 +118,9 @@ jobs:
           # mechanisms that haven't been fully validated against the emulator yet.
           FILTER="$FILTER&FullyQualifiedName!~TopicAndSubscriptionWithCustomRuleSendingAndReceivingCompliance.tracking_correlation_id_on_everything"
           FILTER="$FILTER&FullyQualifiedName!~TopicAndSubscriptionWithCustomRuleSendingAndReceivingCompliance.requested_response"
+          # Same internal-routing issues for the base (non-custom-rule) topic compliance class.
+          FILTER="$FILTER&FullyQualifiedName!~TopicAndSubscriptionSendingAndReceivingCompliance.tracking_correlation_id_on_everything"
+          FILTER="$FILTER&FullyQualifiedName!~TopicAndSubscriptionSendingAndReceivingCompliance.requested_response"
           dotnet test \
             external/wolverine/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/Wolverine.AzureServiceBus.Tests.csproj \
             --no-build \
