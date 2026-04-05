@@ -175,11 +175,11 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         }
 
         // No session available yet.  Emulate the real Azure Service Bus behavior: hold the
-        // AMQP link attach pending and poll until a session becomes available or 60 seconds
+        // AMQP link attach pending and poll until a session becomes available or 65 seconds
         // elapse (at which point a timeout error is sent back to the client).
         // This allows ServiceBusSessionProcessor's concurrent "session pump" tasks to stay
         // alive and pick up sessions as soon as messages arrive.
-        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(65));
         var clientDisconnected = false;
 
         // Cancel if the client disconnects while we are waiting
@@ -235,8 +235,10 @@ public class ServiceBusLinkProcessor : ILinkProcessor
             src.FilterSet[sessionFilterKey] = session.SessionId;
         }
 
-        // Also publish locked-until-utc and session-id in Properties for completeness.
-        attachContext.Attach.Properties ??= new Fields();
+        // Create a fresh Properties map — do NOT inherit the client's Attach properties
+        // (e.g. com.microsoft:timeout), which would confuse the SDK into thinking the
+        // response is a timeout notification rather than a successful session accept.
+        attachContext.Attach.Properties = new Fields();
         attachContext.Attach.Properties[new Symbol("com.microsoft:locked-until-utc")] = session.LockedUntil.UtcDateTime;
         attachContext.Attach.Properties[new Symbol("com.microsoft:session-id")] = session.SessionId;
 
