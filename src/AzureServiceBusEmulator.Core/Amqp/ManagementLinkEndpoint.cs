@@ -67,16 +67,14 @@ public class ManagementLinkEndpoint : IRequestProcessor
                     break;
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] ManagementLinkEndpoint.Process EXCEPTION op='{operation}': {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}\n");
             // Swallow exceptions — the request context may already be completed/disposed
         }
     }
 
     private void HandleScheduleMessage(RequestContext requestContext)
     {
-        System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] HandleScheduleMessage: CALLED, scheduledProcessor={_scheduledProcessor is not null}, scopedQueue={_scopedQueue?.Name}\n");
         var sequenceNumbers = new List<long>();
 
         if (_scheduledProcessor is not null && requestContext.Message.Body is Map scheduleBody)
@@ -98,7 +96,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
 
                     // Extract the message-id
                     string? messageId = null;
-                    if (msgMap.TryGetValue(new Symbol("message-id"), out var mid))
+                    if (TryGetMapValue(msgMap, "message-id", out var mid))
                         messageId = mid?.ToString();
 
                     if (innerMessage is not null)
@@ -169,9 +167,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 CorrelationId = requestContext.Message.Properties?.MessageId
             }
         };
-        System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] HandleScheduleMessage: BEFORE Complete, seqNos=[{string.Join(",", sequenceNumbers)}], MessageId='{requestContext.Message.Properties?.MessageId}', CorrelationId='{requestContext.Message.Properties?.CorrelationId}'\n");
         requestContext.Complete(response);
-        System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] HandleScheduleMessage: AFTER Complete - success, response.CorrelationId='{response.Properties?.CorrelationId}'\n");
     }
 
     private void HandleRenewLock(RequestContext requestContext)
@@ -241,7 +237,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
     {
         if (_scheduledProcessor is not null && requestContext.Message.Body is Map body)
         {
-            if (body.TryGetValue(new Symbol("sequence-numbers"), out var seqNumbers) && seqNumbers is long[] numbers)
+            if (TryGetMapValue(body, "sequence-numbers", out var seqNumbers) && seqNumbers is long[] numbers)
             {
                 foreach (var seqNo in numbers)
                 {
