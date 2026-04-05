@@ -67,21 +67,23 @@ public class ManagementLinkEndpoint : IRequestProcessor
                     break;
             }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] ManagementLinkEndpoint.Process EXCEPTION op='{operation}': {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}\n");
             // Swallow exceptions — the request context may already be completed/disposed
         }
     }
 
     private void HandleScheduleMessage(RequestContext requestContext)
     {
+        System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] HandleScheduleMessage: CALLED, scheduledProcessor={_scheduledProcessor is not null}, scopedQueue={_scopedQueue?.Name}\n");
         var sequenceNumbers = new List<long>();
 
         if (_scheduledProcessor is not null && requestContext.Message.Body is Map scheduleBody)
         {
             var entityName = requestContext.Message.ApplicationProperties?["associated-link-name"]?.ToString();
 
-            if (scheduleBody.TryGetValue(new Symbol("messages"), out var messagesObj) && messagesObj is List messagesList)
+            if (TryGetMapValue(scheduleBody, "messages", out var messagesObj) && messagesObj is List messagesList)
             {
                 foreach (var item in messagesList)
                 {
@@ -89,7 +91,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
 
                     // Extract the inner AMQP message
                     Message? innerMessage = null;
-                    if (msgMap.TryGetValue(new Symbol("message"), out var msgBytes) && msgBytes is byte[] rawMessage)
+                    if (TryGetMapValue(msgMap, "message", out var msgBytes) && msgBytes is byte[] rawMessage)
                     {
                         innerMessage = Message.Decode(new ByteBuffer(rawMessage, 0, rawMessage.Length, rawMessage.Length));
                     }
@@ -144,10 +146,16 @@ public class ManagementLinkEndpoint : IRequestProcessor
             }
         }
 
-        // Return the sequence numbers as the response
+        // Return the sequence numbers as the response.
+        // IMPORTANT: AMQPNetLite's WriteArray has a bug where encoding an empty long[] produces
+        // malformed bytes (size=1 with no data). The Azure SDK's parser then throws amqp:decode-error.
+        // Avoid by encoding as Amqp.Types.List when empty; non-empty long[] encodes correctly.
+        object seqNumbersValue = sequenceNumbers.Count > 0
+            ? (object)sequenceNumbers.ToArray()
+            : new List();
         var responseBody = new Map
         {
-            { "sequence-numbers", sequenceNumbers.ToArray() }
+            { "sequence-numbers", seqNumbersValue }
         };
         var response = new Message(responseBody)
         {
@@ -161,7 +169,9 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 CorrelationId = requestContext.Message.Properties?.MessageId
             }
         };
+        System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] HandleScheduleMessage: BEFORE Complete, seqNos=[{string.Join(",", sequenceNumbers)}], MessageId='{requestContext.Message.Properties?.MessageId}', CorrelationId='{requestContext.Message.Properties?.CorrelationId}'\n");
         requestContext.Complete(response);
+        System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] HandleScheduleMessage: AFTER Complete - success, response.CorrelationId='{response.Properties?.CorrelationId}'\n");
     }
 
     private void HandleRenewLock(RequestContext requestContext)

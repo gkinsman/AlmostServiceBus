@@ -181,6 +181,8 @@ public class EmulatorContainer : IContainer
 
             if (entry != null)
             {
+                System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] AttachLink: FIRST BLOCK match, attach.Role={attach.Role}, link.Role={listenerLink.Role}, address='{address}', Source.Address='{(attach.Source as Source)?.Address}', Target.Address='{(attach.Target as Target)?.Address}'\n");
+                Console.Error.WriteLine($"[DIAG] AttachLink: FIRST BLOCK match, attach.Role={attach.Role}, link.Role={listenerLink.Role}, address='{address}', Source.Address='{(attach.Source as Source)?.Address}', Target.Address='{(attach.Target as Target)?.Address}'");
                 AttachRequestProcessorLink(entry, listenerLink, address, attach);
                 return true;
             }
@@ -216,6 +218,8 @@ public class EmulatorContainer : IContainer
 
             if (entry != null)
             {
+                System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] AttachLink: SECOND BLOCK match, attach.Role={attach.Role}, link.Role={listenerLink.Role}, sourceAddress='{sourceAddress}', Source.Address='{(attach.Source as Source)?.Address}', Target.Address='{(attach.Target as Target)?.Address}'\n");
+                Console.Error.WriteLine($"[DIAG] AttachLink: SECOND BLOCK match, attach.Role={attach.Role}, link.Role={listenerLink.Role}, sourceAddress='{sourceAddress}', Source.Address='{(attach.Source as Source)?.Address}', Target.Address='{(attach.Target as Target)?.Address}'");
                 AttachRequestProcessorLink(entry, listenerLink, sourceAddress, attach);
                 return true;
             }
@@ -287,6 +291,7 @@ public class EmulatorContainer : IContainer
             {
                 Log.LogWarning("Response link for '{Address}' has no Target — cannot extract reply-to. Target type: {TargetType}",
                     address, attach.Target?.GetType().FullName ?? "null");
+                System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] AttachRequestProcessorLink: NO TARGET for address='{address}', target={attach.Target?.GetType().FullName ?? "null"}\n");
                 link.CompleteAttach(attach, new Error(new Symbol("amqp:internal-error"))
                 {
                     Description = $"Response link for '{address}' has no Target."
@@ -294,6 +299,7 @@ public class EmulatorContainer : IContainer
                 return;
             }
             var replyTo = target.Address;
+            System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] AttachRequestProcessorLink: RESPONSE LINK address='{address}', replyTo='{replyTo}', target.Address='{target.Address}'\n");
 
             lock (entry.ResponseLinks)
             {
@@ -312,6 +318,7 @@ public class EmulatorContainer : IContainer
                 if (sender is ListenerLink closedLink)
                 {
                     var tuple = (Tuple<RequestProcessorEntry, string>)closedLink.State;
+                    System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] ResponseLink CLOSED: replyTo='{tuple.Item2}', error={error}\n");
                     lock (tuple.Item1.ResponseLinks)
                     {
                         tuple.Item1.ResponseLinks.Remove(tuple.Item2);
@@ -341,6 +348,7 @@ public class EmulatorContainer : IContainer
                 if (sender is ListenerLink closedLink)
                 {
                     var rp = (RequestProcessorEntry)closedLink.State;
+                    System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] RequestLink CLOSED: error={error}\n");
                     lock (rp.RequestLinks)
                     {
                         rp.RequestLinks.Remove(closedLink);
@@ -371,6 +379,8 @@ public class EmulatorContainer : IContainer
             lock (entry.ResponseLinks)
             {
                 entry.ResponseLinks.TryGetValue(message.Properties.ReplyTo, out responseLink);
+                Console.Error.WriteLine($"[DIAG] DispatchRequest: ReplyTo='{message.Properties.ReplyTo}', MessageId='{message.Properties.MessageId}', operation='{message.ApplicationProperties?["operation"]}', Keys=[{string.Join(", ", entry.ResponseLinks.Keys.Select(k => k ?? "(null)"))}], Found={responseLink != null}");
+                System.IO.File.AppendAllText("/tmp/amqp_diag.txt", $"[DIAG] DispatchRequest: ReplyTo='{message.Properties.ReplyTo}', MessageId='{message.Properties.MessageId}', operation='{message.ApplicationProperties?["operation"]}', Keys=[{string.Join(", ", entry.ResponseLinks.Keys.Select(k => k ?? "(null)"))}], Found={responseLink != null}\n");
                 Log.LogInformation(
                     "DispatchRequest: ReplyTo={ReplyTo}, ResponseLinkKeys=[{Keys}], Found={Found}",
                     message.Properties.ReplyTo,

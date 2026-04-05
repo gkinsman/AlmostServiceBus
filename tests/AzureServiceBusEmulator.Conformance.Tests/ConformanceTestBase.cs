@@ -884,6 +884,37 @@ public abstract class ConformanceTestBase : IAsyncLifetime
     }
 
     // ══════════════════════════════════════════════════════════════════════════
+    // Test 16b: ScheduleMessageAsync (entity-scoped $management link)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ScheduleMessageAsync_DeliversAtScheduledTime()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateTestQueueAsync();
+
+        await using var sender = Client.CreateSender(queue);
+        await using var receiver = Client.CreateReceiver(queue);
+
+        // Use the management-link-based scheduling API (not ScheduledEnqueueTime property)
+        var seqNo = await sender.ScheduleMessageAsync(
+            new ServiceBusMessage("mgmt-scheduled") { MessageId = "mgmt-sched-1" },
+            DateTimeOffset.UtcNow.AddSeconds(3));
+
+        Assert.True(seqNo > 0);
+
+        // Should not be available immediately
+        var early = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(1));
+        Assert.Null(early);
+
+        // Should be available after the schedule time
+        var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+        Assert.NotNull(msg);
+        Assert.Equal("mgmt-scheduled", msg.Body.ToString());
+        await receiver.CompleteMessageAsync(msg);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
     // Test 17: Subscription SQL Filter
     // ══════════════════════════════════════════════════════════════════════════
 
