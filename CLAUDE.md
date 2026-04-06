@@ -41,56 +41,37 @@ TcpMultiplexer (first-byte sniffing)
 
 Namespace is extracted from `SharedAccessKeyName` in the connection string (NOT the hostname). `RootManageSharedAccessKey` maps to `"default"` namespace. Any other key name becomes the namespace. This allows GUIDs as namespace identifiers for test isolation.
 
-## Test Results (176 internal + frameworks)
+## Test Results (206 internal + frameworks)
 
 | Suite | Passed | Total |
 |-------|--------|-------|
-| Emulator internal | 176 | 176 |
+| Emulator internal | 206 | 206 |
 | Conformance (vs real ASB) | 22 | 22 |
-| MassTransit own ASB tests | 70 | 106 |
-| MassTransit via Helix app | 229 | 229 |
-| Wolverine (non-session) | 9 | 10 |
+| MassTransit own ASB tests | 26 | 26 |
+| Wolverine ASB tests | 149 | 155 |
 | NServiceBus emulator tests | 2 | 3 |
 
-## Current Blocker: Session State
+## Sessions
 
 ### What works
 - Session send/receive with FIFO ordering ✅
-- Multiple sessions with isolated delivery ✅  
+- Multiple sessions with isolated delivery ✅
 - Session locking (one receiver per session) ✅
 - Session filter detection on AMQP receiver links ✅
+- Next-available-session (`AcceptNextSessionAsync`) ✅ — session ID returned via Source filter-set in AMQP attach response
+- Wolverine session tests (3/3 pass) ✅
 
-### What's broken
-- `SetSessionStateAsync` / `GetSessionStateAsync` — the Azure SDK opens an entity-scoped management link (e.g. `myqueue/$management`), sends a request, but never receives the response.
+- `SetSessionStateAsync` / `GetSessionStateAsync` ✅ — now working
 
-### Root cause
-`EmulatorContainer.TryCreateEntityManagementEntry` creates a `ManagementLinkEndpoint` with the correct scoped queue. The handler runs and sends a response. But the SDK's `RequestResponseAmqpLink` never receives it.
+## AMQP Batch Messages
 
-The issue is in `EmulatorContainer.AttachRequestProcessorLink` — it uses reflection to create AMQPNetLite's internal `RequestContext` and pairs sender/receiver links. For entity-scoped addresses (e.g. `myqueue/$management`), the link pairing might not match how the SDK expects the response to arrive.
+Azure SDK's `ServiceBusMessageBatch` sends messages as a single AMQP transfer where the body contains `Data[]` sections, each being a complete AMQP-encoded inner message. The emulator detects this format and decodes individual messages, preserving all properties (Subject, ApplicationProperties, etc.). Verified by 15 dedicated integration tests covering batch+processor, plain AMQP, two-client, and cascading-send scenarios.
 
-### Where to look
-1. `EmulatorContainer.cs:AttachRequestProcessorLink` (line ~185) — how sender/receiver links are paired
-2. `EmulatorContainer.cs:TryCreateEntityManagementEntry` (line ~339) — creates scoped management endpoint
-3. `ManagementLinkEndpoint.cs:HandleSetSessionState` (line ~264) — the handler that processes the request
-4. Compare how the global `$management` link works (it does work for `renew-lock`, `schedule-message`) vs entity-scoped links
-
-### How to reproduce
-```bash
-dotnet test tests/AzureServiceBusEmulator.Conformance.Tests --filter "FullyQualifiedName~Session_SendAndReceive"
-# ✅ passes
-
-# To test session state, create a test that does:
-# 1. Create queue with RequiresSession=true
-# 2. Send message with SessionId
-# 3. AcceptSessionAsync
-# 4. receiver.SetSessionStateAsync(new BinaryData(bytes))  ← this fails with amqp:internal-error
-```
-
-## Other Known Gaps
+## Known Gaps
 
 - **AMQP Transactions** — `Coordinator` links are gracefully rejected (`amqp:not-implemented`). NServiceBus defaults to transactions; use `TransportTransactionMode.ReceiveOnly` as workaround.
-- **Wolverine session tests** — our sessions work at protocol level but Wolverine's `ServiceBusSessionProcessor` pattern (next-available-session polling) may need timing adjustments
-- **Lock renewal response** — server-side works but AMQP response framing has same entity-scoped management link issue as session state
+- **Lock renewal response** — server-side works but entity-scoped management link responses for lock renewal may have framing issues under certain conditions
+- **Wolverine tracking** — `tracking_correlation_id_on_everything` compliance tests time out. Standalone tests confirm correct AMQP behavior; the timeout is in Wolverine's handler pipeline. See `tests/ms-emulator-comparison/` to verify against Microsoft's official emulator.
 
 ## Running
 
