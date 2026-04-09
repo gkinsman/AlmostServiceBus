@@ -158,8 +158,6 @@ jobs:
           # Messages flow correctly but Wolverine's internal tracking can't correlate all
           # cascading activity through the emulator within the timeout window.
           FILTER="$FILTER&FullyQualifiedName!~tracking_correlation_id_on_everything"
-          # Request-reply: named broker reply URI resolution
-          FILTER="$FILTER&FullyQualifiedName!~correct_scheme_on_reply_uri"
           # Requeue coverage stays enabled, but dlq_mechanics is still flaky when Wolverine
           # opens an ad-hoc receiver against the shared wolverine-dead-letter-queue.
           FILTER="$FILTER&FullyQualifiedName!~dlq_mechanics"
