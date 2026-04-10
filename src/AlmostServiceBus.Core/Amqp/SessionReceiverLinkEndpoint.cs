@@ -152,8 +152,13 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
         _pumpCts?.Dispose();
         _pumpCts = null;
 
-        // Release the session lock when the link closes
-        _queue.Sessions?.ReleaseSession(_session.SessionId);
+        // Do NOT release the session lock here. The Azure SDK's auto-renewal timer
+        // runs independently and may fire after the link closes but before the SDK
+        // processes the closure. Releasing the lock immediately causes a race where
+        // RenewSessionLock returns 404, which triggers ErrorRequiresRecycle and kills
+        // the consumer. Instead, let the lock expire naturally via LockDuration — this
+        // matches real Azure Service Bus behavior where session locks have a duration
+        // and only become available after expiry (or explicit release by the SDK).
 
         base.OnLinkClosed(link, error);
     }

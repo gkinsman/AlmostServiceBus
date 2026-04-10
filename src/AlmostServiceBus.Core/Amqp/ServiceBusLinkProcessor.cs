@@ -3,6 +3,7 @@ using global::Amqp.Framing;
 using global::Amqp.Listener;
 using global::Amqp.Types;
 using AlmostServiceBus.Core.Broker;
+using Microsoft.Extensions.Logging;
 using BrokerSessionState = AlmostServiceBus.Core.Broker.SessionState;
 
 namespace AlmostServiceBus.Core.Amqp;
@@ -12,6 +13,7 @@ namespace AlmostServiceBus.Core.Amqp;
 /// </summary>
 public class ServiceBusLinkProcessor : ILinkProcessor
 {
+    private static readonly ILogger Log = AmqpLog.CreateLogger<ServiceBusLinkProcessor>();
     private readonly NamespaceRegistry _registry;
     private readonly ScheduledMessageProcessor? _scheduledProcessor;
 
@@ -166,10 +168,14 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         attachContext.Attach.MaxMessageSize = 256 * 1024;
 
         var receiverId = attachContext.Link.Name ?? Guid.NewGuid().ToString();
+        Log.LogWarning("HandleSessionReceiver: requested={Requested}, queue={Queue}, receiverId={ReceiverId}",
+            requestedSessionId, address, receiverId);
         var session = queue.Sessions.TryAcceptSession(requestedSessionId, receiverId);
 
         if (session is not null)
         {
+            Log.LogWarning("HandleSessionReceiver: ACCEPTED session={SessionId} immediately for receiver={ReceiverId}",
+                session.SessionId, receiverId);
             CompleteSessionAttach(attachContext, queue, session);
             return;
         }
@@ -195,6 +201,8 @@ public class ServiceBusLinkProcessor : ILinkProcessor
                     var accepted = queue.Sessions.TryAcceptSession(requestedSessionId, receiverId);
                     if (accepted is not null)
                     {
+                        Log.LogWarning("HandleSessionReceiver: POLL ACCEPTED session={SessionId} for receiver={ReceiverId}",
+                            accepted.SessionId, receiverId);
                         CompleteSessionAttach(attachContext, queue, accepted);
                         return;
                     }

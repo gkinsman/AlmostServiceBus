@@ -159,7 +159,12 @@ public sealed class QueueEntity : IDisposable
         if (RequiresSession)
         {
             if (string.IsNullOrEmpty(message.SessionId))
+            {
+                System.Diagnostics.Debug.WriteLine($"[QUEUE] Dropping message without SessionId on session queue '{Name}', MessageId={message.MessageId}, Subject={message.Subject}");
                 return; // silently drop messages without SessionId
+            }
+            System.Diagnostics.Debug.WriteLine($"[QUEUE] Enqueue to session queue '{Name}', SessionId={message.SessionId}, MessageId={message.MessageId}, Subject={message.Subject}");
+            Console.Error.WriteLine($"[QUEUE] Enqueue to session queue '{Name}', SessionId={message.SessionId}, MessageId={message.MessageId}, Subject={message.Subject}, CorrelationId={message.CorrelationId}");
 
             // Assign sequence number and lock token BEFORE enqueuing to the
             // SessionManager so the PriorityQueue can order by SequenceNumber.

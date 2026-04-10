@@ -166,4 +166,12 @@ public class SessionManager
             .Select(s => s.SessionId)
             .ToList();
     }
+
+    /// <summary>
+    /// Returns all known session IDs with their lock status (for diagnostics).
+    /// </summary>
+    public IEnumerable<string> GetSessionIds()
+    {
+        return _sessions.Values.Select(s => $"{s.SessionId}(locked={s.IsLocked},by={s.LockedBy})");
+    }
 }

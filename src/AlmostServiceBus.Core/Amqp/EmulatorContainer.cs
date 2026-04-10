@@ -180,11 +180,17 @@ public class EmulatorContainer : IContainer
                     {
                         _requestProcessors[processorKey] = entityEntry;
                         entry = entityEntry;
+                        Log.LogWarning("AttachLink REQUEST: created entity management entry for '{Address}', key='{Key}'", address, processorKey);
                     }
                     else
                     {
                         _requestProcessors.TryGetValue("$management", out entry);
+                        Log.LogWarning("AttachLink REQUEST: fell back to global $management for '{Address}', key='{Key}'", address, processorKey);
                     }
+                }
+                else if (entry is not null && address.EndsWith("/$management", StringComparison.OrdinalIgnoreCase))
+                {
+                    Log.LogWarning("AttachLink REQUEST: reused existing entry for '{Address}', key='{Key}'", address, processorKey);
                 }
             }
 
@@ -221,11 +227,21 @@ public class EmulatorContainer : IContainer
                     {
                         _requestProcessors[processorKey] = entityEntry;
                         entry = entityEntry;
+                        Log.LogWarning("AttachLink RESPONSE: created NEW entity management entry for '{Address}', key='{Key}' — request link may be on a different entry!", sourceAddress, processorKey);
                     }
                     else
                     {
                         _requestProcessors.TryGetValue("$management", out entry);
+                        Log.LogWarning("AttachLink RESPONSE: fell back to global $management for '{Address}', key='{Key}'", sourceAddress, processorKey);
                     }
+                }
+                else if (entry is not null)
+                {
+                    Log.LogWarning("AttachLink RESPONSE: reused existing entry for '{Address}', key='{Key}'", sourceAddress, processorKey);
+                }
+                else
+                {
+                    Log.LogWarning("AttachLink RESPONSE: no entry found for '{Address}', key='{Key}'", sourceAddress, processorKey);
                 }
             }
 
@@ -386,6 +402,10 @@ public class EmulatorContainer : IContainer
     /// </summary>
     private static void DispatchRequest(ListenerLink link, Message message, RequestProcessorEntry entry)
     {
+        var operation = message.ApplicationProperties?["operation"] as string;
+        Log.LogWarning("DispatchRequest: operation={Operation}, ReplyTo={ReplyTo}, ResponseLinkCount={Count}",
+            operation, message.Properties?.ReplyTo, entry.ResponseLinks.Count);
+
         // Find the response link for this request.
         ListenerLink? responseLink = null;
         if (message.Properties?.ReplyTo != null)
