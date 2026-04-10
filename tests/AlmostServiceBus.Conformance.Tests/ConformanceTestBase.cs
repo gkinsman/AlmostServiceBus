@@ -1325,4 +1325,56 @@ public abstract class ConformanceTestBase : IAsyncLifetime
         Assert.NotNull(msg);
         await receiver.CompleteMessageAsync(msg);
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Abandon Redelivery — Sequence Number Behavior
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Abandon_Redelivery_SequenceNumberBehavior()
+    {
+        // Determines whether real ASB keeps or changes the SequenceNumber
+        // when a message is abandoned and redelivered. This is critical for
+        // MassTransit's ConsumerAgent, which uses SequenceNumber as the
+        // transport dedup key.
+        ThrowIfSkipped();
+        var queue = await CreateTestQueueAsync();
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.SendMessageAsync(new ServiceBusMessage("seq-test"));
+
+        await using var receiver = Client.CreateReceiver(queue, new ServiceBusReceiverOptions
+        {
+            ReceiveMode = ServiceBusReceiveMode.PeekLock
+        });
+
+        // First delivery
+        var first = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(first);
+        var firstSeqNo = first.SequenceNumber;
+        var firstLockToken = first.LockToken;
+
+        // Abandon — should re-enqueue for redelivery
+        await receiver.AbandonMessageAsync(first);
+
+        // Second delivery
+        var second = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(second);
+        var secondSeqNo = second.SequenceNumber;
+        var secondLockToken = second.LockToken;
+
+        // Log the results for comparison
+        // Real ASB: SequenceNumber stays the same, LockToken changes
+        // Emulator: need to verify
+        Assert.Equal(2, second.DeliveryCount);
+
+        // Real ASB keeps the same SequenceNumber on redelivery — the message
+        // retains its identity in the queue. Verify the emulator matches.
+        Assert.Equal(firstSeqNo, secondSeqNo);
+
+        // Lock token should always be different (fresh lock per delivery)
+        Assert.NotEqual(firstLockToken, secondLockToken);
+
+        await receiver.CompleteMessageAsync(second);
+    }
 }

@@ -244,7 +244,7 @@ public class QueueEntityTests
     }
 
     [Fact]
-    public void Complete_AfterLockExpirySweep_ThrowsMessageLockLost()
+    public async Task Complete_AfterLockExpirySweep_ThrowsMessageLockLost()
     {
         // Bug: when the lock-expiry sweep re-enqueues a message before the consumer
         // calls Complete(), Complete() silently returns instead of throwing
@@ -256,24 +256,16 @@ public class QueueEntityTests
         var msg = queue.TryDequeueImmediate()!;
         var lockToken = msg.LockToken!;
 
-        // Wait for lock to expire
-        Thread.Sleep(50);
-
-        // Manually trigger the sweep by waiting for the timer (fires every 5s) — too slow.
-        // Instead, simulate the same effect: the message's lock expired and the sweep
-        // removed it from _pending and re-enqueued it. We can trigger this by just waiting
-        // for the background sweep. But with 5s interval that's too slow for a unit test.
-        // Use a shorter approach: set lock duration very short, dequeue, wait, then Complete.
-        // The sweep runs every 5s, so we need to wait for it.
-        // Actually, let's just wait for the sweep to fire.
-        Thread.Sleep(TimeSpan.FromSeconds(6));
+        // Wait for the lock to expire and the sweep to fire (every 5s) plus margin.
+        await Task.Delay(TimeSpan.FromSeconds(7));
 
         // The sweep should have re-enqueued the message by now.
         // Complete should throw MessageLockLostException, not silently return.
         Assert.Throws<MessageLockLostException>(() => queue.Complete(lockToken));
 
-        // Verify the message was re-enqueued (available for redelivery)
-        var redelivered = queue.TryDequeueImmediate();
+        // Verify the message was re-enqueued (after 1s redelivery delay)
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var redelivered = await queue.DequeueAsync(cts.Token);
         Assert.NotNull(redelivered);
         Assert.Equal(msg.MessageId, redelivered!.MessageId);
     }
