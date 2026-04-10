@@ -71,7 +71,7 @@ jobs:
   # AlmostServiceBus on port 5673 so it becomes a drop-in replacement.
   #
   # Tests run in parallel both within each job (per-class namespace isolation,
-  # MaxParallelThreads=4 — see external/wolverine-patches/parallel-tests.patch)
+  # MaxParallelThreads=4 — see patches/wolverine/parallel-tests.patch)
   # and across CI jobs (matrix strategy splits tests into groups on separate runners).
   wolverine-conformance:
     name: "Wolverine: ${{ matrix.group }}"
@@ -103,8 +103,8 @@ jobs:
       - name: Apply Wolverine test patches
         run: |
           cd external/wolverine
-          git apply ../wolverine-patches/parallel-tests.patch
-          git apply ../wolverine-patches/scheduling-test-warmup.patch
+          git apply ../../patches/wolverine/parallel-tests.patch
+          git apply ../../patches/wolverine/scheduling-test-warmup.patch
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
