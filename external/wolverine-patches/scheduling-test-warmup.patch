@@ -1,0 +1,49 @@
+From 90c4f6db023bd29631393d7cef7a766dc92ee15f Mon Sep 17 00:00:00 2001
+From: George Kinsman <george@georgekinsman.com>
+Date: Fri, 10 Apr 2026 20:47:48 +0100
+Subject: [PATCH] Fix flaky scheduling tests with AMQP warm-up
+
+The cascaded_timeout and explicit_scheduling tests capture referenceTime
+before the first message send. On CI runners, first-message AMQP setup
+(connection, CBS auth, link creation) can take several seconds, pushing
+ScheduledTime beyond the 2s margin.
+
+Fix: send a warm-up message before capturing referenceTime so the AMQP
+links are established. This keeps the tight 2s margin (which catches
+real regressions) while eliminating the cold-start flake.
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+---
+ .../using_native_scheduling.cs                           | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/using_native_scheduling.cs b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/using_native_scheduling.cs
+index 939a9bd8..fa47cbb2 100644
+--- a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/using_native_scheduling.cs
++++ b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/using_native_scheduling.cs
+@@ -49,6 +49,11 @@ public class using_native_scheduling : IAsyncLifetime
+                 opts.PublishAllMessages().ToAzureServiceBusQueue("inline1");
+             }).StartAsync();
+ 
++        // Warm up the AMQP sender link — first send pays connection/session/link
++        // setup cost that can take seconds on loaded CI runners.
++        await host.TrackActivity().IncludeExternalTransports().Timeout(10.Seconds())
++            .SendMessageAndWaitAsync(new AsbMessage1("warmup"));
++
+         var referenceTime = DateTimeOffset.UtcNow;
+         var delay = TimeSpan.FromSeconds(1);
+         var margin = TimeSpan.FromSeconds(2);
+@@ -79,6 +84,10 @@ public class using_native_scheduling : IAsyncLifetime
+                 opts.PublishAllMessages().ToAzureServiceBusQueue("inline1");
+             }).StartAsync();
+ 
++        // Warm up the AMQP sender link
++        await host.TrackActivity().IncludeExternalTransports().Timeout(10.Seconds())
++            .SendMessageAndWaitAsync(new AsbMessage1("warmup"));
++
+         var referenceTime = DateTimeOffset.UtcNow;
+         var delay = TimeSpan.FromSeconds(1);
+         var margin = TimeSpan.FromSeconds(2);
+-- 
+2.45.1.windows.1
+

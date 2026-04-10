@@ -100,10 +100,11 @@ jobs:
       - name: Checkout Wolverine submodule
         run: git submodule update --init --depth 1 external/wolverine
 
-      - name: Apply Wolverine test patches (parallel namespace isolation)
+      - name: Apply Wolverine test patches
         run: |
           cd external/wolverine
           git apply ../wolverine-patches/parallel-tests.patch
+          git apply ../wolverine-patches/scheduling-test-warmup.patch
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
