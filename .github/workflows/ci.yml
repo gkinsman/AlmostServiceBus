@@ -100,11 +100,8 @@ jobs:
       - name: Checkout Wolverine submodule
         run: git submodule update --init --depth 1 external/wolverine
 
-      - name: Apply Wolverine test patches
-        run: |
-          cd external/wolverine
-          git apply ../../patches/wolverine/parallel-tests.patch
-          git apply ../../patches/wolverine/scheduling-test-warmup.patch
+      - name: Apply submodule patches
+        run: pwsh apply-patches.ps1
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -289,13 +286,8 @@ jobs:
           sudo cp /tmp/devhttps.crt /usr/local/share/ca-certificates/aspnetcore-dev.crt
           sudo update-ca-certificates
 
-      # Apply the emulator-compatibility patch to the checked-out submodule.
-      # The patch adds MT_ASB_ENDPOINT support so tests can be redirected to
-      # localhost instead of *.servicebus.windows.net.
-      - name: Apply emulator compatibility patch
-        run: |
-          git -C external/MassTransit apply \
-            ../../patches/MassTransit/0001-emulator-endpoint-support.patch
+      - name: Apply submodule patches
+        run: pwsh apply-patches.ps1
 
       - name: Build emulator host
         run: dotnet build src/AlmostServiceBus.Host
