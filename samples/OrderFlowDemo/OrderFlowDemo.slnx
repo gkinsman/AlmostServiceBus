@@ -1,5 +1,4 @@
 <Solution>
-  <Project Path="OrderFlowDemo.AppHost/OrderFlowDemo.AppHost.csproj" />
   <Project Path="OrderFlowDemo.Contracts/OrderFlowDemo.Contracts.csproj" />
   <Project Path="OrderFlowDemo.FulfillmentWorker/OrderFlowDemo.FulfillmentWorker.csproj" />
   <Project Path="OrderFlowDemo.OrderApi/OrderFlowDemo.OrderApi.csproj" />
