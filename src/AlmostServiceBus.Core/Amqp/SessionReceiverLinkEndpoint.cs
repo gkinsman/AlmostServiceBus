@@ -102,34 +102,48 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
     {
         var lockToken = ReceiverLinkEndpoint.GetLockTokenStatic(dispositionContext.Message);
 
-        if (lockToken is not null && dispositionContext.DeliveryState is not null)
+        try
         {
-            switch (dispositionContext.DeliveryState)
+            if (lockToken is not null && dispositionContext.DeliveryState is not null)
             {
-                case Accepted:
-                    _queue.Complete(lockToken);
-                    break;
-                case Released:
-                    _queue.Abandon(lockToken);
-                    break;
-                case Rejected rejected:
-                    _queue.DeadLetter(lockToken,
-                        rejected.Error?.Condition?.ToString(),
-                        rejected.Error?.Description);
-                    break;
-                case Modified modified:
-                    if (modified.UndeliverableHere == true)
-                        _queue.DeadLetter(lockToken, "Undeliverable", "Message marked as undeliverable.");
-                    else
+                switch (dispositionContext.DeliveryState)
+                {
+                    case Accepted:
+                        _queue.Complete(lockToken);
+                        break;
+                    case Released:
                         _queue.Abandon(lockToken);
-                    break;
-                default:
-                    _queue.Complete(lockToken);
-                    break;
+                        break;
+                    case Rejected rejected:
+                        _queue.DeadLetter(lockToken,
+                            rejected.Error?.Condition?.ToString(),
+                            rejected.Error?.Description);
+                        break;
+                    case Modified modified:
+                        if (modified.UndeliverableHere == true)
+                            _queue.DeadLetter(lockToken, "Undeliverable", "Message marked as undeliverable.");
+                        else
+                            _queue.Abandon(lockToken);
+                        break;
+                    default:
+                        _queue.Complete(lockToken);
+                        break;
+                }
             }
-        }
 
-        dispositionContext.Complete();
+            dispositionContext.Complete();
+        }
+        catch (MessageLockLostException)
+        {
+            Log.LogDebug("DISP lock={LockToken} LOCK EXPIRED (re-enqueued) queue='{Queue}'", lockToken, _queue.Name);
+            dispositionContext.Link.DisposeMessage(dispositionContext.Message, new Rejected
+            {
+                Error = new Error(new Symbol("com.microsoft:message-lock-lost"))
+                {
+                    Description = "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue."
+                }
+            }, true);
+        }
     }
 
     public override void OnLinkClosed(ListenerLink link, Error error)

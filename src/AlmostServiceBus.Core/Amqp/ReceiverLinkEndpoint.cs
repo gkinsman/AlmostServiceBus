@@ -134,14 +134,19 @@ public class ReceiverLinkEndpoint : LinkEndpoint
         }
         catch (MessageLockLostException)
         {
-            // The message lock has expired. The message has been re-enqueued for redelivery.
-            // Ideally we'd send a Rejected disposition with com.microsoft:message-lock-lost,
-            // but AMQPNetLite's DispositionContext.Complete(Error) detaches the link entirely.
-            // Instead, we just accept the disposition — the message is already re-enqueued
-            // and will be redelivered. The client won't get a lock-lost error, but will
-            // see the message again with an incremented DeliveryCount.
+            // The message lock has expired and the message has been re-enqueued.
+            // Send a Rejected disposition with com.microsoft:message-lock-lost so
+            // the Azure SDK raises ServiceBusException(Reason=MessageLockLost).
+            // We use Link.DisposeMessage instead of dispositionContext.Complete(Error)
+            // because the latter detaches the entire link.
             Log.LogDebug("DISP lock={LockToken} LOCK EXPIRED (re-enqueued) queue='{Queue}'", lockToken, _queue.Name);
-            dispositionContext.Complete();
+            dispositionContext.Link.DisposeMessage(dispositionContext.Message, new Rejected
+            {
+                Error = new Error(new Symbol("com.microsoft:message-lock-lost"))
+                {
+                    Description = "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue."
+                }
+            }, true);
         }
     }
 

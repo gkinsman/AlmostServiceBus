@@ -20,6 +20,12 @@ public sealed class QueueEntity : IDisposable
     private readonly ConcurrentDictionary<string, BrokeredMessage> _pending = new();
     private readonly ConcurrentDictionary<string, BrokeredMessage> _allMessages = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _recentMessageIds = new();
+    /// <summary>
+    /// Lock tokens removed by <see cref="SweepExpiredLocks"/>. When a consumer calls
+    /// <see cref="Complete"/> after the sweep already re-enqueued the message, we need
+    /// to throw <see cref="MessageLockLostException"/> instead of silently returning.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, byte> _sweptLockTokens = new();
     private readonly bool _isDeadLetterQueue;
     private QueueEntity? _deadLetterQueue;
     private SessionManager? _sessionManager;
@@ -306,7 +312,13 @@ public sealed class QueueEntity : IDisposable
     public void Complete(string lockToken)
     {
         if (!_pending.TryRemove(lockToken, out var message))
+        {
+            // If the sweep already re-enqueued this message, the consumer's lock
+            // has expired — signal the error so the client can handle redelivery.
+            if (_sweptLockTokens.TryRemove(lockToken, out _))
+                throw new MessageLockLostException(lockToken);
             return;
+        }
 
         // Enforce lock expiry — if the lock has expired, re-enqueue the message
         // and throw so the AMQP layer can reject the disposition.
@@ -333,7 +345,11 @@ public sealed class QueueEntity : IDisposable
     public void Abandon(string lockToken)
     {
         if (!_pending.TryRemove(lockToken, out var message))
+        {
+            if (_sweptLockTokens.TryRemove(lockToken, out _))
+                throw new MessageLockLostException(lockToken);
             return;
+        }
 
         _eventBus?.Publish(new MessageEvent(
             MessageEventType.Abandoned, _namespaceName ?? "", _entityName ?? "",
@@ -364,7 +380,11 @@ public sealed class QueueEntity : IDisposable
     public void DeadLetter(string lockToken, string? reason, string? description)
     {
         if (!_pending.TryRemove(lockToken, out var message))
+        {
+            if (_sweptLockTokens.TryRemove(lockToken, out _))
+                throw new MessageLockLostException(lockToken);
             return;
+        }
 
         if (_allMessages.TryGetValue(lockToken, out var tracked))
             tracked.State = MessageState.DeadLettered;
@@ -410,6 +430,10 @@ public sealed class QueueEntity : IDisposable
     /// </summary>
     private void ReEnqueueExpired(string oldLockToken, BrokeredMessage message)
     {
+        // Remember this lock token was swept so Complete/Abandon can throw
+        // MessageLockLostException instead of silently returning.
+        _sweptLockTokens[oldLockToken] = 0;
+
         // Remove old dashboard entry — ReEnqueue will create a new one with fresh lock token.
         _allMessages.TryRemove(oldLockToken, out _);
 
