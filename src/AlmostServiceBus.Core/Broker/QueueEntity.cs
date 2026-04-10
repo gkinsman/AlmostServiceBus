@@ -215,17 +215,24 @@ public sealed class QueueEntity : IDisposable
         if (message.SequenceNumber == 0)
             message.SequenceNumber = Interlocked.Increment(ref _sequenceNumber);
 
-        if (RequiresSession)
-        {
-            Sessions!.Enqueue(message);
-            _allMessages[message.LockToken!] = message;
-            Interlocked.Increment(ref _messageCount);
-            return;
-        }
-
-        _redeliveryChannel.Writer.TryWrite(message);
         _allMessages[message.LockToken!] = message;
         Interlocked.Increment(ref _messageCount);
+
+        // Delay redelivery by 1 second to match real Azure Service Bus behavior.
+        // In real ASB, network round-trip latency naturally separates the consumer's
+        // completion of the faulted dispatch from the redelivered message arriving.
+        // Without this delay, the emulator's in-process redelivery races with
+        // MassTransit's ConsumerAgent cleanup, causing spurious R-DUPE detection.
+        _ = DelayedReEnqueue(message);
+    }
+
+    private async Task DelayedReEnqueue(BrokeredMessage message)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        if (RequiresSession)
+            Sessions!.Enqueue(message);
+        else
+            _redeliveryChannel.Writer.TryWrite(message);
     }
 
     /// <summary>

@@ -62,7 +62,7 @@ public class ReceiverLinkEndpointTests
     }
 
     [Fact]
-    public void AbandonMessage_RequeuesMessage()
+    public async Task AbandonMessage_RequeuesMessage()
     {
         var queue = new QueueEntity("test-queue");
         var lockToken = Guid.NewGuid().ToString();
@@ -80,8 +80,9 @@ public class ReceiverLinkEndpointTests
         var endpoint = new ReceiverLinkEndpoint(queue);
         endpoint.SettleMessage(lockToken, new Released());
 
-        // Message should be re-enqueued
-        var reDequeued = queue.TryDequeueImmediate();
+        // Message should be re-enqueued (after 1s redelivery delay)
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var reDequeued = await queue.DequeueAsync(cts.Token);
         Assert.NotNull(reDequeued);
         Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(reDequeued.Body));
     }
@@ -140,7 +141,7 @@ public class ReceiverLinkEndpointTests
     }
 
     [Fact]
-    public void ModifiedDeliverable_RequeuesMessage()
+    public async Task ModifiedDeliverable_RequeuesMessage()
     {
         var queue = new QueueEntity("test-queue");
         var lockToken = Guid.NewGuid().ToString();
@@ -157,7 +158,9 @@ public class ReceiverLinkEndpointTests
         var endpoint = new ReceiverLinkEndpoint(queue);
         endpoint.SettleMessage(lockToken, new Modified { UndeliverableHere = false });
 
-        var reDequeued = queue.TryDequeueImmediate();
+        // Message should be re-enqueued (after 1s redelivery delay)
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var reDequeued = await queue.DequeueAsync(cts.Token);
         Assert.NotNull(reDequeued);
     }
 
