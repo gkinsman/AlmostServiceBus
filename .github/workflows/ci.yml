@@ -149,7 +149,8 @@ jobs:
         timeout-minutes: 15
         run: |
           # Global exclusions (apply to all groups)
-          FILTER="FullyQualifiedName!~leader_election"             # Requires PostgreSQL
+          FILTER="Category!=Flaky"                                 # Match Wolverine's own CI: skip [Trait("Category", "Flaky")]
+          FILTER="$FILTER&FullyQualifiedName!~leader_election"     # Requires PostgreSQL
           FILTER="$FILTER&FullyQualifiedName!~Bug_1684_separated_handlers_and_conventional_routing"  # Flaky test
           FILTER="$FILTER&FullyQualifiedName!~Bug_1933_multi_tenant_conventional_routing"             # Requires second emulator on port 5674
           FILTER="$FILTER&FullyQualifiedName!~Bug_2283_purge_session_subscription"                   # Flaky test
