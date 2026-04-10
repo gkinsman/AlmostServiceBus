@@ -351,6 +351,8 @@ public class ManagementLinkEndpoint : IRequestProcessor
         }
 
         var state = sessionManager.GetSessionState(sessionId);
+        Log.LogWarning("HandleGetSessionState: sessionId={SessionId}, scopedAddress={ScopedAddress}, stateLength={Length}",
+            sessionId, _scopedAddress, state?.Length);
         var responseBody = new Map
         {
             { "session-state", state ?? (object)null! }
