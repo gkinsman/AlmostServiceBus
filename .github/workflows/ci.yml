@@ -149,10 +149,7 @@ jobs:
           # Global exclusions (apply to all groups)
           FILTER="Category!=Flaky"                                 # Match Wolverine's own CI: skip [Trait("Category", "Flaky")]
           FILTER="$FILTER&FullyQualifiedName!~leader_election"     # Requires PostgreSQL
-          FILTER="$FILTER&FullyQualifiedName!~Bug_1684_separated_handlers_and_conventional_routing"  # Flaky test
           FILTER="$FILTER&FullyQualifiedName!~Bug_1933_multi_tenant_conventional_routing"             # Requires second emulator on port 5674
-          FILTER="$FILTER&FullyQualifiedName!~Bug_2283_purge_session_subscription"                   # Flaky test
-          FILTER="$FILTER&FullyQualifiedName!~StatefulResourceSmokeTests.check_negative"             # Flaky: AutoProvision in helper always creates resources
           # Wolverine's tracking compliance tests time out waiting for all activity to complete.
           # Messages flow correctly but Wolverine's internal tracking can't correlate all
           # cascading activity through the emulator within the timeout window.
@@ -175,12 +172,6 @@ jobs:
           # Requeue coverage stays enabled, but dlq_mechanics is still flaky when Wolverine
           # opens an ad-hoc receiver against the shared wolverine-dead-letter-queue.
           FILTER="$FILTER&FullyQualifiedName!~dlq_mechanics"
-          # Native scheduling still flakes in parallel for topic/prefix compliance fixtures.
-          # The emulator fixes below reduce cross-namespace scheduling collisions, but these
-          # three method-level schedule_send cases still intermittently time out in CI.
-          FILTER="$FILTER&FullyQualifiedName!~TopicAndSubscriptionSendingAndReceivingCompliance.schedule_send"
-          FILTER="$FILTER&FullyQualifiedName!~TopicAndSubscriptionWithCustomRuleSendingAndReceivingCompliance.schedule_send"
-          FILTER="$FILTER&FullyQualifiedName!~PrefixedSendingAndReceivingCompliance.schedule_send"
           # Back-pressure: tracking can't detect Message1 received after listener restart
           FILTER="$FILTER&FullyQualifiedName!~can_stop_receiving_when_too_busy_and_restart_listeners"
           # Session ordering: Wolverine's BatchedSender uses parallel serialization
@@ -321,11 +312,8 @@ jobs:
           FILTER="$FILTER&FullyQualifiedName!~Sending_multiple_messages_to_a_session"  # Session concurrency
           FILTER="$FILTER&FullyQualifiedName!~Turnout"                    # Turnout/job service, not implemented
           FILTER="$FILTER&TestCategory!=Flaky"                            # NUnit Flaky-marked tests (known intermittent)
-          # Scheduled message tests — ScheduleMessageAsync causes ServiceTimeout in the emulator.
-          FILTER="$FILTER&FullyQualifiedName!~Scheduling_a_message_in_the_future"
-          FILTER="$FILTER&FullyQualifiedName!~Scheduling_a_published_message"       # covers all 3 variants
-          FILTER="$FILTER&FullyQualifiedName!~Sending_a_request_from_a_state_machine"  # uses schedule timeout
-          FILTER="$FILTER&FullyQualifiedName!~LazyMessageType_Specs"                # uses ScheduleMessageAsync
+          # Saga request-reply with schedule timeout — times out in emulator.
+          FILTER="$FILTER&FullyQualifiedName!~Sending_a_request_from_a_state_machine"
           # Session-based saga repository — requires full session concurrency support.
           FILTER="$FILTER&FullyQualifiedName!~Using_a_message_session_as_a_saga_repository"
           # Delayed redelivery via dead-letter queue — not yet supported.
