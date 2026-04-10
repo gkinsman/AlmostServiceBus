@@ -52,7 +52,6 @@ public class ManagementLinkEndpoint : IRequestProcessor
     public void Process(RequestContext requestContext)
     {
         var operation = requestContext.Message.ApplicationProperties?["operation"]?.ToString();
-
         try
         {
             switch (operation)
@@ -86,9 +85,9 @@ public class ManagementLinkEndpoint : IRequestProcessor
                     break;
             }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Swallow exceptions — the request context may already be completed/disposed
+            Log.LogError(ex, "MGMT exception handling operation={Operation}", operation);
         }
     }
 
@@ -343,10 +342,9 @@ public class ManagementLinkEndpoint : IRequestProcessor
         }
 
         var state = sessionManager.GetSessionState(sessionId);
-
         var responseBody = new Map
         {
-            { "session-state", state ?? Array.Empty<byte>() }
+            { "session-state", state ?? (object)null! }
         };
         var response = new Message(responseBody)
         {

@@ -1327,6 +1327,168 @@ public abstract class ConformanceTestBase : IAsyncLifetime
     }
 
     // ══════════════════════════════════════════════════════════════════════════
+    // Session Lock Renewal
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Session_RenewSessionLock_ExtendsLock()
+    {
+        ThrowIfSkipped();
+        var options = new CreateQueueOptions("placeholder")
+        {
+            RequiresSession = true,
+            LockDuration = TimeSpan.FromSeconds(10)
+        };
+        var queue = await CreateTestQueueAsync(options);
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.SendMessageAsync(new ServiceBusMessage("session-renew-test")
+        {
+            SessionId = "renew-session-1"
+        });
+
+        await using var receiver = await Client.AcceptSessionAsync(queue, "renew-session-1");
+
+        // Renew the session lock — should not throw
+        await receiver.RenewSessionLockAsync();
+
+        // Receive and complete the message — should work because lock is active
+        var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(msg);
+        await receiver.CompleteMessageAsync(msg);
+    }
+
+    [Fact]
+    public async Task Session_ProcessorAutoRenewal_WithSetStateAndSchedule()
+    {
+        // Reproduces the MassTransit session saga pattern:
+        // A session processor receives a message, sets session state, schedules a
+        // future message, and auto-renews the session lock — all concurrently.
+        // Uses a GUID session ID (like MassTransit's CorrelationId) and a short lock
+        // duration to force auto-renewal during processing.
+        ThrowIfSkipped();
+        var options = new CreateQueueOptions("placeholder")
+        {
+            RequiresSession = true,
+            LockDuration = TimeSpan.FromSeconds(5) // Short lock forces auto-renewal
+        };
+        var queue = await CreateTestQueueAsync(options);
+
+        var sessionId = Guid.NewGuid().ToString("D");
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.SendMessageAsync(new ServiceBusMessage("saga-test")
+        {
+            SessionId = sessionId
+        });
+
+        var completed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var processor = Client.CreateSessionProcessor(queue, new ServiceBusSessionProcessorOptions
+        {
+            MaxConcurrentSessions = 1,
+            AutoCompleteMessages = false,
+            MaxAutoLockRenewalDuration = TimeSpan.FromMinutes(1)
+        });
+
+        processor.ProcessMessageAsync += async args =>
+        {
+            // Simulate what MassTransit's session saga does:
+            // 1. Get session state
+            var state = await args.GetSessionStateAsync();
+
+            // 2. Schedule a future message (via sender, simulating ScheduleMessageAsync)
+            var seqNo = await sender.ScheduleMessageAsync(
+                new ServiceBusMessage("timeout") { SessionId = args.SessionId },
+                DateTimeOffset.UtcNow.AddSeconds(30));
+
+            // 3. Set session state
+            await args.SetSessionStateAsync(new BinaryData(
+                System.Text.Encoding.UTF8.GetBytes("{\"state\":\"processing\"}")));
+
+            // 4. Wait long enough that auto-renewal must fire (lock is 5s)
+            await Task.Delay(TimeSpan.FromSeconds(7));
+
+            // 5. Complete the message — should work if auto-renewal kept the lock alive
+            await args.CompleteMessageAsync(args.Message);
+
+            // 6. Cancel the scheduled message (cleanup)
+            await sender.CancelScheduledMessageAsync(seqNo);
+
+            completed.TrySetResult(true);
+        };
+
+        processor.ProcessErrorAsync += args =>
+        {
+            completed.TrySetException(args.Exception);
+            return Task.CompletedTask;
+        };
+
+        await processor.StartProcessingAsync();
+
+        var result = await Task.WhenAny(completed.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+        Assert.True(result == completed.Task, "Session processor should have completed within 30s");
+        Assert.True(await completed.Task);
+
+        await processor.StopProcessingAsync();
+    }
+
+    [Fact]
+    public async Task Session_ProcessorAutoRenewal_WithDefaultLock()
+    {
+        // Replicates MassTransit's session saga pattern with default lock duration.
+        // The session processor auto-renews the session lock while processing.
+        // This catches the "Session not found or not locked" failure seen in MT tests.
+        ThrowIfSkipped();
+        var options = new CreateQueueOptions("placeholder")
+        {
+            RequiresSession = true
+            // Default lock duration (30s) — same as MassTransit
+        };
+        var queue = await CreateTestQueueAsync(options);
+
+        var sessionId = Guid.NewGuid().ToString("D");
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.SendMessageAsync(new ServiceBusMessage("saga-test")
+        {
+            SessionId = sessionId
+        });
+
+        var renewSucceeded = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var processor = Client.CreateSessionProcessor(queue, new ServiceBusSessionProcessorOptions
+        {
+            MaxConcurrentSessions = 1,
+            AutoCompleteMessages = false,
+            MaxAutoLockRenewalDuration = TimeSpan.FromMinutes(1)
+        });
+
+        processor.ProcessMessageAsync += async args =>
+        {
+            // Explicitly renew the session lock (like MassTransit's auto-renewal does)
+            await args.RenewSessionLockAsync();
+
+            await args.CompleteMessageAsync(args.Message);
+            renewSucceeded.TrySetResult(true);
+        };
+
+        processor.ProcessErrorAsync += args =>
+        {
+            renewSucceeded.TrySetException(args.Exception);
+            return Task.CompletedTask;
+        };
+
+        await processor.StartProcessingAsync();
+
+        var result = await Task.WhenAny(renewSucceeded.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+        Assert.True(result == renewSucceeded.Task, "Session processor should have completed within 15s");
+        Assert.True(await renewSucceeded.Task);
+
+        await processor.StopProcessingAsync();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
     // Abandon Redelivery — Sequence Number Behavior
     // ══════════════════════════════════════════════════════════════════════════
 
