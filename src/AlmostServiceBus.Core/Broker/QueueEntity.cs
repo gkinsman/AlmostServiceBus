@@ -488,6 +488,13 @@ public sealed class QueueEntity : IDisposable
         {
             if (message.LockedUntil != default && now > message.LockedUntil)
             {
+                // Mark the lock token as swept BEFORE removing from _pending.
+                // This closes a TOCTOU window: without this, a concurrent Complete()
+                // could see the message missing from _pending (we already TryRemove'd it)
+                // AND missing from _sweptLockTokens (we haven't added it yet), causing
+                // Complete() to silently return while we re-enqueue — duplicate delivery.
+                _sweptLockTokens[lockToken] = 0;
+
                 // Atomically remove from pending — if another thread already removed it
                 // (e.g. Complete/Abandon), TryRemove returns false and we skip.
                 if (_pending.TryRemove(lockToken, out var expired))
@@ -499,11 +506,18 @@ public sealed class QueueEntity : IDisposable
                     // MassTransit's ConsumerAgent tracking.
                     if (expired.LockedUntil > DateTimeOffset.UtcNow)
                     {
+                        _sweptLockTokens.TryRemove(lockToken, out _);
                         _pending[lockToken] = expired;
                         continue;
                     }
 
                     ReEnqueueExpired(lockToken, expired);
+                }
+                else
+                {
+                    // Another thread already removed it (Complete/Abandon succeeded).
+                    // Clean up the swept marker.
+                    _sweptLockTokens.TryRemove(lockToken, out _);
                 }
             }
         }
