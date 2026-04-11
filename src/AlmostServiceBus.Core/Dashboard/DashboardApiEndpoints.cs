@@ -128,6 +128,34 @@ public static class DashboardApiEndpoints
             return Results.NotFound();
         });
 
+        api.MapGet("/diagnostics", () =>
+        {
+            ThreadPool.GetAvailableThreads(out var workerAvail, out var ioAvail);
+            ThreadPool.GetMaxThreads(out var workerMax, out var ioMax);
+            ThreadPool.GetMinThreads(out var workerMin, out var ioMin);
+            var pending = ThreadPool.PendingWorkItemCount;
+            var threadCount = ThreadPool.ThreadCount;
+
+            return new
+            {
+                threadPool = new
+                {
+                    workerThreads = new { available = workerAvail, max = workerMax, min = workerMin, inUse = workerMax - workerAvail },
+                    ioThreads = new { available = ioAvail, max = ioMax, min = ioMin, inUse = ioMax - ioAvail },
+                    pendingWorkItems = pending,
+                    threadCount,
+                },
+                process = new
+                {
+                    workingSetMB = Environment.WorkingSet / (1024 * 1024),
+                    gcTotalMemoryMB = GC.GetTotalMemory(false) / (1024 * 1024),
+                    gen0Collections = GC.CollectionCount(0),
+                    gen1Collections = GC.CollectionCount(1),
+                    gen2Collections = GC.CollectionCount(2),
+                },
+            };
+        });
+
         return app;
     }
 
