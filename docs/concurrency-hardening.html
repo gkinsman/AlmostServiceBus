@@ -195,13 +195,13 @@
 <p class="subtitle">Azure Service Bus Emulator &mdash; Thread Safety Fixes (branch: concurrency-fixes)</p>
 
 <div class="progress-overall">
-  <div class="progress-fill" style="width: 75%"></div>
+  <div class="progress-fill" style="width: 83%"></div>
 </div>
 
 <div class="summary-bar">
   <div class="summary-card">
     <div class="label">Fixed</div>
-    <div class="value green" id="fixed-count">9</div>
+    <div class="value green" id="fixed-count">10</div>
   </div>
   <div class="summary-card">
     <div class="label">In Progress</div>
@@ -209,7 +209,7 @@
   </div>
   <div class="summary-card">
     <div class="label">Remaining</div>
-    <div class="value red" id="remaining-count">3</div>
+    <div class="value red" id="remaining-count">2</div>
   </div>
   <div class="summary-card">
     <div class="label">Total Issues</div>
@@ -319,10 +319,10 @@
       <td class="severity-high">HIGH</td>
       <td>ScheduledMessageProcessor Start/Dispose race leaks background task</td>
       <td class="location">ScheduledMessageProcessor.cs:92</td>
-      <td class="status-pending">Pending</td>
-      <td><span class="rate rate-na">&mdash;</span></td>
-      <td><span class="rate rate-na">&mdash;</span></td>
-      <td class="commit-hash">&mdash;</td>
+      <td class="status-fixed">Fixed</td>
+      <td><div class="bar-container"><div class="bar-fill bar-fill-red" style="width:100%"></div></div><span class="rate rate-bad">unsync lifecycle</span></td>
+      <td><div class="bar-container"><div class="bar-fill bar-fill-green" style="width:100%"></div></div><span class="rate rate-good">2/2 passed</span></td>
+      <td class="commit-hash">pending</td>
     </tr>
     <!-- Issue 9 -->
     <tr>

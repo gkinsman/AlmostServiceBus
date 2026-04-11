@@ -15,6 +15,7 @@ public sealed class ScheduledMessageProcessor : IDisposable
     private readonly NamespaceContext _defaultNamespace;
     private readonly ConcurrentDictionary<ScheduledKey, ScheduledEntry> _scheduled = new();
 
+    private readonly Lock _lifetimeLock = new();
     private CancellationTokenSource? _cts;
     private Task? _backgroundTask;
 
@@ -91,35 +92,45 @@ public sealed class ScheduledMessageProcessor : IDisposable
     /// </summary>
     public void StartBackground(TimeSpan interval)
     {
-        _cts = new CancellationTokenSource();
-        var token = _cts.Token;
-
-        _backgroundTask = Task.Run(async () =>
+        lock (_lifetimeLock)
         {
-            using var timer = new PeriodicTimer(interval);
+            // Cancel any existing background task before starting a new one.
+            _cts?.Cancel();
+            _cts?.Dispose();
 
-            try
+            _cts = new CancellationTokenSource();
+            var token = _cts.Token;
+
+            _backgroundTask = Task.Run(async () =>
             {
-                while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
+                using var timer = new PeriodicTimer(interval);
+
+                try
                 {
-                    ProcessDueMessages();
+                    while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
+                    {
+                        ProcessDueMessages();
+                    }
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                // Expected on disposal — exit cleanly.
-            }
-        }, token);
+                catch (OperationCanceledException)
+                {
+                    // Expected on disposal — exit cleanly.
+                }
+            }, token);
+        }
     }
 
     /// <inheritdoc/>
     public void Dispose()
     {
-        _cts?.Cancel();
-        _cts?.Dispose();
-        _cts = null;
+        lock (_lifetimeLock)
+        {
+            _cts?.Cancel();
+            _cts?.Dispose();
+            _cts = null;
 
-        // Best-effort wait so callers can rely on the background task having stopped.
-        try { _backgroundTask?.Wait(TimeSpan.FromSeconds(5)); } catch { /* ignore */ }
+            // Best-effort wait so callers can rely on the background task having stopped.
+            try { _backgroundTask?.Wait(TimeSpan.FromSeconds(5)); } catch { /* ignore */ }
+        }
     }
 }
