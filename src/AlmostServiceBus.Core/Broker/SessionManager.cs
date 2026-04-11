@@ -133,10 +133,13 @@ public class SessionManager
     /// </summary>
     public void ReleaseSession(string sessionId)
     {
-        if (_sessions.TryGetValue(sessionId, out var session))
+        lock (_acceptLock)
         {
-            session.LockedBy = null;
-            session.LockedUntil = default;
+            if (_sessions.TryGetValue(sessionId, out var session))
+            {
+                session.LockedBy = null;
+                session.LockedUntil = default;
+            }
         }
     }
 
@@ -145,11 +148,14 @@ public class SessionManager
     /// </summary>
     public DateTimeOffset? RenewSessionLock(string sessionId)
     {
-        if (!_sessions.TryGetValue(sessionId, out var session) || !session.IsLocked)
-            return null;
+        lock (_acceptLock)
+        {
+            if (!_sessions.TryGetValue(sessionId, out var session) || !session.IsLocked)
+                return null;
 
-        session.LockedUntil = DateTimeOffset.UtcNow.Add(_lockDuration);
-        return session.LockedUntil;
+            session.LockedUntil = DateTimeOffset.UtcNow.Add(_lockDuration);
+            return session.LockedUntil;
+        }
     }
 
     public byte[]? GetSessionState(string sessionId)
@@ -165,10 +171,13 @@ public class SessionManager
 
     public IReadOnlyCollection<string> GetAvailableSessionIds()
     {
-        return _sessions.Values
-            .Where(s => s.MessageCount > 0 && !s.IsLocked)
-            .Select(s => s.SessionId)
-            .ToList();
+        lock (_acceptLock)
+        {
+            return _sessions.Values
+                .Where(s => s.MessageCount > 0 && !s.IsLocked)
+                .Select(s => s.SessionId)
+                .ToList();
+        }
     }
 
     /// <summary>
