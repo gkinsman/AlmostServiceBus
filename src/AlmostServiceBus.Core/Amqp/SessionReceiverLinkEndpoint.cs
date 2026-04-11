@@ -17,6 +17,7 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
     private static readonly ILogger Log = AmqpLog.CreateLogger<SessionReceiverLinkEndpoint>();
     private readonly QueueEntity _queue;
     private readonly BrokerSessionState _session;
+    private readonly Lock _pumpLock = new();
     private CancellationTokenSource? _pumpCts;
     private Task? _pumpTask;
 
@@ -35,13 +36,17 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
             return;
         }
 
-        if (_pumpTask is null || _pumpTask.IsCompleted)
+        lock (_pumpLock)
         {
-            _pumpCts = new CancellationTokenSource();
-            var link = flowContext.Link;
-            link.Closed += (_, __) => _pumpCts?.Cancel();
-            link.Session.Connection.Closed += (_, __) => _pumpCts?.Cancel();
-            _pumpTask = Task.Run(() => SessionPumpAsync(link, _pumpCts.Token));
+            if (_pumpTask is null || _pumpTask.IsCompleted)
+            {
+                var cts = new CancellationTokenSource();
+                _pumpCts = cts;
+                var link = flowContext.Link;
+                link.Closed += (_, __) => cts.Cancel();
+                link.Session.Connection.Closed += (_, __) => cts.Cancel();
+                _pumpTask = Task.Run(() => SessionPumpAsync(link, cts.Token));
+            }
         }
     }
 

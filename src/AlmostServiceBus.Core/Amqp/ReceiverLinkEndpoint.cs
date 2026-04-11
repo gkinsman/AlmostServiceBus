@@ -19,6 +19,7 @@ public class ReceiverLinkEndpoint : LinkEndpoint
 {
     private static readonly ILogger Log = AmqpLog.CreateLogger<ReceiverLinkEndpoint>();
     private readonly QueueEntity _queue;
+    private readonly Lock _pumpLock = new();
     private CancellationTokenSource? _pumpCts;
     private Task? _pumpTask;
 
@@ -45,15 +46,22 @@ public class ReceiverLinkEndpoint : LinkEndpoint
             return;
         }
 
-        if (_pumpTask is null || _pumpTask.IsCompleted)
+        lock (_pumpLock)
         {
-            _pumpCts = new CancellationTokenSource();
-            var link = flowContext.Link;
+            if (_pumpTask is null || _pumpTask.IsCompleted)
+            {
+                var cts = new CancellationTokenSource();
+                _pumpCts = cts;
+                var link = flowContext.Link;
 
-            link.Closed += (_, __) => _pumpCts?.Cancel();
-            link.Session.Connection.Closed += (_, __) => _pumpCts?.Cancel();
+                // Capture cts local — not the _pumpCts field — so that if a new
+                // pump starts later (overwriting _pumpCts), the old link's Closed
+                // handler cancels THIS pump's CTS, not the new one.
+                link.Closed += (_, __) => cts.Cancel();
+                link.Session.Connection.Closed += (_, __) => cts.Cancel();
 
-            _pumpTask = Task.Run(() => MessagePumpAsync(link, _pumpCts.Token));
+                _pumpTask = Task.Run(() => MessagePumpAsync(link, cts.Token));
+            }
         }
     }
 

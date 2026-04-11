@@ -195,13 +195,13 @@
 <p class="subtitle">Azure Service Bus Emulator &mdash; Thread Safety Fixes (branch: concurrency-fixes)</p>
 
 <div class="progress-overall">
-  <div class="progress-fill" style="width: 8.3%"></div>
+  <div class="progress-fill" style="width: 33%"></div>
 </div>
 
 <div class="summary-bar">
   <div class="summary-card">
     <div class="label">Fixed</div>
-    <div class="value green" id="fixed-count">1</div>
+    <div class="value green" id="fixed-count">4</div>
   </div>
   <div class="summary-card">
     <div class="label">In Progress</div>
@@ -209,7 +209,7 @@
   </div>
   <div class="summary-card">
     <div class="label">Remaining</div>
-    <div class="value red" id="remaining-count">11</div>
+    <div class="value red" id="remaining-count">8</div>
   </div>
   <div class="summary-card">
     <div class="label">Total Issues</div>
@@ -245,7 +245,7 @@
       <td class="status-fixed">Fixed</td>
       <td><div class="bar-container"><div class="bar-fill bar-fill-red" style="width:100%"></div></div><span class="rate rate-bad">10/10 failed</span></td>
       <td><div class="bar-container"><div class="bar-fill bar-fill-green" style="width:100%"></div></div><span class="rate rate-good">10/10 passed</span></td>
-      <td class="commit-hash">pending</td>
+      <td class="commit-hash">a4340f2</td>
     </tr>
     <!-- Issue 2 -->
     <tr>
@@ -253,10 +253,10 @@
       <td class="severity-critical">CRITICAL</td>
       <td>ReceiverLinkEndpoint.OnFlow pump double-start &mdash; multiple pumps dequeue concurrently</td>
       <td class="location">ReceiverLinkEndpoint.cs:48</td>
-      <td class="status-pending">Pending</td>
-      <td><span class="rate rate-na">&mdash;</span></td>
-      <td><span class="rate rate-na">&mdash;</span></td>
-      <td class="commit-hash">&mdash;</td>
+      <td class="status-fixed">Fixed</td>
+      <td><div class="bar-container"><div class="bar-fill bar-fill-red" style="width:100%"></div></div><span class="rate rate-bad">code review</span></td>
+      <td><div class="bar-container"><div class="bar-fill bar-fill-green" style="width:100%"></div></div><span class="rate rate-good">lock + local CTS</span></td>
+      <td class="commit-hash">pending</td>
     </tr>
     <!-- Issue 3 -->
     <tr>
@@ -264,10 +264,10 @@
       <td class="severity-critical">CRITICAL</td>
       <td>SessionReceiverLinkEndpoint.OnFlow pump double-start</td>
       <td class="location">SessionReceiverLinkEndpoint.cs:38</td>
-      <td class="status-pending">Pending</td>
-      <td><span class="rate rate-na">&mdash;</span></td>
-      <td><span class="rate rate-na">&mdash;</span></td>
-      <td class="commit-hash">&mdash;</td>
+      <td class="status-fixed">Fixed</td>
+      <td><div class="bar-container"><div class="bar-fill bar-fill-red" style="width:100%"></div></div><span class="rate rate-bad">code review</span></td>
+      <td><div class="bar-container"><div class="bar-fill bar-fill-green" style="width:100%"></div></div><span class="rate rate-good">lock + local CTS</span></td>
+      <td class="commit-hash">pending</td>
     </tr>
     <!-- Issue 4 -->
     <tr>
@@ -341,10 +341,10 @@
       <td class="severity-medium">MEDIUM</td>
       <td>ReceiverLinkEndpoint event handler captures field not local &mdash; cancels wrong CTS</td>
       <td class="location">ReceiverLinkEndpoint.cs:53</td>
-      <td class="status-pending">Pending</td>
-      <td><span class="rate rate-na">&mdash;</span></td>
-      <td><span class="rate rate-na">&mdash;</span></td>
-      <td class="commit-hash">&mdash;</td>
+      <td class="status-fixed">Fixed</td>
+      <td><div class="bar-container"><div class="bar-fill bar-fill-red" style="width:100%"></div></div><span class="rate rate-bad">code review</span></td>
+      <td><div class="bar-container"><div class="bar-fill bar-fill-green" style="width:100%"></div></div><span class="rate rate-good">local capture</span></td>
+      <td class="commit-hash">pending</td>
     </tr>
     <!-- Issue 11 -->
     <tr>
@@ -371,7 +371,7 @@
   </tbody>
 </table>
 
-<p class="timestamp">Auto-refreshes every 5 seconds. Last updated: not yet started</p>
+<p class="timestamp">Auto-refreshes every 5 seconds. Last updated: Issues #1-3, #10 fixed</p>
 
 </body>
 </html>
