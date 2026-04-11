@@ -73,6 +73,7 @@ public class SessionManager
 {
     private readonly ConcurrentDictionary<string, SessionState> _sessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly TimeSpan _lockDuration;
+    private readonly Lock _acceptLock = new();
 
     public SessionManager(TimeSpan lockDuration)
     {
@@ -99,29 +100,32 @@ public class SessionManager
     /// </summary>
     public SessionState? TryAcceptSession(string? sessionId, string receiverId)
     {
-        if (sessionId is not null)
+        lock (_acceptLock)
         {
-            if (_sessions.TryGetValue(sessionId, out var specific) && !specific.IsLocked)
+            if (sessionId is not null)
             {
-                specific.LockedBy = receiverId;
-                specific.LockedUntil = DateTimeOffset.UtcNow.Add(_lockDuration);
-                return specific;
+                if (_sessions.TryGetValue(sessionId, out var specific) && !specific.IsLocked)
+                {
+                    specific.LockedBy = receiverId;
+                    specific.LockedUntil = DateTimeOffset.UtcNow.Add(_lockDuration);
+                    return specific;
+                }
+                return null;
             }
+
+            // Next available: find an unlocked session with messages
+            foreach (var session in _sessions.Values)
+            {
+                if (!session.IsLocked && session.MessageCount > 0)
+                {
+                    session.LockedBy = receiverId;
+                    session.LockedUntil = DateTimeOffset.UtcNow.Add(_lockDuration);
+                    return session;
+                }
+            }
+
             return null;
         }
-
-        // Next available: find an unlocked session with messages
-        foreach (var session in _sessions.Values)
-        {
-            if (!session.IsLocked && session.MessageCount > 0)
-            {
-                session.LockedBy = receiverId;
-                session.LockedUntil = DateTimeOffset.UtcNow.Add(_lockDuration);
-                return session;
-            }
-        }
-
-        return null;
     }
 
     /// <summary>
