@@ -351,4 +351,70 @@ public class ConcurrencyTests
 
         Assert.Equal(0, renewRaces);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Issue #6: BrokeredMessage.DeliveryCount++ is non-atomic (RMW),
+    // and LockedUntil is a 12-byte DateTimeOffset that can be torn.
+    // Fix: Interlocked.Increment for DeliveryCount, atomic long ticks
+    // for LockedUntil.
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Issue6_DeliveryCount_IncrementIsAtomic()
+    {
+        // Multiple threads incrementing the same message's DeliveryCount.
+        // Without atomicity, increments can be lost.
+        const int threads = 20;
+        const int incrementsPerThread = 1000;
+        var msg = new BrokeredMessage();
+
+        var barrier = new Barrier(threads);
+        var tasks = Enumerable.Range(0, threads).Select(_ => Task.Run(() =>
+        {
+            barrier.SignalAndWait();
+            for (var i = 0; i < incrementsPerThread; i++)
+                msg.IncrementDeliveryCount();
+        })).ToArray();
+
+        await Task.WhenAll(tasks);
+
+        Assert.Equal(threads * incrementsPerThread, msg.DeliveryCount);
+    }
+
+    [Fact]
+    public async Task Issue6_LockedUntil_ReadWriteIsAtomic()
+    {
+        // One thread writes LockedUntil, another reads it.
+        // Without atomic access, the reader can see a torn DateTimeOffset.
+        // With the fix (long ticks + Interlocked), every read should be
+        // either the old or new value, never a torn mix.
+        var msg = new BrokeredMessage();
+        var target1 = new DateTimeOffset(2025, 6, 15, 12, 0, 0, TimeSpan.Zero);
+        var target2 = new DateTimeOffset(2025, 12, 25, 0, 0, 0, TimeSpan.Zero);
+        var tornReads = 0;
+        var done = false;
+
+        var writerTask = Task.Run(() =>
+        {
+            for (var i = 0; i < 100_000 && !Volatile.Read(ref done); i++)
+            {
+                msg.LockedUntil = (i % 2 == 0) ? target1 : target2;
+            }
+            Volatile.Write(ref done, true);
+        });
+
+        var readerTask = Task.Run(() =>
+        {
+            while (!Volatile.Read(ref done))
+            {
+                var val = msg.LockedUntil;
+                if (val != default && val != target1 && val != target2)
+                    Interlocked.Increment(ref tornReads);
+            }
+        });
+
+        await Task.WhenAll(writerTask, readerTask);
+
+        Assert.Equal(0, tornReads);
+    }
 }

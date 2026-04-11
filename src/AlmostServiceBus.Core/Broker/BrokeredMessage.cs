@@ -41,7 +41,18 @@ public sealed class BrokeredMessage
 
     public long SequenceNumber { get; set; }
 
-    public int DeliveryCount { get; set; }
+    private int _deliveryCount;
+
+    public int DeliveryCount
+    {
+        get => Volatile.Read(ref _deliveryCount);
+        set => Volatile.Write(ref _deliveryCount, value);
+    }
+
+    /// <summary>
+    /// Atomically increments <see cref="DeliveryCount"/> and returns the new value.
+    /// </summary>
+    public int IncrementDeliveryCount() => Interlocked.Increment(ref _deliveryCount);
 
     public string? DeadLetterReason { get; set; }
 
@@ -57,8 +68,19 @@ public sealed class BrokeredMessage
     /// UTC time at which the current lock on this message expires.
     /// After this time, settlement operations (Complete, Abandon, DeadLetter) should fail
     /// with a lock-lost error.
+    /// Stored as ticks (long) for atomic read/write across threads.
     /// </summary>
-    public DateTimeOffset LockedUntil { get; set; }
+    private long _lockedUntilTicks;
+
+    public DateTimeOffset LockedUntil
+    {
+        get
+        {
+            var ticks = Interlocked.Read(ref _lockedUntilTicks);
+            return ticks == 0 ? default : new DateTimeOffset(ticks, TimeSpan.Zero);
+        }
+        set => Interlocked.Exchange(ref _lockedUntilTicks, value == default ? 0 : value.UtcTicks);
+    }
 
     /// <summary>
     /// Creates an independent copy of this message.

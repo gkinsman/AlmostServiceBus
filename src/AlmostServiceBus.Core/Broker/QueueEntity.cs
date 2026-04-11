@@ -280,7 +280,7 @@ public sealed class QueueEntity : IDisposable
                 message = await _channel.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
         }
         Interlocked.Decrement(ref _messageCount);
-        message.DeliveryCount++;
+        message.IncrementDeliveryCount();
         message.LockedUntil = DateTimeOffset.UtcNow.Add(LockDuration);
         TrackPending(message);
         return message;
@@ -296,7 +296,7 @@ public sealed class QueueEntity : IDisposable
         if (_redeliveryChannel.Reader.TryRead(out var message) || _channel.Reader.TryRead(out message))
         {
             Interlocked.Decrement(ref _messageCount);
-            message.DeliveryCount++;
+            message.IncrementDeliveryCount();
             message.LockedUntil = DateTimeOffset.UtcNow.Add(LockDuration);
             TrackPending(message);
             return message;

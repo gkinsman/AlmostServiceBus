@@ -73,7 +73,7 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
                     continue;
                 }
 
-                brokered!.DeliveryCount++;
+                brokered!.IncrementDeliveryCount();
                 brokered.LockedUntil = DateTimeOffset.UtcNow.Add(_queue.LockDuration);
                 _queue.TrackPending(brokered);
 
