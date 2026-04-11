@@ -142,7 +142,13 @@ public sealed class QueueEntity : IDisposable
             if (_isDeadLetterQueue)
                 return this;
 
-            return _deadLetterQueue ??= new QueueEntity($"{Name}/$deadletterqueue", isDeadLetterQueue: true);
+            if (_deadLetterQueue is not null)
+                return _deadLetterQueue;
+
+            var dlq = new QueueEntity($"{Name}/$deadletterqueue", isDeadLetterQueue: true);
+            if (Interlocked.CompareExchange(ref _deadLetterQueue, dlq, null) != null)
+                dlq.Dispose(); // lost the race — dispose the duplicate (has a Timer)
+            return _deadLetterQueue;
         }
     }
 

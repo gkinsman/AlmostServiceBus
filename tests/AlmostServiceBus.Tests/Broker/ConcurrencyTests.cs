@@ -417,4 +417,36 @@ public class ConcurrencyTests
 
         Assert.Equal(0, tornReads);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Issue #7: DeadLetterQueue ??= double allocation leaks a Timer.
+    // Two threads see _deadLetterQueue == null, both allocate, one wins.
+    // The loser's QueueEntity (with its Timer) is never disposed.
+    // Fix: Interlocked.CompareExchange + Dispose on the loser.
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Issue7_DeadLetterQueue_ShouldReturnSameInstance()
+    {
+        // N threads access DeadLetterQueue concurrently on a fresh queue.
+        // All must get the same instance.
+        const int threads = 50;
+        var queue = new QueueEntity("test-queue");
+        var barrier = new Barrier(threads);
+        var results = new ConcurrentBag<QueueEntity>();
+
+        var tasks = Enumerable.Range(0, threads).Select(_ => Task.Run(() =>
+        {
+            barrier.SignalAndWait();
+            results.Add(queue.DeadLetterQueue);
+        })).ToArray();
+
+        await Task.WhenAll(tasks);
+
+        var distinct = results.Distinct().ToList();
+        Assert.Single(distinct);
+        Assert.Equal($"{queue.Name}/$deadletterqueue", distinct[0].Name);
+
+        queue.Dispose();
+    }
 }
