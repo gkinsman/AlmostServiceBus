@@ -1,6 +1,7 @@
 using global::Amqp;
 using global::Amqp.Listener;
 using AlmostServiceBus.Core.Broker;
+using Microsoft.Extensions.Logging;
 
 namespace AlmostServiceBus.Core.Amqp;
 
@@ -12,6 +13,8 @@ namespace AlmostServiceBus.Core.Amqp;
 /// </summary>
 public class AmqpServer : IDisposable
 {
+    private static readonly ILogger Log = AmqpLog.CreateLogger<AmqpServer>();
+
     private readonly AmqpServerOptions _options;
     private readonly NamespaceRegistry _registry;
     private readonly ScheduledMessageProcessor? _scheduledProcessor;

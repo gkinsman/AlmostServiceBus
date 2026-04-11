@@ -177,7 +177,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
                             continue;
                         }
 
-                        Log.LogWarning("schedule-message: address={Address}, SessionId={SessionId}, MessageId={MessageId}, Subject={Subject}",
+                        Log.LogDebug("schedule-message: address={Address}, SessionId={SessionId}, MessageId={MessageId}, Subject={Subject}",
                             address, brokered.SessionId, brokered.MessageId, brokered.Subject);
                         var seqNo = _scheduledProcessor.Schedule(address, brokered, scheduleContext);
                         sequenceNumbers.Add(seqNo);
@@ -297,7 +297,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
         var sessionId = ExtractSessionId(requestContext);
 
         var sessionManager = FindSessionManager();
-        Log.LogWarning(
+        Log.LogDebug(
             "HandleRenewSessionLock: sessionId={SessionId}, scopedAddress={ScopedAddress}, scopedQueue={ScopedQueue}, sessionManagerFound={Found}",
             sessionId, _scopedAddress, _scopedQueue?.Name, sessionManager is not null);
 
@@ -351,7 +351,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
         }
 
         var state = sessionManager.GetSessionState(sessionId);
-        Log.LogWarning("HandleGetSessionState: sessionId={SessionId}, scopedAddress={ScopedAddress}, stateLength={Length}",
+        Log.LogDebug("HandleGetSessionState: sessionId={SessionId}, scopedAddress={ScopedAddress}, stateLength={Length}",
             sessionId, _scopedAddress, state?.Length);
         var responseBody = new Map
         {
@@ -402,7 +402,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
             return;
         }
 
-        Log.LogWarning("HandleSetSessionState: sessionId={SessionId}, scopedAddress={ScopedAddress}, stateLength={Length}, scopedQueueSessionManager={SameManager}",
+        Log.LogDebug("HandleSetSessionState: sessionId={SessionId}, scopedAddress={ScopedAddress}, stateLength={Length}, scopedQueueSessionManager={SameManager}",
             sessionId, _scopedAddress, state?.Length, ReferenceEquals(sessionManager, _scopedQueue?.Sessions));
         sessionManager.SetSessionState(sessionId, state);
 

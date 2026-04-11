@@ -168,13 +168,13 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         attachContext.Attach.MaxMessageSize = 256 * 1024;
 
         var receiverId = attachContext.Link.Name ?? Guid.NewGuid().ToString();
-        Log.LogWarning("HandleSessionReceiver: requested={Requested}, queue={Queue}, receiverId={ReceiverId}",
+        Log.LogDebug("HandleSessionReceiver: requested={Requested}, queue={Queue}, receiverId={ReceiverId}",
             requestedSessionId, address, receiverId);
         var session = queue.Sessions.TryAcceptSession(requestedSessionId, receiverId);
 
         if (session is not null)
         {
-            Log.LogWarning("HandleSessionReceiver: ACCEPTED session={SessionId} immediately for receiver={ReceiverId}",
+            Log.LogDebug("HandleSessionReceiver: ACCEPTED session={SessionId} immediately for receiver={ReceiverId}",
                 session.SessionId, receiverId);
             CompleteSessionAttach(attachContext, queue, session);
             return;
@@ -201,7 +201,7 @@ public class ServiceBusLinkProcessor : ILinkProcessor
                     var accepted = queue.Sessions.TryAcceptSession(requestedSessionId, receiverId);
                     if (accepted is not null)
                     {
-                        Log.LogWarning("HandleSessionReceiver: POLL ACCEPTED session={SessionId} for receiver={ReceiverId}",
+                        Log.LogDebug("HandleSessionReceiver: POLL ACCEPTED session={SessionId} for receiver={ReceiverId}",
                             accepted.SessionId, receiverId);
                         CompleteSessionAttach(attachContext, queue, accepted);
                         return;

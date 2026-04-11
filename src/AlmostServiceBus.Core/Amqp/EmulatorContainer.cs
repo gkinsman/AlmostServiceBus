@@ -108,8 +108,22 @@ public class EmulatorContainer : IContainer
         return Message.Decode(buffer);
     }
 
+    private readonly ConcurrentDictionary<string, byte> _trackedConnections = new();
+
     public Link CreateLink(ListenerConnection connection, ListenerSession session, Attach attach)
     {
+        // Track connection lifecycle — log when connections close with errors
+        var connId = connection.GetHashCode().ToString();
+        if (_trackedConnections.TryAdd(connId, 0))
+        {
+            ((Connection)connection).Closed += (sender, error) =>
+            {
+                _trackedConnections.TryRemove(connId, out _);
+                if (error != null)
+                    Log.LogWarning("AMQP connection closed with error: {ConnectionId} — {Error}", connId, error);
+            };
+        }
+
         return new ListenerLink(session, attach);
     }
 
@@ -151,7 +165,7 @@ public class EmulatorContainer : IContainer
         var sourceAddr = (attach.Source as Source)?.Address ?? "(null)";
         var targetAddr = (attach.Target as Target)?.Address ?? "(null)";
         var isDynamic = (attach.Source as Source)?.Dynamic ?? false;
-        Log.LogInformation(
+        Log.LogDebug(
             "AttachLink: Role={Role}, ResolvedAddress={Address}, Source.Address={SourceAddr}, Target.Address={TargetAddr}, Dynamic={Dynamic}, LinkName={LinkName}",
             attach.Role, address ?? "(null)", sourceAddr, targetAddr, isDynamic, attach.LinkName);
 
@@ -180,17 +194,17 @@ public class EmulatorContainer : IContainer
                     {
                         _requestProcessors[processorKey] = entityEntry;
                         entry = entityEntry;
-                        Log.LogWarning("AttachLink REQUEST: created entity management entry for '{Address}', key='{Key}'", address, processorKey);
+                        Log.LogDebug("AttachLink REQUEST: created entity management entry for '{Address}', key='{Key}'", address, processorKey);
                     }
                     else
                     {
                         _requestProcessors.TryGetValue("$management", out entry);
-                        Log.LogWarning("AttachLink REQUEST: fell back to global $management for '{Address}', key='{Key}'", address, processorKey);
+                        Log.LogDebug("AttachLink REQUEST: fell back to global $management for '{Address}', key='{Key}'", address, processorKey);
                     }
                 }
                 else if (entry is not null && address.EndsWith("/$management", StringComparison.OrdinalIgnoreCase))
                 {
-                    Log.LogWarning("AttachLink REQUEST: reused existing entry for '{Address}', key='{Key}'", address, processorKey);
+                    Log.LogDebug("AttachLink REQUEST: reused existing entry for '{Address}', key='{Key}'", address, processorKey);
                 }
             }
 
@@ -227,21 +241,21 @@ public class EmulatorContainer : IContainer
                     {
                         _requestProcessors[processorKey] = entityEntry;
                         entry = entityEntry;
-                        Log.LogWarning("AttachLink RESPONSE: created NEW entity management entry for '{Address}', key='{Key}' — request link may be on a different entry!", sourceAddress, processorKey);
+                        Log.LogDebug("AttachLink RESPONSE: created NEW entity management entry for '{Address}', key='{Key}' — request link may be on a different entry!", sourceAddress, processorKey);
                     }
                     else
                     {
                         _requestProcessors.TryGetValue("$management", out entry);
-                        Log.LogWarning("AttachLink RESPONSE: fell back to global $management for '{Address}', key='{Key}'", sourceAddress, processorKey);
+                        Log.LogDebug("AttachLink RESPONSE: fell back to global $management for '{Address}', key='{Key}'", sourceAddress, processorKey);
                     }
                 }
                 else if (entry is not null)
                 {
-                    Log.LogWarning("AttachLink RESPONSE: reused existing entry for '{Address}', key='{Key}'", sourceAddress, processorKey);
+                    Log.LogDebug("AttachLink RESPONSE: reused existing entry for '{Address}', key='{Key}'", sourceAddress, processorKey);
                 }
                 else
                 {
-                    Log.LogWarning("AttachLink RESPONSE: no entry found for '{Address}', key='{Key}'", sourceAddress, processorKey);
+                    Log.LogDebug("AttachLink RESPONSE: no entry found for '{Address}', key='{Key}'", sourceAddress, processorKey);
                 }
             }
 
@@ -336,7 +350,7 @@ public class EmulatorContainer : IContainer
                 entry.ResponseLinks[replyTo] = link;
             }
 
-            Log.LogInformation("AttachRequestProcessorLink: response link for '{Address}', replyTo='{ReplyTo}'", address, replyTo);
+            Log.LogDebug("AttachRequestProcessorLink: response link for '{Address}', replyTo='{ReplyTo}'", address, replyTo);
 
             // SettleOnSend has an internal setter — use reflection.
             SettleOnSendProperty?.SetValue(link, true);
@@ -410,10 +424,10 @@ public class EmulatorContainer : IContainer
         {
             lock (entry.ResponseLinks)
             {
-                Log.LogWarning("DispatchRequest: operation={Operation}, ReplyTo={ReplyTo}, ResponseLinkCount={Count}",
+                Log.LogDebug("DispatchRequest: operation={Operation}, ReplyTo={ReplyTo}, ResponseLinkCount={Count}",
                     operation, message.Properties?.ReplyTo, entry.ResponseLinks.Count);
                 entry.ResponseLinks.TryGetValue(message.Properties!.ReplyTo, out responseLink);
-                Log.LogInformation(
+                Log.LogDebug(
                     "DispatchRequest: ReplyTo={ReplyTo}, ResponseLinkKeys=[{Keys}], Found={Found}",
                     message.Properties.ReplyTo,
                     string.Join(", ", entry.ResponseLinks.Keys),
@@ -422,7 +436,7 @@ public class EmulatorContainer : IContainer
         }
         else
         {
-            Log.LogWarning("DispatchRequest: operation={Operation}, message.Properties.ReplyTo is null", operation);
+            Log.LogDebug("DispatchRequest: operation={Operation}, message.Properties.ReplyTo is null", operation);
         }
 
         if (responseLink == null)
@@ -462,7 +476,7 @@ public class EmulatorContainer : IContainer
                 if (entry.ResponseLinks.Count == 1)
                 {
                     responseLink = entry.ResponseLinks.Values.First();
-                    Log.LogInformation("DispatchRequest: using fallback response link (single available)");
+                    Log.LogDebug("DispatchRequest: using fallback response link (single available)");
                 }
             }
         }
@@ -540,7 +554,7 @@ public class EmulatorContainer : IContainer
         }
         if (queue is not null || topic is not null)
         {
-            Log.LogInformation("TryCreateEntityManagementEntry: Created entry for entity '{EntityName}', HasSessions={HasSessions}, IsTopic={IsTopic}",
+            Log.LogDebug("TryCreateEntityManagementEntry: Created entry for entity '{EntityName}', HasSessions={HasSessions}, IsTopic={IsTopic}",
                 entityName, queue?.Sessions is not null, topic is not null);
             var processor = new ManagementLinkEndpoint(context, _scheduledProcessor, scopedAddress: entityName, scopedQueue: queue, senderLinkNames: _senderLinkNames, registry: _registry);
             return new RequestProcessorEntry(processor);
