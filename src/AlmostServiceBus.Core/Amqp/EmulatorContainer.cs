@@ -61,6 +61,7 @@ public class EmulatorContainer : IContainer
     private static readonly PropertyInfo? SettleOnSendProperty =
         typeof(ListenerLink).GetProperty("SettleOnSend");
 
+
     public X509Certificate2? ServiceCertificate => null;
 
     public IDictionary<string, TransportProvider> CustomTransports { get; } = new Dictionary<string, TransportProvider>();
@@ -661,4 +662,5 @@ public class EmulatorContainer : IContainer
             Processor = processor;
         }
     }
+
 }
