@@ -89,6 +89,6 @@ Same 12-byte `DateTimeOffset` issue. Converted to `long` ticks with `Interlocked
 
 1. **The flaky `RenewLock_PreventsExpirySweep_NoDoubleDelivery` test** intermittently fails due to timing sensitivity (waits for lock expiry + sweep timer alignment). Consider increasing tolerances or using a controllable clock.
 
-2. **SessionState fields are now protected by `_acceptLock`** but are still plain auto-properties. If session state is ever accessed outside `SessionManager` methods (e.g., from the management endpoint), consider making the fields truly atomic or documenting the lock requirement.
+2. ~~**SessionState fields are now protected by `_acceptLock`** but are still plain auto-properties.~~ **Fixed:** `LockedBy` and `LockedUntil` are now private fields with read-only public getters. Mutations go through `internal` methods (`TryLock`, `Unlock`, `RenewLock`) that can only be called from within the assembly -- and in practice only from `SessionManager` under `_acceptLock`. Bad behavior is now impossible at the API level.
 
 3. **AMQP transactions** remain unsupported (`Coordinator` links are rejected). NServiceBus users need `TransportTransactionMode.ReceiveOnly`.
