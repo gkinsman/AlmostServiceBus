@@ -113,14 +113,18 @@ public class ServiceBusEmulatorFixture : IAsyncDisposable
         _multiplexerTask = _multiplexer.StartAsync(_multiplexerCts.Token);
 
         // Azure SDK's ServiceBusAdministrationClient connects to localhost:5300
-        // for management when it detects a localhost connection string.
-        // MassTransit uses this for auto-provisioning topology.
-        try
+        // for management when UseDevelopmentEmulator=true is set.
+        // Only bind 5300 when a fixed public port was requested (MassTransit tests),
+        // to avoid port collisions when multiple test projects run in parallel.
+        if (_fixedPublicPort.HasValue)
         {
-            var mgmtMultiplexer = new TcpMultiplexer(5300, AmqpPort, HttpPort, cert);
-            _ = mgmtMultiplexer.StartAsync(_multiplexerCts.Token);
+            try
+            {
+                var mgmtMultiplexer = new TcpMultiplexer(5300, AmqpPort, HttpPort, cert);
+                _ = mgmtMultiplexer.StartAsync(_multiplexerCts.Token);
+            }
+            catch { /* port 5300 may already be in use */ }
         }
-        catch { /* port 5300 may already be in use — MassTransit tests will need it free */ }
     }
 
     private async Task CleanupAsync()
