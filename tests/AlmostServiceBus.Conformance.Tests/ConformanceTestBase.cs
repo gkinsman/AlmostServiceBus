@@ -1488,6 +1488,63 @@ public abstract class ConformanceTestBase : IAsyncLifetime
         await processor.StopProcessingAsync();
     }
 
+    [Fact]
+    public async Task Session_AutoRenewal_SurvivesMultipleRenewCycles()
+    {
+        // Very short lock (3s) with a 10-second hold. The SDK must auto-renew
+        // the session lock at least 3 times to keep the lock alive.
+        // Fails immediately if the management link's renew-session-lock path is broken.
+        ThrowIfSkipped();
+        var options = new CreateQueueOptions("placeholder")
+        {
+            RequiresSession = true,
+            LockDuration = TimeSpan.FromSeconds(3)
+        };
+        var queue = await CreateTestQueueAsync(options);
+
+        var sessionId = "renew-stress";
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.SendMessageAsync(new ServiceBusMessage("survive-renewal")
+        {
+            SessionId = sessionId
+        });
+
+        var completed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var processor = Client.CreateSessionProcessor(queue, new ServiceBusSessionProcessorOptions
+        {
+            MaxConcurrentSessions = 1,
+            AutoCompleteMessages = false,
+            MaxAutoLockRenewalDuration = TimeSpan.FromMinutes(1)
+        });
+
+        processor.ProcessMessageAsync += async args =>
+        {
+            // Hold for 10 seconds — with a 3s lock, the SDK must auto-renew
+            // at least 3 times during this window.
+            await Task.Delay(TimeSpan.FromSeconds(10));
+
+            // Complete should succeed if auto-renewal kept the lock alive
+            await args.CompleteMessageAsync(args.Message);
+            completed.TrySetResult(true);
+        };
+
+        processor.ProcessErrorAsync += args =>
+        {
+            completed.TrySetException(args.Exception);
+            return Task.CompletedTask;
+        };
+
+        await processor.StartProcessingAsync();
+
+        var result = await Task.WhenAny(completed.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+        Assert.True(result == completed.Task, "Session processor should have completed within 30s");
+        Assert.True(await completed.Task);
+
+        await processor.StopProcessingAsync();
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     // Abandon Redelivery — Sequence Number Behavior
     // ══════════════════════════════════════════════════════════════════════════
