@@ -67,7 +67,17 @@ public class MassTransitSessionLoadTests : IAsyncLifetime
         _bus = _provider.GetRequiredService<IBusControl>();
         await _bus.StartAsync();
 
-        await Task.Delay(3000);
+        // Wait for MassTransit to fully connect — the bus reports Ready
+        // once all receive endpoints are consuming. Slow CI runners may
+        // need more than a fixed delay.
+        var health = _bus.CheckHealth();
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (health.Status != global::MassTransit.BusHealthStatus.Healthy && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(500);
+            health = _bus.CheckHealth();
+        }
+        await Task.Delay(1000); // extra buffer for session receiver links
     }
 
     public async Task DisposeAsync()

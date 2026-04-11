@@ -111,6 +111,9 @@ public class ConcurrencyTests
             Task? pumpTask = null;
             var pumpLock = new Lock();
             var barrier = new Barrier(concurrentFlows);
+            // Use a TCS that never completes to simulate a long-running pump.
+            // Task.Delay(10) can complete before all threads check on slow CI.
+            var pumpTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
             var tasks = Enumerable.Range(0, concurrentFlows).Select(_ => Task.Run(() =>
             {
@@ -121,7 +124,7 @@ public class ConcurrencyTests
                     if (pumpTask is null || pumpTask.IsCompleted)
                     {
                         Interlocked.Increment(ref startCount);
-                        pumpTask = Task.Delay(10); // simulate pump running
+                        pumpTask = pumpTcs.Task; // never completes during this iteration
                     }
                 }
             })).ToArray();
