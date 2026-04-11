@@ -29,7 +29,7 @@ TcpMultiplexer (first-byte sniffing)
 
 - **TcpMultiplexer** (`src/.../Hosting/TcpMultiplexer.cs`) — single port serves TLS/HTTPS/AMQP/plain HTTP
 - **EmulatorContainer** (`src/.../Amqp/EmulatorContainer.cs`) — custom `IContainer` replacing AMQPNetLite's `ContainerHost` (fixes transaction coordinator crash)
-- **ReceiverLinkEndpoint** (`src/.../Amqp/ReceiverLinkEndpoint.cs`) — message pump with poll-based delivery, AMQP drain support, credit checking via reflection
+- **ReceiverLinkEndpoint** (`src/.../Amqp/ReceiverLinkEndpoint.cs`) — message pump with channel-based delivery (`WaitToReadAsync`), AMQP drain support, credit checking via reflection
 - **SessionReceiverLinkEndpoint** (`src/.../Amqp/SessionReceiverLinkEndpoint.cs`) — session-aware variant
 - **GuidDeliveryTagHandler** (`src/.../Amqp/GuidDeliveryTagHandler.cs`) — `IHandler` that rewrites 4-byte delivery tags to 16-byte GUIDs (Azure SDK requires this for PeekLock)
 - **SessionManager** (`src/.../Broker/SessionManager.cs`) — per-queue session partitioning
@@ -41,13 +41,14 @@ TcpMultiplexer (first-byte sniffing)
 
 Namespace is extracted from `SharedAccessKeyName` in the connection string (NOT the hostname). `RootManageSharedAccessKey` maps to `"default"` namespace. Any other key name becomes the namespace. This allows GUIDs as namespace identifiers for test isolation.
 
-## Test Results (206 internal + frameworks)
+## Test Results (224 internal + frameworks)
 
 | Suite | Passed | Total |
 |-------|--------|-------|
-| Emulator internal | 206 | 206 |
-| Conformance (vs real ASB) | 22 | 22 |
-| MassTransit own ASB tests | 26 | 26 |
+| Emulator internal | 154 | 154 |
+| SDK integration | 36 | 36 |
+| Conformance (emulator) | 34 | 34 |
+| MassTransit own ASB tests | 26 | 27 |
 | Wolverine ASB tests | 149 | 155 |
 | NServiceBus emulator tests | 2 | 3 |
 
@@ -123,5 +124,5 @@ No csproj changes needed — just tag and push.
 1. **AMQPNetLite not Microsoft.Azure.Amqp** — Microsoft.Azure.Amqp's server-side API is internal/undocumented. AMQPNetLite works but needs workarounds (delivery tags, credit reflection).
 2. **Custom IContainer** — replaced `ContainerHost` to handle `Coordinator` targets without crashing.
 3. **TLS termination in multiplexer** — single port serves everything. Kestrel runs plain HTTP internally.
-4. **Poll-based message pump** — `TryDequeueImmediate` + 10ms delay instead of blocking `DequeueAsync`. Blocking prevented AMQPNetLite from closing connections during shutdown.
+4. **Channel-based message pump** — `TryDequeueImmediate` + `WaitToReadAsync` (channel reader). Wakes instantly when a message is enqueued or abandoned. The only micro-delay is 1ms when waiting for AMQP link credit from the client.
 5. **Clone() doesn't copy LockToken or SequenceNumber** — each queue assigns fresh values on enqueue. Copying caused R-DUPE in MassTransit.

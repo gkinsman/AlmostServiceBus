@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
+using Microsoft.Extensions.Logging;
 
 namespace AlmostServiceBus.Core.Hosting;
 
@@ -19,6 +20,8 @@ namespace AlmostServiceBus.Core.Hosting;
 /// </summary>
 public class TcpMultiplexer
 {
+    private static readonly ILogger Log = AlmostServiceBus.Core.Amqp.AmqpLog.CreateLogger<TcpMultiplexer>();
+
     private const byte AmqpByte = 0x41; // 'A' — start of "AMQP\0\1\0\0"
     private const byte TlsByte = 0x16;  // TLS record type: Handshake
 
@@ -50,7 +53,7 @@ public class TcpMultiplexer
     public async Task StartAsync(CancellationToken ct)
     {
         var listener = new TcpListener(IPAddress.Any, _listenPort);
-        listener.Start();
+        listener.Start(512);
 
         using var reg = ct.Register(() => listener.Stop());
 
@@ -109,9 +112,9 @@ public class TcpMultiplexer
                 client.Dispose();
             }
         }
-        catch
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Connection error — just clean up
+            Log.LogWarning(ex, "TcpMultiplexer: connection error during proxy");
         }
         finally
         {
@@ -138,47 +141,54 @@ public class TcpMultiplexer
                 ],
             }, ct);
         }
-        catch
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            Log.LogWarning(ex, "TcpMultiplexer: TLS handshake failed on port {Port}", _listenPort);
             sslStream.Dispose();
             return;
         }
 
-        int backendPort;
-        var alpn = sslStream.NegotiatedApplicationProtocol;
+        TcpClient? backend = null;
+        try
+        {
+            int backendPort;
+            var alpn = sslStream.NegotiatedApplicationProtocol;
 
-        if (alpn == new SslApplicationProtocol("amqp"))
-        {
-            backendPort = _amqpPort;
-        }
-        else if (alpn == SslApplicationProtocol.Http2 || alpn == SslApplicationProtocol.Http11)
-        {
-            backendPort = _httpPort;
-        }
-        else
-        {
-            // No ALPN — peek the first decrypted byte to decide
-            var innerByte = new byte[1];
-            var read = await sslStream.ReadAsync(innerByte.AsMemory(0, 1), ct);
-            if (read == 0)
+            if (alpn == new SslApplicationProtocol("amqp"))
             {
-                sslStream.Dispose();
+                backendPort = _amqpPort;
+            }
+            else if (alpn == SslApplicationProtocol.Http2 || alpn == SslApplicationProtocol.Http11)
+            {
+                backendPort = _httpPort;
+            }
+            else
+            {
+                // No ALPN — peek the first decrypted byte to decide
+                var innerByte = new byte[1];
+                var read = await sslStream.ReadAsync(innerByte.AsMemory(0, 1), ct);
+                if (read == 0)
+                    return;
+
+                backendPort = innerByte[0] == AmqpByte ? _amqpPort : _httpPort;
+
+                backend = await ConnectToBackend(backendPort, ct);
+                var beStream = backend.GetStream();
+                await beStream.WriteAsync(innerByte.AsMemory(0, 1), ct);
+                await ProxyBidirectional(sslStream, beStream, client, backend, ct);
                 return;
             }
 
-            backendPort = innerByte[0] == AmqpByte ? _amqpPort : _httpPort;
-
-            var be = await ConnectToBackend(backendPort, ct);
-            var beStream = be.GetStream();
-            await beStream.WriteAsync(innerByte.AsMemory(0, 1), ct);
-            await ProxyBidirectional(sslStream, beStream, client, be, ct);
-            return;
+            // ALPN matched — proxy the decrypted stream to the backend
+            backend = await ConnectToBackend(backendPort, ct);
+            var backendStream = backend.GetStream();
+            await ProxyBidirectional(sslStream, backendStream, client, backend, ct);
         }
-
-        // ALPN matched — proxy the decrypted stream to the backend
-        var backend = await ConnectToBackend(backendPort, ct);
-        var backendStream = backend.GetStream();
-        await ProxyBidirectional(sslStream, backendStream, client, backend, ct);
+        finally
+        {
+            backend?.Dispose();
+            sslStream.Dispose();
+        }
     }
 
     private static async Task<TcpClient> ConnectToBackend(int port, CancellationToken ct)

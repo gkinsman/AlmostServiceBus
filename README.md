@@ -114,7 +114,7 @@ TcpMultiplexer (port 5672) ─── first-byte sniffing
     ├── 0x16 (TLS)   → SslStream → AMQP or HTTP
     └── HTTP verb     → plain HTTP backend
     │
-    ├── AMQPNetLite ContainerHost (message send/receive)
+    ├── AMQPNetLite + EmulatorContainer (message send/receive)
     └── Kestrel (management API + dashboard)
     │
     ▼
@@ -124,7 +124,7 @@ NamespaceRegistry (shared in-memory broker)
     └── SessionManager (per-queue session partitioning)
 ```
 
-The emulator uses AMQPNetLite as the AMQP server (Microsoft.Azure.Amqp's server API is internal). A custom `IContainer` implementation handles delivery tag rewriting, batch message decoding, and coordinator link rejection.
+The emulator uses AMQPNetLite as the AMQP server (Microsoft.Azure.Amqp's server API is internal). A custom `EmulatorContainer` (replacing AMQPNetLite's `ContainerHost`) handles delivery tag rewriting, batch message decoding, and coordinator link rejection. Message delivery uses channel-based waiting for instant wake-up on enqueue.
 
 ## Framework Compatibility
 
@@ -139,9 +139,9 @@ The emulator uses AMQPNetLite as the AMQP server (Microsoft.Azure.Amqp's server 
 
 | Suite | Passed | Total |
 |-------|--------|-------|
-| Internal unit + integration | 206 | 206 |
-| Conformance (vs real ASB) | 22 | 22 |
-| MassTransit ASB test suite | 26 | 26 |
+| Internal unit + integration | 190 | 190 |
+| Conformance (emulator) | 34 | 34 |
+| MassTransit ASB test suite | 26 | 27 |
 | Wolverine ASB test suite | 149 | 155 |
 
 ## Configuration

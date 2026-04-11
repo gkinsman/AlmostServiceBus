@@ -485,3 +485,4 @@ wwwroot
 .claude/worktrees
 orderflow-sagas*
 .vite
+.claude/settings.local.json
