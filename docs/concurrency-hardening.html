@@ -195,13 +195,13 @@
 <p class="subtitle">Azure Service Bus Emulator &mdash; Thread Safety Fixes (branch: concurrency-fixes)</p>
 
 <div class="progress-overall">
-  <div class="progress-fill" style="width: 83%"></div>
+  <div class="progress-fill" style="width: 100%"></div>
 </div>
 
 <div class="summary-bar">
   <div class="summary-card">
     <div class="label">Fixed</div>
-    <div class="value green" id="fixed-count">10</div>
+    <div class="value green" id="fixed-count">12</div>
   </div>
   <div class="summary-card">
     <div class="label">In Progress</div>
@@ -209,7 +209,7 @@
   </div>
   <div class="summary-card">
     <div class="label">Remaining</div>
-    <div class="value red" id="remaining-count">2</div>
+    <div class="value red" id="remaining-count">0</div>
   </div>
   <div class="summary-card">
     <div class="label">Total Issues</div>
@@ -352,10 +352,10 @@
       <td class="severity-medium">MEDIUM</td>
       <td>NamespaceContext.LastActivityAt torn DateTimeOffset write</td>
       <td class="location">NamespaceContext.cs:19</td>
-      <td class="status-pending">Pending</td>
-      <td><span class="rate rate-na">&mdash;</span></td>
-      <td><span class="rate rate-na">&mdash;</span></td>
-      <td class="commit-hash">&mdash;</td>
+      <td class="status-fixed">Fixed</td>
+      <td><div class="bar-container"><div class="bar-fill bar-fill-red" style="width:100%"></div></div><span class="rate rate-bad">12-byte struct</span></td>
+      <td><div class="bar-container"><div class="bar-fill bar-fill-green" style="width:100%"></div></div><span class="rate rate-good">1/1 passed</span></td>
+      <td class="commit-hash">pending</td>
     </tr>
     <!-- Issue 12 -->
     <tr>
@@ -363,15 +363,15 @@
       <td class="severity-medium">MEDIUM</td>
       <td>EmulatorContainer.DispatchRequest ResponseLinks.Count read outside lock</td>
       <td class="location">EmulatorContainer.cs:407</td>
-      <td class="status-pending">Pending</td>
-      <td><span class="rate rate-na">&mdash;</span></td>
-      <td><span class="rate rate-na">&mdash;</span></td>
-      <td class="commit-hash">&mdash;</td>
+      <td class="status-fixed">Fixed</td>
+      <td><div class="bar-container"><div class="bar-fill bar-fill-red" style="width:100%"></div></div><span class="rate rate-bad">outside lock</span></td>
+      <td><div class="bar-container"><div class="bar-fill bar-fill-green" style="width:100%"></div></div><span class="rate rate-good">code review</span></td>
+      <td class="commit-hash">pending</td>
     </tr>
   </tbody>
 </table>
 
-<p class="timestamp">Auto-refreshes every 5 seconds. Last updated: Issues #1-5, #9-10 fixed</p>
+<p class="timestamp">All 12 issues fixed. Last updated: complete</p>
 
 </body>
 </html>

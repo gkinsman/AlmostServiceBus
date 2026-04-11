@@ -16,9 +16,16 @@ public sealed class NamespaceContext
     private long _sequenceNumber;
 
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
-    public DateTimeOffset LastActivityAt { get; private set; } = DateTimeOffset.UtcNow;
 
-    public void Touch() => LastActivityAt = DateTimeOffset.UtcNow;
+    private long _lastActivityAtTicks = DateTimeOffset.UtcNow.UtcTicks;
+
+    public DateTimeOffset LastActivityAt
+    {
+        get => new(Interlocked.Read(ref _lastActivityAtTicks), TimeSpan.Zero);
+        private set => Interlocked.Exchange(ref _lastActivityAtTicks, value.UtcTicks);
+    }
+
+    public void Touch() => Interlocked.Exchange(ref _lastActivityAtTicks, DateTimeOffset.UtcNow.UtcTicks);
 
     public NamespaceContext(string name, MessageEventBus? eventBus = null)
     {

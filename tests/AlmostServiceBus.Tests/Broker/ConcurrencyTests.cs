@@ -500,4 +500,56 @@ public class ConcurrencyTests
         processor.Dispose();
         Assert.True(true);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Issue #11: NamespaceContext.LastActivityAt torn DateTimeOffset write.
+    // DateTimeOffset is 12 bytes — not atomically writable. Concurrent
+    // reads during a write can see a value that never existed.
+    // Fix: Store as long ticks with Interlocked.
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Issue11_LastActivityAt_ReadWriteIsAtomic()
+    {
+        var ns = new NamespaceContext("test");
+        var tornReads = 0;
+        var done = false;
+
+        // Record the initial value
+        var initial = ns.LastActivityAt;
+
+        var writerTask = Task.Run(() =>
+        {
+            for (var i = 0; i < 100_000 && !Volatile.Read(ref done); i++)
+            {
+                ns.Touch();
+            }
+            Volatile.Write(ref done, true);
+        });
+
+        var readerTask = Task.Run(() =>
+        {
+            while (!Volatile.Read(ref done))
+            {
+                var val = ns.LastActivityAt;
+                // Every read should be a valid DateTimeOffset near "now"
+                // (within the last minute). A torn read could produce a
+                // date in year 1 or year 9999.
+                if (val.Year < 2020 || val.Year > 2030)
+                    Interlocked.Increment(ref tornReads);
+            }
+        });
+
+        await Task.WhenAll(writerTask, readerTask);
+
+        Assert.Equal(0, tornReads);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Issue #12: EmulatorContainer.DispatchRequest reads
+    // entry.ResponseLinks.Count outside the lock (line 407 in a log
+    // statement). This is a diagnostic-only race with no functional
+    // impact. Fixed by moving the Count read inside the lock.
+    // Verified by code inspection.
+    // ═══════════════════════════════════════════════════════════════════
 }

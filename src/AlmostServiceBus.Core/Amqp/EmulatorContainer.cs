@@ -403,8 +403,6 @@ public class EmulatorContainer : IContainer
     private static void DispatchRequest(ListenerLink link, Message message, RequestProcessorEntry entry)
     {
         var operation = message.ApplicationProperties?["operation"] as string;
-        Log.LogWarning("DispatchRequest: operation={Operation}, ReplyTo={ReplyTo}, ResponseLinkCount={Count}",
-            operation, message.Properties?.ReplyTo, entry.ResponseLinks.Count);
 
         // Find the response link for this request.
         ListenerLink? responseLink = null;
@@ -412,7 +410,9 @@ public class EmulatorContainer : IContainer
         {
             lock (entry.ResponseLinks)
             {
-                entry.ResponseLinks.TryGetValue(message.Properties.ReplyTo, out responseLink);
+                Log.LogWarning("DispatchRequest: operation={Operation}, ReplyTo={ReplyTo}, ResponseLinkCount={Count}",
+                    operation, message.Properties?.ReplyTo, entry.ResponseLinks.Count);
+                entry.ResponseLinks.TryGetValue(message.Properties!.ReplyTo, out responseLink);
                 Log.LogInformation(
                     "DispatchRequest: ReplyTo={ReplyTo}, ResponseLinkKeys=[{Keys}], Found={Found}",
                     message.Properties.ReplyTo,
@@ -422,7 +422,7 @@ public class EmulatorContainer : IContainer
         }
         else
         {
-            Log.LogWarning("DispatchRequest: message.Properties.ReplyTo is null");
+            Log.LogWarning("DispatchRequest: operation={Operation}, message.Properties.ReplyTo is null", operation);
         }
 
         if (responseLink == null)
