@@ -479,16 +479,42 @@ public sealed class QueueEntity : IDisposable
     }
 
     /// <summary>
+    /// Reclaims pending (in-flight) messages for a specific session, re-enqueuing
+    /// them to the session queue so the next receiver can process them. Called when
+    /// a session receiver link closes (connection reset, timeout) to avoid messages
+    /// being stuck in _pending until lock expiry.
+    /// </summary>
+    public void ReclaimPendingForSession(string sessionId)
+    {
+        var reclaimed = 0;
+        foreach (var (lockToken, message) in _pending)
+        {
+            if (string.Equals(message.SessionId, sessionId, StringComparison.OrdinalIgnoreCase)
+                && _pending.TryRemove(lockToken, out var removed))
+            {
+                _allMessages.TryRemove(lockToken, out _);
+                removed.LockToken = null;
+                ReEnqueue(removed);
+                reclaimed++;
+            }
+        }
+
+        if (reclaimed > 0)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[QUEUE] Reclaimed {reclaimed} pending messages for session '{sessionId}' on queue '{Name}'");
+        }
+    }
+
+    /// <summary>
     /// Background sweep that returns expired-lock messages to the queue,
     /// matching real Azure Service Bus behavior where messages automatically
     /// become available after lock expiry even if the consumer never settles.
+    /// For session queues, this catches orphaned messages whose session lock
+    /// was released but whose individual message locks haven't been settled.
     /// </summary>
     private void SweepExpiredLocks()
     {
-        // Session-enabled queues don't expire individual message locks —
-        // the session lock governs message lifetime.
-        if (RequiresSession) return;
-
         var now = DateTimeOffset.UtcNow;
         foreach (var (lockToken, message) in _pending)
         {

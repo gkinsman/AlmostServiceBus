@@ -119,9 +119,16 @@ public class EmulatorContainer : IContainer
         {
             ((Connection)connection).Closed += (sender, error) =>
             {
-                _trackedConnections.TryRemove(connId, out _);
-                if (error != null)
-                    Log.LogWarning("AMQP connection closed with error: {ConnectionId} — {Error}", connId, error);
+                try
+                {
+                    _trackedConnections.TryRemove(connId, out _);
+                    if (error != null)
+                        Log.LogWarning("AMQP connection closed with error: {ConnectionId} — {Error}", connId, error);
+                }
+                catch (Exception ex)
+                {
+                    Log.LogDebug(ex, "Error in connection close handler for {ConnectionId}", connId);
+                }
             };
         }
 

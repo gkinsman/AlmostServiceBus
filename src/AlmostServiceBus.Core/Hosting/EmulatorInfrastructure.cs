@@ -43,6 +43,11 @@ public static class EmulatorInfrastructure
     /// On Linux, ensures the ASP.NET dev cert is in SSL_CERT_DIR so the Azure SDK's
     /// AMQP TLS client trusts it. dotnet dev-certs --trust places the cert in
     /// ~/.aspnet/dev-certs/trust but doesn't update SSL_CERT_DIR automatically.
+    ///
+    /// Also handles the SSL_CERT_FILE override: when SSL_CERT_FILE is set (e.g. to
+    /// /etc/ssl/certs/ca-certificates.crt), OpenSSL ignores SSL_CERT_DIR entirely.
+    /// We unset SSL_CERT_FILE so SSL_CERT_DIR takes effect, allowing the dev cert
+    /// trust directory to be included in the search path.
     /// </summary>
     public static void EnsureDevCertTrusted()
     {
@@ -52,6 +57,15 @@ public static class EmulatorInfrastructure
 
         if (!Directory.Exists(trustDir))
             return;
+
+        // SSL_CERT_FILE overrides SSL_CERT_DIR in OpenSSL. If it's set, unset it
+        // so our SSL_CERT_DIR additions take effect. The system CA bundle is already
+        // included via the /usr/lib/ssl/certs directory in SSL_CERT_DIR.
+        var sslCertFile = Environment.GetEnvironmentVariable("SSL_CERT_FILE");
+        if (!string.IsNullOrEmpty(sslCertFile))
+        {
+            Environment.SetEnvironmentVariable("SSL_CERT_FILE", null);
+        }
 
         var current = Environment.GetEnvironmentVariable("SSL_CERT_DIR") ?? "";
         if (!current.Contains(trustDir))

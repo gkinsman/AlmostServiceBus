@@ -29,24 +29,31 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
 
     public override void OnFlow(FlowContext flowContext)
     {
-        if (flowContext.Link.IsDraining)
+        try
         {
-            flowContext.Link.CompleteDrain();
-            _pumpCts?.Cancel();
-            return;
-        }
-
-        lock (_pumpLock)
-        {
-            if (_pumpTask is null || _pumpTask.IsCompleted)
+            if (flowContext.Link.IsDraining)
             {
-                var cts = new CancellationTokenSource();
-                _pumpCts = cts;
-                var link = flowContext.Link;
-                link.Closed += (_, __) => cts.Cancel();
-                link.Session.Connection.Closed += (_, __) => cts.Cancel();
-                _pumpTask = Task.Run(() => SessionPumpAsync(link, cts.Token));
+                flowContext.Link.CompleteDrain();
+                _pumpCts?.Cancel();
+                return;
             }
+
+            lock (_pumpLock)
+            {
+                if (_pumpTask is null || _pumpTask.IsCompleted)
+                {
+                    var cts = new CancellationTokenSource();
+                    _pumpCts = cts;
+                    var link = flowContext.Link;
+                    link.Closed += (_, __) => cts.Cancel();
+                    link.Session.Connection.Closed += (_, __) => cts.Cancel();
+                    _pumpTask = Task.Run(() => SessionPumpAsync(link, cts.Token));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "OnFlow failed for session '{SessionId}'", _session.SessionId);
         }
     }
 
@@ -100,7 +107,10 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
             }
         }
         catch (OperationCanceledException) { }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "SessionPumpAsync: unexpected error for session '{SessionId}'", _session.SessionId);
+        }
     }
 
     public override void OnDisposition(DispositionContext dispositionContext)
@@ -141,29 +151,74 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
         catch (MessageLockLostException)
         {
             Log.LogDebug("DISP lock={LockToken} LOCK EXPIRED (re-enqueued) queue='{Queue}'", lockToken, _queue.Name);
-            dispositionContext.Link.DisposeMessage(dispositionContext.Message, new Rejected
+            try
             {
-                Error = new Error(new Symbol("com.microsoft:message-lock-lost"))
+                dispositionContext.Link.DisposeMessage(dispositionContext.Message, new Rejected
                 {
-                    Description = "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue."
-                }
-            }, true);
+                    Error = new Error(new Symbol("com.microsoft:message-lock-lost"))
+                    {
+                        Description = "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue."
+                    }
+                }, true);
+            }
+            catch (Exception ex)
+            {
+                Log.LogDebug(ex, "Failed to send lock-lost rejection for session '{SessionId}'", _session.SessionId);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "OnDisposition failed for session '{SessionId}', lock={LockToken}", _session.SessionId, lockToken);
         }
     }
 
     public override void OnLinkClosed(ListenerLink link, Error error)
     {
-        _pumpCts?.Cancel();
-        _pumpCts?.Dispose();
-        _pumpCts = null;
+        try
+        {
+            _pumpCts?.Cancel();
+            _pumpCts?.Dispose();
+            _pumpCts = null;
 
-        // Do NOT release the session lock here. The Azure SDK's auto-renewal timer
-        // runs independently and may fire after the link closes but before the SDK
-        // processes the closure. Releasing the lock immediately causes a race where
-        // RenewSessionLock returns 404, which triggers ErrorRequiresRecycle and kills
-        // the consumer. Instead, let the lock expire naturally via LockDuration — this
-        // matches real Azure Service Bus behavior where session locks have a duration
-        // and only become available after expiry (or explicit release by the SDK).
+            // Release the session lock so a new receiver can pick up this session
+            // immediately. Under high load (e.g. connection resets), holding the lock
+            // for the full LockDuration (30s) starves new receivers and causes messages
+            // to pile up. The RenewSessionLock 404 race (see below) is acceptable
+            // because if the link is closing, the client is already tearing down.
+            //
+            // Note: in normal SDK-initiated close, the SDK releases the session lock
+            // explicitly via $management before closing the link. This path handles
+            // abnormal closes (connection resets, timeouts).
+            try
+            {
+                _queue.Sessions?.ReleaseSession(_session.SessionId);
+                Log.LogDebug("Released session lock for session '{SessionId}' on link close (error={Error})",
+                    _session.SessionId, error?.Description);
+            }
+            catch (Exception ex)
+            {
+                Log.LogDebug(ex, "Failed to release session lock for '{SessionId}'", _session.SessionId);
+            }
+
+            // Reclaim any pending (in-flight) messages back to the session queue.
+            // When the pump was running, it dequeued messages from the session and
+            // tracked them in _queue._pending. With the link dead, those messages
+            // would be stuck in _pending until SweepExpiredLocks picks them up (up
+            // to LockDuration delay). Reclaiming them immediately allows the next
+            // receiver to process them without waiting.
+            try
+            {
+                _queue.ReclaimPendingForSession(_session.SessionId);
+            }
+            catch (Exception ex)
+            {
+                Log.LogDebug(ex, "Failed to reclaim pending messages for session '{SessionId}'", _session.SessionId);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "OnLinkClosed failed for session '{SessionId}'", _session.SessionId);
+        }
 
         base.OnLinkClosed(link, error);
     }

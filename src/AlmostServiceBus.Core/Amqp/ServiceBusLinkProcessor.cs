@@ -201,22 +201,60 @@ public class ServiceBusLinkProcessor : ILinkProcessor
                     var accepted = queue.Sessions.TryAcceptSession(requestedSessionId, receiverId);
                     if (accepted is not null)
                     {
+                        // Guard against race: the client may have disconnected between
+                        // TryAcceptSession and CompleteSessionAttach. If the CTS was
+                        // cancelled, release the session lock so another receiver can
+                        // pick it up immediately.
+                        if (cts.IsCancellationRequested)
+                        {
+                            queue.Sessions.ReleaseSession(accepted.SessionId);
+                            Log.LogDebug("HandleSessionReceiver: client disconnected after accepting session={SessionId}, released lock",
+                                accepted.SessionId);
+                            return;
+                        }
+
                         Log.LogDebug("HandleSessionReceiver: POLL ACCEPTED session={SessionId} for receiver={ReceiverId}",
                             accepted.SessionId, receiverId);
-                        CompleteSessionAttach(attachContext, queue, accepted);
+
+                        try
+                        {
+                            CompleteSessionAttach(attachContext, queue, accepted);
+                        }
+                        catch (Exception ex)
+                        {
+                            // CompleteAttach failed — link may already be closing.
+                            // Release the session lock so it's not stuck for LockDuration.
+                            queue.Sessions.ReleaseSession(accepted.SessionId);
+                            Log.LogWarning(ex,
+                                "HandleSessionReceiver: CompleteSessionAttach failed for session={SessionId}, released lock",
+                                accepted.SessionId);
+                        }
                         return;
                     }
                 }
             }
             catch (OperationCanceledException) { }
-
-            // Timeout (or client disconnected) — reject with the standard timeout error
-            attachContext.Complete(new Error(new Symbol("com.microsoft:timeout"))
+            catch (Exception ex)
             {
-                Description = requestedSessionId is not null
-                    ? $"Session '{requestedSessionId}' is not available."
-                    : "No sessions are available."
-            });
+                Log.LogWarning(ex, "HandleSessionReceiver: polling loop failed for queue={Queue}, receiverId={ReceiverId}",
+                    address, receiverId);
+            }
+
+            // Timeout (or client disconnected) — reject with the standard timeout error.
+            // Wrap in try-catch because the link may already be closed/detached.
+            try
+            {
+                attachContext.Complete(new Error(new Symbol("com.microsoft:timeout"))
+                {
+                    Description = requestedSessionId is not null
+                        ? $"Session '{requestedSessionId}' is not available."
+                        : "No sessions are available."
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.LogDebug(ex, "HandleSessionReceiver: failed to send timeout error (link likely already closed)");
+            }
         });
     }
 

@@ -30,38 +30,45 @@ public class ReceiverLinkEndpoint : LinkEndpoint
 
     public override void OnFlow(FlowContext flowContext)
     {
-        Log.LogDebug("FLOW queue='{Queue}' credit={Credit} drain={Drain}", _queue.Name, flowContext.Messages, flowContext.Link.IsDraining);
-
-        // When the client sends drain=true, it wants to stop receiving.
-        // Cancel the pump first, then complete the drain so the response
-        // Flow frame (credit=0) is sent after the pump has stopped sending.
-        if (flowContext.Link.IsDraining)
+        try
         {
-            // Complete the drain IMMEDIATELY — send Flow(credit=0) back to the
-            // consumer before doing anything else. If we delay (e.g. waiting for
-            // the pump to stop), the link may start detaching and CompleteDrain's
-            // internal SendFlow becomes a no-op (it checks !IsDetaching).
-            flowContext.Link.CompleteDrain();
-            _pumpCts?.Cancel();
-            return;
-        }
+            Log.LogDebug("FLOW queue='{Queue}' credit={Credit} drain={Drain}", _queue.Name, flowContext.Messages, flowContext.Link.IsDraining);
 
-        lock (_pumpLock)
-        {
-            if (_pumpTask is null || _pumpTask.IsCompleted)
+            // When the client sends drain=true, it wants to stop receiving.
+            // Cancel the pump first, then complete the drain so the response
+            // Flow frame (credit=0) is sent after the pump has stopped sending.
+            if (flowContext.Link.IsDraining)
             {
-                var cts = new CancellationTokenSource();
-                _pumpCts = cts;
-                var link = flowContext.Link;
-
-                // Capture cts local — not the _pumpCts field — so that if a new
-                // pump starts later (overwriting _pumpCts), the old link's Closed
-                // handler cancels THIS pump's CTS, not the new one.
-                link.Closed += (_, __) => cts.Cancel();
-                link.Session.Connection.Closed += (_, __) => cts.Cancel();
-
-                _pumpTask = Task.Run(() => MessagePumpAsync(link, cts.Token));
+                // Complete the drain IMMEDIATELY — send Flow(credit=0) back to the
+                // consumer before doing anything else. If we delay (e.g. waiting for
+                // the pump to stop), the link may start detaching and CompleteDrain's
+                // internal SendFlow becomes a no-op (it checks !IsDetaching).
+                flowContext.Link.CompleteDrain();
+                _pumpCts?.Cancel();
+                return;
             }
+
+            lock (_pumpLock)
+            {
+                if (_pumpTask is null || _pumpTask.IsCompleted)
+                {
+                    var cts = new CancellationTokenSource();
+                    _pumpCts = cts;
+                    var link = flowContext.Link;
+
+                    // Capture cts local — not the _pumpCts field — so that if a new
+                    // pump starts later (overwriting _pumpCts), the old link's Closed
+                    // handler cancels THIS pump's CTS, not the new one.
+                    link.Closed += (_, __) => cts.Cancel();
+                    link.Session.Connection.Closed += (_, __) => cts.Cancel();
+
+                    _pumpTask = Task.Run(() => MessagePumpAsync(link, cts.Token));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "OnFlow failed for queue '{Queue}'", _queue.Name);
         }
     }
 
@@ -119,7 +126,10 @@ public class ReceiverLinkEndpoint : LinkEndpoint
             }
         }
         catch (OperationCanceledException) { }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "MessagePumpAsync: unexpected error for queue '{Queue}'", _queue.Name);
+        }
     }
 
     public override void OnDisposition(DispositionContext dispositionContext)
@@ -148,21 +158,39 @@ public class ReceiverLinkEndpoint : LinkEndpoint
             // We use Link.DisposeMessage instead of dispositionContext.Complete(Error)
             // because the latter detaches the entire link.
             Log.LogDebug("DISP lock={LockToken} LOCK EXPIRED (re-enqueued) queue='{Queue}'", lockToken, _queue.Name);
-            dispositionContext.Link.DisposeMessage(dispositionContext.Message, new Rejected
+            try
             {
-                Error = new Error(new Symbol("com.microsoft:message-lock-lost"))
+                dispositionContext.Link.DisposeMessage(dispositionContext.Message, new Rejected
                 {
-                    Description = "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue."
-                }
-            }, true);
+                    Error = new Error(new Symbol("com.microsoft:message-lock-lost"))
+                    {
+                        Description = "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue."
+                    }
+                }, true);
+            }
+            catch (Exception ex)
+            {
+                Log.LogDebug(ex, "Failed to send lock-lost rejection for queue '{Queue}'", _queue.Name);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "OnDisposition failed for queue '{Queue}', lock={LockToken}", _queue.Name, lockToken);
         }
     }
 
     public override void OnLinkClosed(ListenerLink link, Error error)
     {
-        _pumpCts?.Cancel();
-        _pumpCts?.Dispose();
-        _pumpCts = null;
+        try
+        {
+            _pumpCts?.Cancel();
+            _pumpCts?.Dispose();
+            _pumpCts = null;
+        }
+        catch (Exception ex)
+        {
+            Log.LogDebug(ex, "OnLinkClosed cleanup failed for queue '{Queue}'", _queue.Name);
+        }
         base.OnLinkClosed(link, error);
     }
 
