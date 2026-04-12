@@ -122,6 +122,11 @@ public sealed class QueueEntity : IDisposable
     /// </summary>
     public int TotalMessageCount => _allMessages.Count;
 
+    /// <summary>
+    /// Count of messages currently locked/pending (delivered to consumer but not settled).
+    /// </summary>
+    public int PendingCount => _pending.Count;
+
     public int ConsumedCount => _allMessages.Values.Count(m => m.State == MessageState.Consumed);
 
     public void SetEventBus(MessageEventBus bus, string namespaceName, string entityName)
@@ -515,10 +520,17 @@ public sealed class QueueEntity : IDisposable
         // Run the same sweep for session queues to catch these orphaned messages.
 
         var now = DateTimeOffset.UtcNow;
+        var pendingCount = _pending.Count;
+        if (RequiresSession && pendingCount > 0)
+        {
+            Console.Error.WriteLine($"[SWEEP] Session queue '{Name}': {pendingCount} pending, checking for expired locks...");
+        }
         foreach (var (lockToken, message) in _pending)
         {
             if (message.LockedUntil != default && now > message.LockedUntil)
             {
+                if (RequiresSession)
+                    Console.Error.WriteLine($"[SWEEP] Re-enqueuing expired session message: SessionId={message.SessionId}, MessageId={message.MessageId}, LockedUntil={message.LockedUntil:HH:mm:ss}, DeliveryCount={message.DeliveryCount}");
                 // Mark the lock token as swept BEFORE removing from _pending.
                 // This closes a TOCTOU window: without this, a concurrent Complete()
                 // could see the message missing from _pending (we already TryRemove'd it)

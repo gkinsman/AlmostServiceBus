@@ -50,6 +50,8 @@ public class GuidDeliveryTagHandler : IHandler
     public bool CanHandle(EventId id) =>
         id == EventId.SendDelivery ||
         id == EventId.ConnectionRemoteClose ||
+        id == EventId.SessionLocalClose ||
+        id == EventId.SessionRemoteClose ||
         id == EventId.LinkRemoteClose;
 
     public void Handle(Event protocolEvent)
@@ -57,6 +59,18 @@ public class GuidDeliveryTagHandler : IHandler
         if (protocolEvent.Id == EventId.ConnectionRemoteClose)
         {
             HandleConnectionRemoteClose(protocolEvent);
+            return;
+        }
+
+        if (protocolEvent.Id == EventId.SessionLocalClose || protocolEvent.Id == EventId.SessionRemoteClose)
+        {
+            // Track AMQP session closures to diagnose "session channel not found" errors.
+            try
+            {
+                var direction = protocolEvent.Id == EventId.SessionLocalClose ? "LOCAL" : "REMOTE";
+                Log.LogWarning("AMQP session {Direction} close", direction);
+            }
+            catch { }
             return;
         }
 

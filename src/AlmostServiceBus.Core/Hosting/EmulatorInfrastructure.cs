@@ -62,5 +62,32 @@ public static class EmulatorInfrastructure
                 : $"{trustDir}:{current}";
             Environment.SetEnvironmentVariable("SSL_CERT_DIR", newValue);
         }
+
+        // If SSL_CERT_FILE is set (common on Linux), OpenSSL uses that file exclusively
+        // and ignores SSL_CERT_DIR. Append the dev cert to the bundle so it's trusted.
+        var certFile = Environment.GetEnvironmentVariable("SSL_CERT_FILE");
+        if (!string.IsNullOrEmpty(certFile) && File.Exists(certFile))
+        {
+            var devCerts = Directory.GetFiles(trustDir, "*.pem");
+            if (devCerts.Length > 0)
+            {
+                var bundleContent = File.ReadAllText(certFile);
+                var devCertContent = File.ReadAllText(devCerts[0]);
+                if (!bundleContent.Contains(devCertContent.Trim()))
+                {
+                    try
+                    {
+                        File.AppendAllText(certFile, "\n" + devCertContent);
+                    }
+                    catch
+                    {
+                        // Can't write to system cert file — try a temp copy
+                        var tempBundle = Path.Combine(Path.GetTempPath(), "aspnet-dev-ca-bundle.pem");
+                        File.WriteAllText(tempBundle, bundleContent + "\n" + devCertContent);
+                        Environment.SetEnvironmentVariable("SSL_CERT_FILE", tempBundle);
+                    }
+                }
+            }
+        }
     }
 }
