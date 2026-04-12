@@ -479,15 +479,40 @@ public sealed class QueueEntity : IDisposable
     }
 
     /// <summary>
+    /// Re-enqueues all unsettled (pending) messages belonging to a specific session.
+    /// Called when a session lock is released (link close) to ensure messages that were
+    /// in-flight when the consumer disconnected are returned to the session queue for
+    /// redelivery. Without this, messages stuck in _pending for session queues are lost
+    /// forever because SweepExpiredLocks skips session-enabled queues.
+    /// </summary>
+    public void ReclaimPendingForSession(string sessionId)
+    {
+        foreach (var (lockToken, message) in _pending)
+        {
+            if (!string.Equals(message.SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (_pending.TryRemove(lockToken, out var removed))
+            {
+                _allMessages.TryRemove(lockToken, out _);
+                removed.LockToken = null;
+                ReEnqueue(removed);
+            }
+        }
+    }
+
+    /// <summary>
     /// Background sweep that returns expired-lock messages to the queue,
     /// matching real Azure Service Bus behavior where messages automatically
     /// become available after lock expiry even if the consumer never settles.
     /// </summary>
     private void SweepExpiredLocks()
     {
-        // Session-enabled queues don't expire individual message locks —
-        // the session lock governs message lifetime.
-        if (RequiresSession) return;
+        // Session-enabled queues: the session lock normally governs message lifetime,
+        // and session messages are reclaimed in OnLinkClosed via ReclaimPendingForSession.
+        // However, if the AMQP connection itself is killed (not graceful link close),
+        // OnLinkClosed never fires and messages get stuck in _pending forever.
+        // Run the same sweep for session queues to catch these orphaned messages.
 
         var now = DateTimeOffset.UtcNow;
         foreach (var (lockToken, message) in _pending)

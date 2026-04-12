@@ -201,22 +201,54 @@ public class ServiceBusLinkProcessor : ILinkProcessor
                     var accepted = queue.Sessions.TryAcceptSession(requestedSessionId, receiverId);
                     if (accepted is not null)
                     {
+                        // Race guard: the client may have detached the link (timeout/disconnect)
+                        // between TryAcceptSession and CompleteSessionAttach. Completing the
+                        // attach on a dead link causes an AMQP protocol error that kills the
+                        // entire connection ("session channel N cannot be found"), which under
+                        // Black Friday load cascades into a permanent pump stall.
+                        if (cts.IsCancellationRequested)
+                        {
+                            queue.Sessions.ReleaseSession(accepted.SessionId);
+                            return;
+                        }
+
                         Log.LogDebug("HandleSessionReceiver: POLL ACCEPTED session={SessionId} for receiver={ReceiverId}",
                             accepted.SessionId, receiverId);
-                        CompleteSessionAttach(attachContext, queue, accepted);
+
+                        try
+                        {
+                            CompleteSessionAttach(attachContext, queue, accepted);
+                        }
+                        catch (Exception ex)
+                        {
+                            // Link was detached between the CTS check and CompleteSessionAttach.
+                            // Release the session lock so another consumer can pick it up.
+                            Log.LogWarning(ex, "CompleteSessionAttach failed for session '{SessionId}' — link likely detached, releasing lock",
+                                accepted.SessionId);
+                            queue.Sessions.ReleaseSession(accepted.SessionId);
+                        }
                         return;
                     }
                 }
             }
             catch (OperationCanceledException) { }
 
-            // Timeout (or client disconnected) — reject with the standard timeout error
-            attachContext.Complete(new Error(new Symbol("com.microsoft:timeout"))
+            // Timeout (or client disconnected) — reject with the standard timeout error.
+            // Wrap in try-catch: the link may already be detached/closed, and attempting
+            // to send a response on a dead link can throw.
+            try
             {
-                Description = requestedSessionId is not null
-                    ? $"Session '{requestedSessionId}' is not available."
-                    : "No sessions are available."
-            });
+                attachContext.Complete(new Error(new Symbol("com.microsoft:timeout"))
+                {
+                    Description = requestedSessionId is not null
+                        ? $"Session '{requestedSessionId}' is not available."
+                        : "No sessions are available."
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.LogDebug(ex, "Failed to send timeout error for session receiver — link already closed");
+            }
         });
     }
 

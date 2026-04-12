@@ -2,6 +2,7 @@ using System.Reflection;
 using Amqp;
 using Amqp.Framing;
 using Amqp.Handler;
+using Amqp.Listener;
 using Amqp.Types;
 using Microsoft.Extensions.Logging;
 using EventId = Amqp.Handler.EventId;
@@ -34,8 +35,9 @@ public class GuidDeliveryTagHandler : IHandler
     private static readonly FieldInfo? LinkStateField =
         typeof(Link).GetField("state", BindingFlags.NonPublic | BindingFlags.Instance);
 
-    // LinkState.Start = 0, LinkState.Attached = 3
+    // LinkState enum values (internal to AMQPNetLite)
     private const int LinkStateStart = 0;
+    private const int LinkStateAttachSent = 1;
     private const int LinkStateAttached = 3;
 
     static GuidDeliveryTagHandler()
@@ -96,12 +98,16 @@ public class GuidDeliveryTagHandler : IHandler
     }
 
     /// <summary>
-    /// Handles Detach frames arriving for links that are still in Start state.
-    /// This happens when a client times out or disconnects while waiting for a
-    /// session receiver link's Attach to complete (the server is polling for an
-    /// available session). AMQPNetLite's state machine rejects Detach in Start
-    /// state with AmqpException, killing the entire connection. By transitioning
-    /// the link to Attached state here, the Detach is handled gracefully.
+    /// Handles Detach frames arriving for links in states that don't accept Detach.
+    /// AMQPNetLite's state machine throws AmqpException for Detach in Start or
+    /// AttachSent state, killing the entire AMQP connection.
+    ///
+    /// Two cases:
+    /// - Start: link attach was never completed (server polling for a session).
+    ///   Fix: call CompleteAttach with an error to properly allocate a session handle.
+    /// - AttachSent: server sent Attach but client's Detach arrived before the Attach
+    ///   response was processed. The session handle was already allocated by SendAttach,
+    ///   so directly transitioning to Attached is safe (no channel corruption).
     /// </summary>
     private static void HandleLinkRemoteClose(Event protocolEvent)
     {
@@ -111,14 +117,32 @@ public class GuidDeliveryTagHandler : IHandler
         try
         {
             var currentState = (int)(LinkStateField.GetValue(link) ?? -1);
-            if (currentState == LinkStateStart)
+
+            // Handle ANY state that isn't fully Attached (3) or beyond (DetachSent=4+).
+            // States 0 (Start), 1 (AttachSent), 2 (AttachReceived) all reject Detach.
+            if (currentState >= 0 && currentState < LinkStateAttached)
             {
+                if (currentState == LinkStateStart && link is ListenerLink listenerLink)
+                {
+                    // Start: no session handle allocated yet. Use CompleteAttach to
+                    // properly allocate via Session.AddLink before the Detach runs.
+                    try
+                    {
+                        listenerLink.CompleteAttach(new Attach() { LinkName = link.Name }, new Error(new Symbol("amqp:detach-forced"))
+                        {
+                            Description = "Link detached by client while attach was pending."
+                        });
+                        return;
+                    }
+                    catch { /* fall through to state hack */ }
+                }
+
+                // AttachSent/AttachReceived (or Start fallback): session handle was
+                // already allocated by SendAttach, so directly setting to Attached
+                // keeps channel accounting correct and lets Detach proceed.
                 LinkStateField.SetValue(link, (LinkState)LinkStateAttached);
-                Log.LogWarning(
-                    "Prevented OnDetach crash: transitioned link '{LinkName}' from Start→Attached to allow graceful Detach",
-                    link.Name);
             }
         }
-        catch { /* best effort — if reflection fails, the original error behavior persists */ }
+        catch { /* best effort — if reflection fails, original error behavior persists */ }
     }
 }

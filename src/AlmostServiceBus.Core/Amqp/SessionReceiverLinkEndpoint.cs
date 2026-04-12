@@ -29,24 +29,36 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
 
     public override void OnFlow(FlowContext flowContext)
     {
-        if (flowContext.Link.IsDraining)
+        // All AMQPNetLite callbacks MUST be wrapped in try-catch. An unhandled exception
+        // here propagates into AMQPNetLite's frame processing and destroys the AMQP session
+        // (transport channel), killing ALL links on that session. Under Black Friday load
+        // this cascading failure kills the logistics-dispatch pump permanently.
+        try
         {
-            flowContext.Link.CompleteDrain();
-            _pumpCts?.Cancel();
-            return;
-        }
-
-        lock (_pumpLock)
-        {
-            if (_pumpTask is null || _pumpTask.IsCompleted)
+            if (flowContext.Link.IsDraining)
             {
-                var cts = new CancellationTokenSource();
-                _pumpCts = cts;
-                var link = flowContext.Link;
-                link.Closed += (_, __) => cts.Cancel();
-                link.Session.Connection.Closed += (_, __) => cts.Cancel();
-                _pumpTask = Task.Run(() => SessionPumpAsync(link, cts.Token));
+                flowContext.Link.CompleteDrain();
+                _pumpCts?.Cancel();
+                return;
             }
+
+            lock (_pumpLock)
+            {
+                if (_pumpTask is null || _pumpTask.IsCompleted)
+                {
+                    var cts = new CancellationTokenSource();
+                    _pumpCts = cts;
+                    var link = flowContext.Link;
+                    link.Closed += (_, __) => cts.Cancel();
+                    try { link.Session.Connection.Closed += (_, __) => cts.Cancel(); }
+                    catch { /* Session/Connection may be closing — ignore */ }
+                    _pumpTask = Task.Run(() => SessionPumpAsync(link, cts.Token));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "OnFlow failed for session '{SessionId}' on queue — suppressed to protect AMQP session", _session.SessionId);
         }
     }
 
@@ -100,71 +112,98 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
             }
         }
         catch (OperationCanceledException) { }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Session pump died unexpectedly for session '{SessionId}' on queue '{Queue}'", _session.SessionId, _queue.Name);
+        }
     }
 
     public override void OnDisposition(DispositionContext dispositionContext)
     {
-        var lockToken = ReceiverLinkEndpoint.GetLockTokenStatic(dispositionContext.Message);
-
+        // Wrapped in try-catch to prevent exceptions from killing the AMQP session.
         try
         {
-            if (lockToken is not null && dispositionContext.DeliveryState is not null)
-            {
-                switch (dispositionContext.DeliveryState)
-                {
-                    case Accepted:
-                        _queue.Complete(lockToken);
-                        break;
-                    case Released:
-                        _queue.Abandon(lockToken);
-                        break;
-                    case Rejected rejected:
-                        _queue.DeadLetter(lockToken,
-                            rejected.Error?.Condition?.ToString(),
-                            rejected.Error?.Description);
-                        break;
-                    case Modified modified:
-                        if (modified.UndeliverableHere == true)
-                            _queue.DeadLetter(lockToken, "Undeliverable", "Message marked as undeliverable.");
-                        else
-                            _queue.Abandon(lockToken);
-                        break;
-                    default:
-                        _queue.Complete(lockToken);
-                        break;
-                }
-            }
+            var lockToken = ReceiverLinkEndpoint.GetLockTokenStatic(dispositionContext.Message);
 
-            dispositionContext.Complete();
-        }
-        catch (MessageLockLostException)
-        {
-            Log.LogDebug("DISP lock={LockToken} LOCK EXPIRED (re-enqueued) queue='{Queue}'", lockToken, _queue.Name);
-            dispositionContext.Link.DisposeMessage(dispositionContext.Message, new Rejected
+            try
             {
-                Error = new Error(new Symbol("com.microsoft:message-lock-lost"))
+                if (lockToken is not null && dispositionContext.DeliveryState is not null)
                 {
-                    Description = "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue."
+                    switch (dispositionContext.DeliveryState)
+                    {
+                        case Accepted:
+                            _queue.Complete(lockToken);
+                            break;
+                        case Released:
+                            _queue.Abandon(lockToken);
+                            break;
+                        case Rejected rejected:
+                            _queue.DeadLetter(lockToken,
+                                rejected.Error?.Condition?.ToString(),
+                                rejected.Error?.Description);
+                            break;
+                        case Modified modified:
+                            if (modified.UndeliverableHere == true)
+                                _queue.DeadLetter(lockToken, "Undeliverable", "Message marked as undeliverable.");
+                            else
+                                _queue.Abandon(lockToken);
+                            break;
+                        default:
+                            _queue.Complete(lockToken);
+                            break;
+                    }
                 }
-            }, true);
+
+                dispositionContext.Complete();
+            }
+            catch (MessageLockLostException)
+            {
+                Log.LogDebug("DISP lock={LockToken} LOCK EXPIRED (re-enqueued) queue='{Queue}'", lockToken, _queue.Name);
+                dispositionContext.Link.DisposeMessage(dispositionContext.Message, new Rejected
+                {
+                    Error = new Error(new Symbol("com.microsoft:message-lock-lost"))
+                    {
+                        Description = "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue."
+                    }
+                }, true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "OnDisposition failed for session '{SessionId}' — suppressed to protect AMQP session", _session.SessionId);
         }
     }
 
     public override void OnLinkClosed(ListenerLink link, Error error)
     {
-        _pumpCts?.Cancel();
-        _pumpCts?.Dispose();
-        _pumpCts = null;
+        try
+        {
+            _pumpCts?.Cancel();
+            _pumpCts?.Dispose();
+            _pumpCts = null;
 
-        // Do NOT release the session lock here. The Azure SDK's auto-renewal timer
-        // runs independently and may fire after the link closes but before the SDK
-        // processes the closure. Releasing the lock immediately causes a race where
-        // RenewSessionLock returns 404, which triggers ErrorRequiresRecycle and kills
-        // the consumer. Instead, let the lock expire naturally via LockDuration — this
-        // matches real Azure Service Bus behavior where session locks have a duration
-        // and only become available after expiry (or explicit release by the SDK).
+            // Release the session lock so another consumer can pick it up immediately.
+            // Without this, the lock persists for the full LockDuration (e.g. 30s) after
+            // the link closes, which under sustained Black Friday load causes cascading
+            // session unavailability — all sessions become locked, new receivers can't
+            // accept any session, and the queue stalls completely.
+            //
+            // The Azure SDK's auto-renewal timer may fire briefly after the link closes,
+            // but the management endpoint handles renew-on-unlocked-session gracefully
+            // (returns the current time rather than erroring), so this is safe.
+            _queue.Sessions?.ReleaseSession(_session.SessionId);
 
-        base.OnLinkClosed(link, error);
+            // Reclaim any unsettled messages for this session. These are messages that
+            // were sent to the consumer but not yet completed/abandoned when the link
+            // died (e.g. AMQP connection reset under load). Without this, they stay
+            // stuck in _pending forever because SweepExpiredLocks skips session queues.
+            _queue.ReclaimPendingForSession(_session.SessionId);
+
+            base.OnLinkClosed(link, error);
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "OnLinkClosed failed for session '{SessionId}' — suppressed to protect AMQP session", _session.SessionId);
+        }
     }
 }

@@ -310,11 +310,15 @@ public class ManagementLinkEndpoint : IRequestProcessor
         var lockedUntil = sessionManager.RenewSessionLock(sessionId);
         if (lockedUntil is null)
         {
-            Log.LogWarning(
-                "HandleRenewSessionLock: session '{SessionId}' not found or not locked. Known sessions: [{Sessions}]",
-                sessionId, string.Join(", ", sessionManager.GetSessionIds()));
-            SendErrorResponse(requestContext, 404, "Session not found or not locked");
-            return;
+            // Session was already released (e.g. link closed under load). Return 200
+            // with the current time instead of 404 — the SDK's auto-renewal timer may
+            // fire after link close and a 404 triggers ErrorRequiresRecycle, which kills
+            // the consumer. Returning success here is a harmless no-op that prevents
+            // cascading failures.
+            Log.LogDebug(
+                "HandleRenewSessionLock: session '{SessionId}' not locked, returning current time to avoid SDK error",
+                sessionId);
+            lockedUntil = DateTimeOffset.UtcNow.Add(TimeSpan.FromSeconds(30));
         }
 
         var responseBody = new Map
