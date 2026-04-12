@@ -520,6 +520,15 @@ public sealed class QueueEntity : IDisposable
         {
             if (message.LockedUntil != default && now > message.LockedUntil)
             {
+                // For session-enabled queues, the session lock governs message lifetime.
+                // Only sweep messages whose session lock has ALSO expired or been released.
+                // This matches real Azure Service Bus behavior where individual message
+                // locks don't expire independently while the session is locked.
+                if (RequiresSession && message.SessionId is not null
+                    && Sessions?.IsSessionLocked(message.SessionId) == true)
+                {
+                    continue;
+                }
                 // Mark the lock token as swept BEFORE removing from _pending.
                 // This closes a TOCTOU window: without this, a concurrent Complete()
                 // could see the message missing from _pending (we already TryRemove'd it)

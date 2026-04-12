@@ -213,6 +213,18 @@ public class SessionManager
         session.UserState = state;
     }
 
+    /// <summary>
+    /// Returns whether the given session is currently locked by a receiver.
+    /// Used by the lock sweep to skip messages whose session is still active.
+    /// </summary>
+    public bool IsSessionLocked(string sessionId)
+    {
+        lock (_acceptLock)
+        {
+            return _sessions.TryGetValue(sessionId, out var session) && session.IsLocked;
+        }
+    }
+
     public IReadOnlyCollection<string> GetAvailableSessionIds()
     {
         lock (_acceptLock)
