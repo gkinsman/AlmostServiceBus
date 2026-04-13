@@ -2,7 +2,6 @@ using System.Reflection;
 using Amqp;
 using Amqp.Framing;
 using Amqp.Handler;
-using Amqp.Listener;
 using Amqp.Types;
 using Microsoft.Extensions.Logging;
 using EventId = Amqp.Handler.EventId;
@@ -40,7 +39,14 @@ public class GuidDeliveryTagHandler : IHandler
     //   DetachPipe=4, DetachSent=5, DetachReceived=6, End=7
     private const int LinkStateStart = 0;
     private const int LinkStateAttachSent = 1;
-    private const int LinkStateAttached = 3;
+    // DetachSent = 5: semantically "we have sent Detach, waiting for response".
+    // When AMQPNetLite's OnDetach runs on a link in this state, it transitions
+    // directly to End WITHOUT sending a Detach response frame. This is crucial
+    // for links whose Attach handshake never completed: the client may have
+    // already End'd the whole AMQP session before our Detach response could
+    // arrive, and any frame on an End'd session causes the client to throw
+    // "session channel N cannot be found" and close the connection.
+    private const int LinkStateDetachSent = 5;
 
     static GuidDeliveryTagHandler()
     {
@@ -104,21 +110,25 @@ public class GuidDeliveryTagHandler : IHandler
     }
 
     /// <summary>
-    /// Handles Detach frames (remote or local) arriving for links that are still in
-    /// Start or AttachSent state. This happens when:
+    /// Handles Detach frames (remote or local) for links in pre-Attached states
+    /// (Start, AttachSent). This happens when:
     ///   - A client times out while waiting for a session receiver link's Attach to
     ///     complete (the server is polling for an available session).
     ///   - A connection reset tears down links that haven't completed the AMQP handshake.
     ///
-    /// AMQPNetLite's state machine rejects Detach in Start/AttachSent state with
-    /// AmqpException, killing the entire connection. For Start state, we use
-    /// CompleteAttach(error) to properly register the link in the session's channel
-    /// map and close it gracefully. For AttachSent, the link is already registered
-    /// (SendAttach called Session.AddLink), so we just transition to Attached.
+    /// AMQPNetLite's state machine rejects Detach in these states with AmqpException,
+    /// killing the entire connection.
     ///
-    /// Simply setting state=Attached via reflection (without CompleteAttach) skips
-    /// Session.AddLink registration → the session's channel map is corrupted → under
-    /// load, "session channel N cannot be found" kills the AMQP connection.
+    /// We transition to DetachSent (not Attached). In AMQPNetLite's OnDetach flow:
+    ///   - Attached + receive Detach → DetachReceived → sends Detach response → End
+    ///   - DetachSent + receive Detach → End (no response frame sent)
+    ///
+    /// Sending a response Detach is risky when the client has concurrently End'd the
+    /// whole AMQP session: the response frame arrives at a channel the client has
+    /// already removed from its map, causing "session channel N cannot be found" at
+    /// the client, which tears down the connection. Using DetachSent avoids sending
+    /// any frame and still allows AMQPNetLite to cleanly remove the link from the
+    /// session's local channel map (Session.RemoveLink is called unconditionally).
     /// </summary>
     private static void HandleLinkClose(Event protocolEvent)
     {
@@ -129,55 +139,12 @@ public class GuidDeliveryTagHandler : IHandler
         {
             var currentState = (int)(LinkStateField.GetValue(link) ?? -1);
 
-            if (currentState == LinkStateStart)
+            if (currentState == LinkStateStart || currentState == LinkStateAttachSent)
             {
-                // Link is in Start state — Attach handshake never completed.
-                // Use CompleteAttach(error) to properly register the link in the
-                // session channel map and send Attach+Detach for clean shutdown.
-                if (link is ListenerLink listenerLink)
-                {
-                    try
-                    {
-                        var responseAttach = new Attach
-                        {
-                            LinkName = link.Name,
-                            Role = link.Role,
-                        };
-                        listenerLink.CompleteAttach(responseAttach, new Error(new Symbol("amqp:detach-forced"))
-                        {
-                            Description = "Link detached before attach completed."
-                        });
-                        Log.LogDebug(
-                            "Handled premature close for link '{LinkName}' via CompleteAttach (was Start state, event={EventId})",
-                            link.Name, protocolEvent.Id);
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.LogDebug(ex,
-                            "CompleteAttach failed for link '{LinkName}' (Start state), falling back to state transition",
-                            link.Name);
-                    }
-                }
-
-                // Fallback: if CompleteAttach failed (session/connection closing) or
-                // link is not a ListenerLink, force state to Attached so AMQPNetLite's
-                // Detach processing doesn't throw AmqpException.
-                LinkStateField.SetValue(link, (LinkState)LinkStateAttached);
-                Log.LogWarning(
-                    "Prevented detach crash: transitioned link '{LinkName}' from Start→Attached (event={EventId})",
-                    link.Name, protocolEvent.Id);
-            }
-            else if (currentState == LinkStateAttachSent)
-            {
-                // AttachSent: our Attach response was sent (Session.AddLink already called),
-                // but we haven't received the client's Attach response yet. The session
-                // channel map is already consistent. Just transition to Attached so the
-                // Detach state machine check passes.
-                LinkStateField.SetValue(link, (LinkState)LinkStateAttached);
+                LinkStateField.SetValue(link, (LinkState)LinkStateDetachSent);
                 Log.LogDebug(
-                    "Handled premature close for link '{LinkName}': AttachSent→Attached (event={EventId})",
-                    link.Name, protocolEvent.Id);
+                    "Handled premature close for link '{LinkName}': state {OldState}→DetachSent (event={EventId})",
+                    link.Name, currentState, protocolEvent.Id);
             }
         }
         catch (Exception ex)
