@@ -31,7 +31,7 @@ public static class EmulatorInfrastructure
         store.Open(OpenFlags.ReadOnly);
         // OID 1.3.6.1.4.1.311.84.1.1 identifies ASP.NET Core dev certs
         var certs = store.Certificates.Find(
-            X509FindType.FindByExtension, "1.3.6.1.4.1.311.84.1.1", validOnly: false);
+            X509FindType.FindByExtension, "1.3.6.1.4.1.311.84.1.1", validOnly: true);
         if (certs.Count == 0)
             throw new InvalidOperationException(
                 "ASP.NET HTTPS development certificate not found. " +
