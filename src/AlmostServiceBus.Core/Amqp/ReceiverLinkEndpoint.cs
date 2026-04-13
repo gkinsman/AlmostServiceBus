@@ -205,24 +205,7 @@ public class ReceiverLinkEndpoint : LinkEndpoint
                 _queue.Abandon(lockToken);
                 break;
             case Rejected rejected:
-                // The Azure SDK sends dead-letter reason/description in the Error.Info map.
-                // Condition is "com.microsoft:dead-letter", and Info contains the user-specified
-                // "DeadLetterReason" and "DeadLetterErrorDescription".
-                string? dlReason = rejected.Error?.Condition?.ToString();
-                string? dlDescription = rejected.Error?.Description;
-                if (rejected.Error?.Info is { } info)
-                {
-                    // AMQPNetLite deserializes Info map keys as Symbol, not string,
-                    // so we iterate and compare via ToString().
-                    foreach (var key in info.Keys)
-                    {
-                        var keyStr = key?.ToString();
-                        if (keyStr == "DeadLetterReason" && info[key] is string reason)
-                            dlReason = reason;
-                        if (keyStr == "DeadLetterErrorDescription" && info[key] is string desc)
-                            dlDescription = desc;
-                    }
-                }
+                var (dlReason, dlDescription) = ExtractDeadLetterInfoStatic(rejected);
                 _queue.DeadLetter(lockToken, dlReason, dlDescription);
                 break;
             case Modified modified:
@@ -235,6 +218,31 @@ public class ReceiverLinkEndpoint : LinkEndpoint
                 _queue.Complete(lockToken);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Extracts the dead-letter reason and description from a Rejected delivery state.
+    /// The Azure SDK sends dead-letter reason/description in the Error.Info map
+    /// (Condition is "com.microsoft:dead-letter", and Info contains the user-specified
+    /// "DeadLetterReason" and "DeadLetterErrorDescription"). AMQPNetLite deserializes
+    /// Info map keys as Symbol, so we iterate and compare via ToString().
+    /// </summary>
+    internal static (string? Reason, string? Description) ExtractDeadLetterInfoStatic(Rejected rejected)
+    {
+        string? dlReason = rejected.Error?.Condition?.ToString();
+        string? dlDescription = rejected.Error?.Description;
+        if (rejected.Error?.Info is { } info)
+        {
+            foreach (var key in info.Keys)
+            {
+                var keyStr = key?.ToString();
+                if (keyStr == "DeadLetterReason" && info[key] is string reason)
+                    dlReason = reason;
+                if (keyStr == "DeadLetterErrorDescription" && info[key] is string desc)
+                    dlDescription = desc;
+            }
+        }
+        return (dlReason, dlDescription);
     }
 
     public async Task<BrokeredMessage> DequeueAsync(CancellationToken cancellationToken = default)

@@ -130,9 +130,12 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
                         _queue.Abandon(lockToken);
                         break;
                     case Rejected rejected:
-                        _queue.DeadLetter(lockToken,
-                            rejected.Error?.Condition?.ToString(),
-                            rejected.Error?.Description);
+                        // Use the shared helper so the Azure SDK's DeadLetterReason /
+                        // DeadLetterErrorDescription (sent in Error.Info map) are
+                        // extracted consistently on session and non-session queues.
+                        var (dlReason, dlDescription) =
+                            ReceiverLinkEndpoint.ExtractDeadLetterInfoStatic(rejected);
+                        _queue.DeadLetter(lockToken, dlReason, dlDescription);
                         break;
                     case Modified modified:
                         if (modified.UndeliverableHere == true)
