@@ -36,7 +36,23 @@ public static class EmulatorInfrastructure
             throw new InvalidOperationException(
                 "ASP.NET HTTPS development certificate not found. " +
                 "Run 'dotnet dev-certs https --trust' to generate and trust the certificate.");
-        return new X509Certificate2(certs[0]);
+
+        // Prefer a currently-valid cert with the latest expiry. macOS in particular
+        // tends to accumulate multiple dev certs in the login keychain; picking the
+        // first match can return an expired one, causing NotTimeValid TLS failures.
+        var now = DateTime.Now;
+        var cert = certs
+            .OfType<X509Certificate2>()
+            .Where(c => c.NotBefore <= now && c.NotAfter > now)
+            .OrderByDescending(c => c.NotAfter)
+            .FirstOrDefault();
+
+        if (cert is null)
+            throw new InvalidOperationException(
+                "ASP.NET HTTPS development certificate is expired or not yet valid. " +
+                "Run 'dotnet dev-certs https --clean && dotnet dev-certs https --trust' to regenerate it.");
+
+        return new X509Certificate2(cert);
     }
 
     /// <summary>
