@@ -21,22 +21,25 @@ public static class EmulatorInfrastructure
         return port;
     }
 
+    const string AspNetHttpsOid = "1.3.6.1.4.1.311.84.1.1";
+    
     /// <summary>
     /// Loads the ASP.NET Core HTTPS development certificate from the current user's certificate store.
     /// Throws if no dev cert is found.
     /// </summary>
-    public static X509Certificate2 LoadDevCert()
+    public static X509Certificate2? LoadDevCert()
     {
         using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
         store.Open(OpenFlags.ReadOnly);
-        // OID 1.3.6.1.4.1.311.84.1.1 identifies ASP.NET Core dev certs
-        var certs = store.Certificates.Find(
-            X509FindType.FindByExtension, "1.3.6.1.4.1.311.84.1.1", validOnly: true);
-        if (certs.Count == 0)
-            throw new InvalidOperationException(
-                "ASP.NET HTTPS development certificate not found. " +
-                "Run 'dotnet dev-certs https --trust' to generate and trust the certificate.");
-        return new X509Certificate2(certs[0]);
+        var now = DateTime.Now;
+        return store.Certificates
+            .OfType<X509Certificate2>()
+            .Where(c => c.Extensions.OfType<X509Extension>()
+                .Any(e => e.Oid?.Value == AspNetHttpsOid))
+            .Where(c => c.Subject == "CN=localhost")
+            .Where(c => c.HasPrivateKey && c.NotBefore <= now && now <= c.NotAfter)
+            .OrderByDescending(c => c.NotAfter)
+            .FirstOrDefault();
     }
 
     /// <summary>
