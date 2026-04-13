@@ -156,13 +156,12 @@ jobs:
           FILTER="$FILTER&FullyQualifiedName!~tracking_correlation_id_on_everything"
           # Request-reply: named broker reply URI resolution
           FILTER="$FILTER&FullyQualifiedName!~correct_scheme_on_reply_uri"
-          # Request-reply: can_request_reply flakes in CI (passes locally with and without
-          # the parallel-tests patch, including full 93-test Compliance parallel run).
-          # The emulator delivers the response correctly but Wolverine's RemoteInvokeAsync
-          # times out on slower CI runners before the reply queue processor picks it up.
-          FILTER="$FILTER&FullyQualifiedName!~InlineSendingAndReceivingCompliance.can_request_reply"
-          FILTER="$FILTER&FullyQualifiedName!~PrefixedSendingAndReceivingCompliance.can_request_reply"
-          FILTER="$FILTER&FullyQualifiedName!~TopicAndSubscriptionWithCustomRuleSendingAndReceivingCompliance.can_request_reply"
+          # NOTE: can_request_reply and can_send_and_wait were previously excluded here
+          # because Wolverine's default RemoteInvocationTimeout (5s) times out on slower
+          # CI runners before the reply-queue processor picks up the handler's ack.
+          # The remote-invocation-timeout.patch raises DefaultRemoteInvocationTimeout to
+          # 60s in the Inline / Prefixed / TopicAndSubscriptionWithCustomRule sender
+          # fixtures, so both tests now pass in CI and no filter is needed.
           # Inline requeue/DLQ: Wolverine's InlineAzureServiceBusListener._defer completes
           # the AMQP message then re-sends to the retry queue via BatchedSender, but the
           # retry queue never re-delivers.

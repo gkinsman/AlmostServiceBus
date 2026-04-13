@@ -1,0 +1,39 @@
+diff --git a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/InlineSendingAndReceivingCompliance.cs b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/InlineSendingAndReceivingCompliance.cs
+--- a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/InlineSendingAndReceivingCompliance.cs
++++ b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/InlineSendingAndReceivingCompliance.cs
+@@ -20,6 +20,7 @@ public class InlineComplianceFixture : TransportComplianceFixture, IAsyncLifetim
+         await SenderIs(opts =>
+         {
+             opts.UseAzureServiceBusTesting(out _ns);
++            opts.DefaultRemoteInvocationTimeout = 60.Seconds();
+         });
+
+         await ReceiverIs(opts =>
+diff --git a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/sending_compliance_with_prefixes.cs b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/sending_compliance_with_prefixes.cs
+--- a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/sending_compliance_with_prefixes.cs
++++ b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/sending_compliance_with_prefixes.cs
+@@ -26,6 +26,7 @@ public class PrefixedComplianceFixture : TransportComplianceFixture, IAsyncLifet
+             opts.UseAzureServiceBusTesting(out _ns)
+                 .PrefixIdentifiers("foo");
+
++            opts.DefaultRemoteInvocationTimeout = 60.Seconds();
+         });
+
+         await ReceiverIs(opts =>
+diff --git a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/send_and_receive_with_topics_and_subscriptions_with_custom_rule.cs b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/send_and_receive_with_topics_and_subscriptions_with_custom_rule.cs
+--- a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/send_and_receive_with_topics_and_subscriptions_with_custom_rule.cs
++++ b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/send_and_receive_with_topics_and_subscriptions_with_custom_rule.cs
+@@ -1,4 +1,5 @@
+ using Azure.Messaging.ServiceBus.Administration;
++using JasperFx.Core;
+ using Shouldly;
+ using Wolverine.ComplianceTests.Compliance;
+ using Wolverine.Tracking;
+@@ -17,6 +18,7 @@ public class TopicsWithCustomRuleComplianceFixture()
+         await SenderIs(opts =>
+         {
+             opts.UseAzureServiceBusTesting(out _ns);
++            opts.DefaultRemoteInvocationTimeout = 60.Seconds();
+         });
+
+         await ReceiverIs(opts =>
