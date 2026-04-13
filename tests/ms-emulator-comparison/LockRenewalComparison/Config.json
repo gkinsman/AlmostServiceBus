@@ -1,0 +1,37 @@
+{
+  "UserConfig": {
+    "Namespaces": [
+      {
+        "Name": "sbemulatorns",
+        "Queues": [
+          {
+            "Name": "lock-renewal-queue",
+            "Properties": {
+              "LockDuration": "PT10S",
+              "MaxDeliveryCount": 10,
+              "RequiresSession": false,
+              "DefaultMessageTimeToLive": "PT1H",
+              "DuplicateDetectionHistoryTimeWindow": "PT20S",
+              "RequiresDuplicateDetection": false
+            }
+          },
+          {
+            "Name": "session-renewal-queue",
+            "Properties": {
+              "LockDuration": "PT10S",
+              "MaxDeliveryCount": 10,
+              "RequiresSession": true,
+              "DefaultMessageTimeToLive": "PT1H",
+              "DuplicateDetectionHistoryTimeWindow": "PT20S",
+              "RequiresDuplicateDetection": false
+            }
+          }
+        ],
+        "Topics": []
+      }
+    ],
+    "Logging": {
+      "Type": "Console"
+    }
+  }
+}
