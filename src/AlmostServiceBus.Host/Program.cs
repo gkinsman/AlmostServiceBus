@@ -5,6 +5,22 @@ using AlmostServiceBus.Core.Hosting;
 using AlmostServiceBus.Core.Management;
 using Vite.AspNetCore;
 
+// Enable AMQPNetLite frame tracing for diagnostic builds. Set TRACE_AMQP=1 env var.
+if (Environment.GetEnvironmentVariable("TRACE_AMQP") == "1")
+{
+    Console.Error.WriteLine("[TRACE] Enabling AMQP frame tracing");
+    Amqp.Trace.TraceLevel = Amqp.TraceLevel.Frame;
+    Amqp.Trace.TraceListener = (level, format, args) =>
+    {
+        try
+        {
+            var line = args != null && args.Length > 0 ? string.Format(format, args) : format;
+            Console.Error.WriteLine($"[AMQP] {line}");
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[AMQP-TRACE-ERR] {ex.Message}"); }
+    };
+}
+
 // ── Management API server (internal, behind TLS multiplexer) ──
 
 var mgmtBuilder = WebApplication.CreateBuilder(args);

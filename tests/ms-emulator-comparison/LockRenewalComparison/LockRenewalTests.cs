@@ -210,13 +210,13 @@ public class LockRenewalTests : IAsyncLifetime
         });
 
         var receiver = await _client.AcceptSessionAsync(SessionQueueName, sessionId);
-        var expiry = receiver.SessionLockedUntil;
-        _output.WriteLine($"Session expires at {expiry:O}");
+        _output.WriteLine($"Session expires (from SDK): {receiver.SessionLockedUntil:O}");
 
-        // Wait well past LockDuration so the session lock expires server-side.
-        var waitSpan = expiry - DateTimeOffset.UtcNow + TimeSpan.FromSeconds(12);
-        if (waitSpan > TimeSpan.Zero)
-            await Task.Delay(waitSpan);
+        // Wait for LockDuration (10s configured on the queue) plus grace. Don't rely
+        // on receiver.SessionLockedUntil because the Azure SDK may or may not populate
+        // it from the attach response — both emulators should agree on behavior here
+        // regardless of whether the SDK sees the initial expiry or not.
+        await Task.Delay(TimeSpan.FromSeconds(12));
 
         var ex = await Assert.ThrowsAsync<ServiceBusException>(
             () => receiver.RenewSessionLockAsync());

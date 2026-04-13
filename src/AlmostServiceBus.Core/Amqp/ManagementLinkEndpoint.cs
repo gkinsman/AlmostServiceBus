@@ -276,14 +276,15 @@ public class ManagementLinkEndpoint : IRequestProcessor
 
         if (anyNotFound)
         {
-            // Status 410 (Gone) with the com.microsoft:message-lock-lost condition tells
-            // the SDK that the lock is definitively lost — the message was already settled,
-            // swept, or the lock expired. The SDK will propagate MessageLockLostException
-            // to the consumer instead of continuing to renew a dead lock.
+            // Status 410 (Gone) + com.microsoft:message-lock-lost condition tells the SDK
+            // that the lock is definitively lost — the message was already settled, swept,
+            // or its lock expired. The SDK propagates MessageLockLostException to the
+            // consumer instead of continuing to renew a dead lock.
             Log.LogDebug("HandleRenewLock: lock token {Token} not found — returning MessageLockLost",
                 notFoundToken);
             SendErrorResponse(requestContext, 410,
-                $"The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue. Token: {notFoundToken}");
+                $"The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue. Token: {notFoundToken}",
+                errorCondition: "com.microsoft:message-lock-lost");
             return;
         }
 
@@ -344,7 +345,13 @@ public class ManagementLinkEndpoint : IRequestProcessor
             Log.LogWarning(
                 "HandleRenewSessionLock: session '{SessionId}' not found or not locked. Known sessions: [{Sessions}]",
                 sessionId, string.Join(", ", sessionManager.GetSessionIds()));
-            SendErrorResponse(requestContext, 404, "Session not found or not locked");
+            // 410 (Gone) + com.microsoft:session-lock-lost condition is what real Azure
+            // Service Bus returns when a session's lock has expired or been released.
+            // The SDK parses the errorCondition ApplicationProperty to map to
+            // ServiceBusFailureReason.SessionLockLost.
+            SendErrorResponse(requestContext, 410,
+                $"The session lock was lost. Session '{sessionId}' is no longer locked.",
+                errorCondition: "com.microsoft:session-lock-lost");
             return;
         }
 
@@ -482,7 +489,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
         return null;
     }
 
-    private void SendErrorResponse(RequestContext requestContext, int statusCode, string description)
+    private void SendErrorResponse(RequestContext requestContext, int statusCode, string description, string? errorCondition = null)
     {
         var response = new Message()
         {
@@ -493,6 +500,16 @@ public class ManagementLinkEndpoint : IRequestProcessor
             },
             Properties = new Properties { CorrelationId = requestContext.Message.Properties?.MessageId }
         };
+
+        // The Azure SDK reads ApplicationProperties["errorCondition"] to determine the
+        // specific ServiceBusFailureReason (see AmqpResponseMessage.GetErrorCondition
+        // + AmqpExceptionHelper.ToMessagingContractException in azure-sdk-for-net).
+        // The value must be an AMQP Symbol matching a com.microsoft:* error string.
+        if (errorCondition is not null)
+        {
+            response.ApplicationProperties["errorCondition"] = new global::Amqp.Types.Symbol(errorCondition);
+        }
+
         requestContext.Complete(response);
     }
 

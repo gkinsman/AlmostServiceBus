@@ -280,8 +280,13 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         // Create a fresh Properties map — do NOT inherit the client's Attach properties
         // (e.g. com.microsoft:timeout), which would confuse the SDK into thinking the
         // response is a timeout notification rather than a successful session accept.
+        //
+        // CRITICAL: The Azure SDK reads com.microsoft:locked-until-utc as a `long`
+        // (UTC ticks) — not a DateTime. See AmqpReceiver.OpenReceiverLinkAsync in
+        // azure-sdk-for-net. Sending DateTime causes TryGetValue<long> to fail and
+        // SessionLockedUntil becomes DateTime.MinValue on the SDK side.
         attachContext.Attach.Properties = new Fields();
-        attachContext.Attach.Properties[new Symbol("com.microsoft:locked-until-utc")] = session.LockedUntil.UtcDateTime;
+        attachContext.Attach.Properties[new Symbol("com.microsoft:locked-until-utc")] = session.LockedUntil.UtcTicks;
         attachContext.Attach.Properties[new Symbol("com.microsoft:session-id")] = session.SessionId;
 
         // The Azure SDK also reads the resolved session ID from the Source filter-set
