@@ -442,15 +442,35 @@ public sealed class QueueEntity : IDisposable
     /// <summary>
     /// Renews the lock on a pending message, extending <see cref="BrokeredMessage.LockedUntil"/>
     /// by <see cref="LockDuration"/>. Returns the new <see cref="BrokeredMessage.LockedUntil"/>
-    /// time, or <see langword="null"/> if the message was not found in pending.
+    /// time, or <see langword="null"/> if the message was not found in pending (it was
+    /// completed, abandoned, or its lock was swept and re-enqueued under a new token).
+    ///
+    /// Race-safe: if <see cref="SweepExpiredLocks"/> runs concurrently and moves the
+    /// message out of _pending (via ReEnqueueExpired, which sets LockToken=null before
+    /// re-enqueueing), the final check catches it and returns null so the caller knows
+    /// the renewal is invalid.
     /// </summary>
     public DateTimeOffset? RenewLock(string lockToken)
     {
         if (!_pending.TryGetValue(lockToken, out var message))
             return null;
 
-        message.LockedUntil = DateTimeOffset.UtcNow.Add(LockDuration);
-        return message.LockedUntil;
+        var newExpiry = DateTimeOffset.UtcNow.Add(LockDuration);
+        message.LockedUntil = newExpiry;
+
+        // Race check: if the sweep concurrently re-enqueued this message between
+        // our TryGetValue and our LockedUntil write, it will have cleared LockToken
+        // (see ReEnqueueExpired → ReEnqueue). If the token no longer matches, our
+        // renewal landed on a message that's no longer under this lock token.
+        if (!string.Equals(message.LockToken, lockToken, StringComparison.Ordinal))
+            return null;
+
+        // Belt-and-braces: also confirm the message is still in _pending. If it was
+        // removed (completed/abandoned/swept) after our TryGetValue, the renewal is void.
+        if (!_pending.ContainsKey(lockToken))
+            return null;
+
+        return newExpiry;
     }
 
     /// <summary>
@@ -516,9 +536,19 @@ public sealed class QueueEntity : IDisposable
     private void SweepExpiredLocks()
     {
         var now = DateTimeOffset.UtcNow;
+        // Grace period: don't re-enqueue immediately when a lock expires. Auto-renewal
+        // requests from the SDK may be in flight, and under high CPU load the management
+        // request processing can lag by a few seconds. Without a grace period, the sweep
+        // races with auto-renewal: it re-enqueues a message whose consumer is still alive
+        // and about to renew, causing R-DUPE cascades.
+        //
+        // The grace is 10% of LockDuration (e.g. 6s for 60s locks, 3s for 30s locks,
+        // proportional for shorter test locks).
+        var graceTicks = Math.Max(LockDuration.Ticks / 10, TimeSpan.FromMilliseconds(1).Ticks);
+        var sweepThreshold = now - new TimeSpan(graceTicks);
         foreach (var (lockToken, message) in _pending)
         {
-            if (message.LockedUntil != default && now > message.LockedUntil)
+            if (message.LockedUntil != default && sweepThreshold > message.LockedUntil)
             {
                 // For session-enabled queues, the session lock governs message lifetime.
                 // Only sweep messages whose session lock has ALSO expired or been released.
