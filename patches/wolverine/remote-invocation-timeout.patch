@@ -9,6 +9,22 @@ diff --git a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/InlineSendingA
          });
 
          await ReceiverIs(opts =>
+diff --git a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/send_and_receive_with_topics_and_subscriptions.cs b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/send_and_receive_with_topics_and_subscriptions.cs
+--- a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/send_and_receive_with_topics_and_subscriptions.cs
++++ b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/send_and_receive_with_topics_and_subscriptions.cs
+@@ -1,3 +1,4 @@
++using JasperFx.Core;
+ using Wolverine.ComplianceTests.Compliance;
+ using Xunit;
+
+@@ -16,6 +17,7 @@ public class TopicsComplianceFixture : TransportComplianceFixture, IAsyncLifetim
+         await SenderIs(opts =>
+         {
+             opts.UseAzureServiceBusTesting(out _ns);
++            opts.DefaultRemoteInvocationTimeout = 60.Seconds();
+         });
+
+         await ReceiverIs(opts =>
 diff --git a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/sending_compliance_with_prefixes.cs b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/sending_compliance_with_prefixes.cs
 --- a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/sending_compliance_with_prefixes.cs
 +++ b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/sending_compliance_with_prefixes.cs

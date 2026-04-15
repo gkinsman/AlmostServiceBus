@@ -240,9 +240,17 @@ jobs:
           dotnet-version: "10.x"
 
       - name: Build and test NServiceBus transport
+        # The NServiceBus transport submodule sets TreatWarningsAsErrors=true in
+        # Release, plus NuGetAuditMode=all and NuGetAuditLevel=low, so every low-
+        # severity advisory against a transitive dep fails the build. We can't
+        # bump the pinned transitives from here (they're pulled via NServiceBus
+        # 10.1.0), and the vulns don't affect our emulator runtime, so exempt
+        # NU1901 (low-severity audit warnings) from error promotion. Any
+        # higher-severity audit warnings (NU1902-NU1904) still fail the build.
         run: |
           dotnet test \
             external/NServiceBus.Transport.AzureServiceBus/src/Tests \
+            -p:WarningsNotAsErrors=NU1901 \
             --results-directory artifacts/test-results/nservicebus \
             --logger "console;verbosity=normal" \
             --logger "trx"
