@@ -383,17 +383,24 @@ public class SessionReceiverLiveTests : SdkLiveTestBase
 
         var receiver = await Client.AcceptSessionAsync(queueName, sessionId);
         var remaining = messageCount;
-        var expectedId = 0;
+        // Track all messages received in order, then verify strict ordering at the end.
+        // Using a list instead of inline assertion so the full order is visible when it
+        // fails (instead of just the first mismatch) — essential on flaky CI for debugging.
+        var receivedInOrder = new List<string>();
         while (remaining > 0)
         {
             foreach (var item in await receiver.ReceiveMessagesAsync(remaining))
             {
                 remaining--;
-                Assert.Equal(expectedId.ToString(), item.MessageId);
-                expectedId++;
+                receivedInOrder.Add(item.MessageId);
                 await receiver.CompleteMessageAsync(item);
             }
         }
-        Assert.Equal(messageCount, expectedId);
+        Assert.Equal(messageCount, receivedInOrder.Count);
+
+        // Session ordering is guaranteed — every message should arrive in send order.
+        // If this flakes on slow CI, investigate the emulator's session pump for races.
+        var expectedOrder = Enumerable.Range(0, messageCount).Select(i => i.ToString()).ToList();
+        Assert.Equal(expectedOrder, receivedInOrder);
     }
 }
