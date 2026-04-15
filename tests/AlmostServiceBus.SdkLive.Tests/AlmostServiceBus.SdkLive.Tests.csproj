@@ -27,4 +27,8 @@
     <ProjectReference Include="..\..\src\AlmostServiceBus.TestHost\AlmostServiceBus.TestHost.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

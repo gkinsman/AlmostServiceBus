@@ -17,6 +17,14 @@ public class SenderLinkEndpoint : LinkEndpoint
     private readonly NamespaceContext _context;
     private readonly ScheduledMessageProcessor? _scheduledProcessor;
     private readonly string _address;
+    // AMQPNetLite dispatches OnMessage on a thread-pool thread per Transfer frame, so
+    // multiple Transfer frames on the same link can be processed concurrently. Without
+    // serialization, NextSequenceNumber and Enqueue race: thread B's later frame can
+    // get a lower sequence number than thread A's earlier one, breaking FIFO ordering
+    // (this manifests as session messages being delivered out of send order). Real ASB
+    // and the official emulator preserve send order per link, so we hold a per-link lock
+    // around routing to enforce the same.
+    private readonly Lock _routeLock = new();
 
     public SenderLinkEndpoint(NamespaceContext context, string address, ScheduledMessageProcessor? scheduledProcessor = null)
     {
@@ -31,27 +39,32 @@ public class SenderLinkEndpoint : LinkEndpoint
         {
             var rawMsg = messageContext.Message;
 
-            // Detect Azure SDK batch messages: when the Azure SDK sends messages via
-            // ServiceBusMessageBatch, it wraps them in a single AMQP transfer where the
-            // body contains Data[] sections, each being a complete AMQP-encoded message.
-            // The wrapper has minimal Properties (just MessageId) with no Subject.
-            if (rawMsg.Body is Data[] dataArray && dataArray.Length > 0
-                && rawMsg.Properties?.Subject is null)
+            // Hold the per-link lock for the entire routing path so concurrent OnMessage
+            // dispatches don't reorder NextSequenceNumber relative to Enqueue.
+            lock (_routeLock)
             {
-                Log.LogDebug("RECV BATCH ({Count} messages) → '{Address}'", dataArray.Length, _address);
-                foreach (var data in dataArray)
+                // Detect Azure SDK batch messages: when the Azure SDK sends messages via
+                // ServiceBusMessageBatch, it wraps them in a single AMQP transfer where the
+                // body contains Data[] sections, each being a complete AMQP-encoded message.
+                // The wrapper has minimal Properties (just MessageId) with no Subject.
+                if (rawMsg.Body is Data[] dataArray && dataArray.Length > 0
+                    && rawMsg.Properties?.Subject is null)
                 {
-                    var innerMsg = Message.Decode(new ByteBuffer(data.Binary, 0, data.Binary.Length, data.Binary.Length));
-                    var brokered = ConvertToBrokeredMessage(innerMsg);
-                    Log.LogDebug("RECV {MessageId} → '{Address}' (batch)", brokered.MessageId, _address);
+                    Log.LogDebug("RECV BATCH ({Count} messages) → '{Address}'", dataArray.Length, _address);
+                    foreach (var data in dataArray)
+                    {
+                        var innerMsg = Message.Decode(new ByteBuffer(data.Binary, 0, data.Binary.Length, data.Binary.Length));
+                        var brokered = ConvertToBrokeredMessage(innerMsg);
+                        Log.LogDebug("RECV {MessageId} → '{Address}' (batch)", brokered.MessageId, _address);
+                        RouteMessage(_address, brokered);
+                    }
+                }
+                else
+                {
+                    var brokered = ConvertToBrokeredMessage(rawMsg);
+                    Log.LogDebug("RECV {MessageId} → '{Address}'", brokered.MessageId, _address);
                     RouteMessage(_address, brokered);
                 }
-            }
-            else
-            {
-                var brokered = ConvertToBrokeredMessage(rawMsg);
-                Log.LogDebug("RECV {MessageId} → '{Address}'", brokered.MessageId, _address);
-                RouteMessage(_address, brokered);
             }
 
             messageContext.Complete();
