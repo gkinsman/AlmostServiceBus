@@ -64,6 +64,14 @@ jobs:
         if: always()
         run: python3 .github/scripts/summarize_trx.py "Internal Tests" artifacts/test-results/internal
 
+      - name: Upload TRX results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: internal-tests-trx
+          path: artifacts/test-results/internal
+          retention-days: 7
+
   # ── Wolverine conformance ───────────────────────────────────────────────────
   # Wolverine's own Azure Service Bus tests connect to the official emulator
   # API on port 5673 (AMQP) and 5300 (HTTP management) using
