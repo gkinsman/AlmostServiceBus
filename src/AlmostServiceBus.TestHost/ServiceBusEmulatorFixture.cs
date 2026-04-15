@@ -12,7 +12,7 @@ namespace AlmostServiceBus.TestHost;
 
 public class ServiceBusEmulatorFixture : IAsyncDisposable
 {
-    private const int MaxStartAttempts = 5;
+    private const int MaxStartAttempts = 10;
     private static readonly TimeSpan InitialRetryDelay = TimeSpan.FromMilliseconds(100);
 
     private WebApplication? _webApp;
