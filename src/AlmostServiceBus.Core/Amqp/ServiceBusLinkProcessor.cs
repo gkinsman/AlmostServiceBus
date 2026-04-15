@@ -147,7 +147,24 @@ public class ServiceBusLinkProcessor : ILinkProcessor
                 return;
             }
 
-            var endpoint = new ReceiverLinkEndpoint(queue);
+            // Reject non-session receiver attaches against session-required queues — real
+            // Service Bus returns an error and the SDK propagates this as
+            // InvalidOperationException ("entity does not allow non-session receiver").
+            // Only reject the regular receiver; session receivers come through HandleSessionReceiver.
+            if (queue.RequiresSession)
+            {
+                attachContext.Complete(new Error(new Symbol("com.microsoft:session-required"))
+                {
+                    Description = $"The entity '{address}' requires session-aware receivers."
+                });
+                return;
+            }
+
+            // ReceiveAndDelete mode: client sets SndSettleMode=Settled (pre-settled, value=1).
+            // The broker should settle messages on send and not expect a disposition.
+            // SndSettleMode is a byte: 0=Unsettled, 1=Settled, 2=Mixed.
+            var preSettled = (byte)attachContext.Attach.SndSettleMode == 1;
+            var endpoint = new ReceiverLinkEndpoint(queue, preSettled);
             attachContext.Complete(endpoint, 0);
         }
     }
@@ -177,6 +194,20 @@ public class ServiceBusLinkProcessor : ILinkProcessor
             Log.LogDebug("HandleSessionReceiver: ACCEPTED session={SessionId} immediately for receiver={ReceiverId}",
                 session.SessionId, receiverId);
             CompleteSessionAttach(attachContext, queue, session);
+            return;
+        }
+
+        // If the client requested a SPECIFIC session that is already locked, reject
+        // immediately with com.microsoft:session-cannot-be-locked. Real Azure Service Bus
+        // does this — it does not hold the attach pending while another receiver holds the
+        // session lock. The SDK maps this error to ServiceBusFailureReason.SessionCannotBeLocked.
+        if (!string.IsNullOrEmpty(requestedSessionId)
+            && queue.Sessions.IsSessionLocked(requestedSessionId))
+        {
+            attachContext.Complete(new Error(new Symbol("com.microsoft:session-cannot-be-locked"))
+            {
+                Description = $"Session '{requestedSessionId}' is locked by another receiver."
+            });
             return;
         }
 
@@ -298,7 +329,9 @@ public class ServiceBusLinkProcessor : ILinkProcessor
             src.FilterSet[new Symbol("com.microsoft:session-filter")] = session.SessionId;
         }
 
-        var endpoint = new SessionReceiverLinkEndpoint(queue, session);
+        // Pre-settled mode (ReceiveAndDelete) — same logic as the regular receiver.
+        var preSettled = (byte)attachContext.Attach.SndSettleMode == 1;
+        var endpoint = new SessionReceiverLinkEndpoint(queue, session, preSettled);
         attachContext.Complete(endpoint, 0);
     }
 

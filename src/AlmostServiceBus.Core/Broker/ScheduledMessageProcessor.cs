@@ -56,6 +56,35 @@ public sealed class ScheduledMessageProcessor : IDisposable
         _scheduled.TryRemove(new ScheduledKey(namespaceContext.Name, sequenceNumber), out _);
 
     /// <summary>
+    /// Returns scheduled messages for the given entity in the given namespace, optionally
+    /// filtered by minimum sequence number. Used by PeekMessage to surface scheduled
+    /// messages alongside active messages.
+    /// </summary>
+    public IEnumerable<BrokeredMessage> GetScheduledForEntity(string namespaceName, string entityName, long fromSequenceNumber = 0)
+    {
+        foreach (var (key, entry) in _scheduled)
+        {
+            if (!string.Equals(key.NamespaceName, namespaceName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!string.Equals(entry.EntityName, entityName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (entry.Message.SequenceNumber < fromSequenceNumber)
+                continue;
+            yield return entry.Message;
+        }
+    }
+
+    /// <summary>
+    /// Looks up a single scheduled message by sequence number across all namespaces/entities.
+    /// </summary>
+    public BrokeredMessage? GetScheduledBySequence(string namespaceName, long sequenceNumber)
+    {
+        if (_scheduled.TryGetValue(new ScheduledKey(namespaceName, sequenceNumber), out var entry))
+            return entry.Message;
+        return null;
+    }
+
+    /// <summary>
     /// Checks all scheduled entries and delivers any whose enqueue time has arrived.
     /// Messages with no <see cref="BrokeredMessage.ScheduledEnqueueTimeUtc"/> (or a null value)
     /// are treated as immediately due.

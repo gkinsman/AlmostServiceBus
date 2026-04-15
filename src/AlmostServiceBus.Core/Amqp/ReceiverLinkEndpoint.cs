@@ -20,12 +20,14 @@ public class ReceiverLinkEndpoint : LinkEndpoint
     private static readonly ILogger Log = AmqpLog.CreateLogger<ReceiverLinkEndpoint>();
     private readonly QueueEntity _queue;
     private readonly Lock _pumpLock = new();
+    private readonly bool _preSettled;
     private CancellationTokenSource? _pumpCts;
     private Task? _pumpTask;
 
-    public ReceiverLinkEndpoint(QueueEntity queue)
+    public ReceiverLinkEndpoint(QueueEntity queue, bool preSettled = false)
     {
         _queue = queue;
+        _preSettled = preSettled;
     }
 
     public override void OnFlow(FlowContext flowContext)
@@ -106,6 +108,13 @@ public class ReceiverLinkEndpoint : LinkEndpoint
                     Log.LogDebug("PUMP {MessageId} → '{Queue}'", brokered.MessageId, _queue.Name);
                     var amqpMessage = ConvertToAmqpMessage(brokered);
                     link.SendMessage(amqpMessage);
+
+                    // ReceiveAndDelete (pre-settled) mode: auto-complete the message on
+                    // the broker side since the client never sends a disposition. Without
+                    // this, the message stays in _pending forever and PeekMessage still
+                    // returns it.
+                    if (_preSettled && brokered.LockToken is not null)
+                        _queue.Complete(brokered.LockToken);
 
                     // Yield after each send to let the AMQP stack process the transfer
                     // frame and update link credit. Without this, the pump loop can blast
@@ -206,13 +215,17 @@ public class ReceiverLinkEndpoint : LinkEndpoint
                 break;
             case Rejected rejected:
                 var (dlReason, dlDescription) = ExtractDeadLetterInfoStatic(rejected);
-                _queue.DeadLetter(lockToken, dlReason, dlDescription);
+                _queue.DeadLetter(lockToken, dlReason, dlDescription, ExtractRejectedProperties(rejected));
                 break;
             case Modified modified:
+                // Azure Service Bus semantics:
+                //   Modified.UndeliverableHere=true  → Defer (NOT DeadLetter)
+                //   Modified.UndeliverableHere=false → Abandon with property modifications
+                var modProps = ExtractMessageAnnotationProperties(modified);
                 if (modified.UndeliverableHere == true)
-                    _queue.DeadLetter(lockToken, "Undeliverable", "Message marked as undeliverable.");
+                    _queue.Defer(lockToken, modProps);
                 else
-                    _queue.Abandon(lockToken);
+                    _queue.Abandon(lockToken, modProps);
                 break;
             default:
                 _queue.Complete(lockToken);
@@ -243,6 +256,43 @@ public class ReceiverLinkEndpoint : LinkEndpoint
             }
         }
         return (dlReason, dlDescription);
+    }
+
+    /// <summary>
+    /// Extracts the property modifications carried in a Modified disposition's MessageAnnotations.
+    /// The Azure SDK puts properties-to-modify here for both Defer and Abandon (with mods).
+    /// Returns null if there are no annotations.
+    /// </summary>
+    internal static IDictionary<string, object>? ExtractMessageAnnotationProperties(Modified modified)
+    {
+        var fields = modified.MessageAnnotations;
+        if (fields is null) return null;
+        var dict = new Dictionary<string, object>();
+        foreach (var key in fields.Keys)
+        {
+            var keyStr = key?.ToString();
+            if (string.IsNullOrEmpty(keyStr)) continue;
+            dict[keyStr] = fields[key]!;
+        }
+        return dict.Count > 0 ? dict : null;
+    }
+
+    /// <summary>
+    /// Extracts user-supplied properties-to-modify from a Rejected outcome's Error.Info,
+    /// excluding the well-known DeadLetter* keys (which become reason/description).
+    /// </summary>
+    internal static IDictionary<string, object>? ExtractRejectedProperties(Rejected rejected)
+    {
+        if (rejected.Error?.Info is not { } info) return null;
+        var dict = new Dictionary<string, object>();
+        foreach (var key in info.Keys)
+        {
+            var keyStr = key?.ToString();
+            if (string.IsNullOrEmpty(keyStr)) continue;
+            if (keyStr == "DeadLetterReason" || keyStr == "DeadLetterErrorDescription") continue;
+            dict[keyStr] = info[key]!;
+        }
+        return dict.Count > 0 ? dict : null;
     }
 
     public async Task<BrokeredMessage> DequeueAsync(CancellationToken cancellationToken = default)
@@ -308,6 +358,19 @@ public class ReceiverLinkEndpoint : LinkEndpoint
 
         if (brokered.DeadLetterSource is not null)
             message.MessageAnnotations[new Symbol("x-opt-dead-letter-source")] = brokered.DeadLetterSource;
+
+        if (brokered.ScheduledEnqueueTimeUtc.HasValue)
+        {
+            message.MessageAnnotations[new Symbol("x-opt-scheduled-enqueue-time")] =
+                brokered.ScheduledEnqueueTimeUtc.Value.UtcDateTime;
+            // ServiceBusMessageState.Scheduled = 2
+            message.MessageAnnotations[new Symbol("x-opt-message-state")] = 2;
+        }
+        else if (brokered.State == MessageState.Deferred)
+        {
+            // ServiceBusMessageState.Deferred = 1
+            message.MessageAnnotations[new Symbol("x-opt-message-state")] = 1;
+        }
 
         if (brokered.ApplicationProperties.Count > 0
             || brokered.DeadLetterReason is not null

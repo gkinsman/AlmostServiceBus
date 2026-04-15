@@ -119,8 +119,12 @@ public class ReceiverLinkEndpointTests
     }
 
     [Fact]
-    public void ModifiedUndeliverableHere_MovesToDLQ()
+    public void ModifiedUndeliverableHere_DefersMessage()
     {
+        // Per Azure Service Bus AMQP semantics:
+        //   Modified.UndeliverableHere=true  → Defer (NOT DeadLetter)
+        //   Modified.UndeliverableHere=false → Abandon
+        // The Azure SDK's DeferMessageAsync sends Modified with UndeliverableHere=true.
         var queue = new QueueEntity("test-queue");
         var lockToken = Guid.NewGuid().ToString();
         var message = new BrokeredMessage
@@ -136,8 +140,14 @@ public class ReceiverLinkEndpointTests
         var endpoint = new ReceiverLinkEndpoint(queue);
         endpoint.SettleMessage(lockToken, new Modified { UndeliverableHere = true });
 
+        // The message should NOT go to DLQ; it should be deferred.
         var dlqMessage = queue.DeadLetterQueue.TryDequeueImmediate();
-        Assert.NotNull(dlqMessage);
+        Assert.Null(dlqMessage);
+
+        // Should be retrievable via ReceiveDeferred.
+        var deferred = queue.ReceiveDeferred(dequeued.SequenceNumber);
+        Assert.NotNull(deferred);
+        Assert.Equal(message.MessageId, deferred.MessageId);
     }
 
     [Fact]

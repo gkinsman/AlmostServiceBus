@@ -18,13 +18,15 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
     private readonly QueueEntity _queue;
     private readonly BrokerSessionState _session;
     private readonly Lock _pumpLock = new();
+    private readonly bool _preSettled;
     private CancellationTokenSource? _pumpCts;
     private Task? _pumpTask;
 
-    public SessionReceiverLinkEndpoint(QueueEntity queue, BrokerSessionState session)
+    public SessionReceiverLinkEndpoint(QueueEntity queue, BrokerSessionState session, bool preSettled = false)
     {
         _queue = queue;
         _session = session;
+        _preSettled = preSettled;
     }
 
     public override void OnFlow(FlowContext flowContext)
@@ -92,6 +94,12 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
                 try
                 {
                     link.SendMessage(amqpMessage);
+
+                    // ReceiveAndDelete (pre-settled) mode: auto-complete since the client
+                    // never sends a disposition.
+                    if (_preSettled && brokered.LockToken is not null)
+                        _queue.Complete(brokered.LockToken);
+
                     await Task.Yield();
                 }
                 catch (Exception ex)
@@ -135,13 +143,18 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
                         // extracted consistently on session and non-session queues.
                         var (dlReason, dlDescription) =
                             ReceiverLinkEndpoint.ExtractDeadLetterInfoStatic(rejected);
-                        _queue.DeadLetter(lockToken, dlReason, dlDescription);
+                        _queue.DeadLetter(lockToken, dlReason, dlDescription,
+                            ReceiverLinkEndpoint.ExtractRejectedProperties(rejected));
                         break;
                     case Modified modified:
+                        // Azure Service Bus semantics:
+                        //   Modified.UndeliverableHere=true  → Defer
+                        //   Modified.UndeliverableHere=false → Abandon with property modifications
+                        var modProps = ReceiverLinkEndpoint.ExtractMessageAnnotationProperties(modified);
                         if (modified.UndeliverableHere == true)
-                            _queue.DeadLetter(lockToken, "Undeliverable", "Message marked as undeliverable.");
+                            _queue.Defer(lockToken, modProps);
                         else
-                            _queue.Abandon(lockToken);
+                            _queue.Abandon(lockToken, modProps);
                         break;
                     default:
                         _queue.Complete(lockToken);

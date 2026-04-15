@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 
 namespace AlmostServiceBus.Core.Hosting;
@@ -9,6 +10,12 @@ namespace AlmostServiceBus.Core.Hosting;
 /// </summary>
 public static class EmulatorInfrastructure
 {
+    [DllImport("libc", SetLastError = true)]
+    private static extern int setenv(string name, string value, int overwrite);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int unsetenv(string name);
+
     /// <summary>
     /// Finds an available TCP port on the loopback interface.
     /// </summary>
@@ -64,10 +71,17 @@ public static class EmulatorInfrastructure
         // SSL_CERT_FILE overrides SSL_CERT_DIR in OpenSSL. If it's set, unset it
         // so our SSL_CERT_DIR additions take effect. The system CA bundle is already
         // included via the /usr/lib/ssl/certs directory in SSL_CERT_DIR.
+        //
+        // We must use native setenv/unsetenv (P/Invoke) because
+        // Environment.SetEnvironmentVariable only updates the managed view.
+        // OpenSSL reads environment variables via native getenv(3), which is
+        // not affected by the managed API.
         var sslCertFile = Environment.GetEnvironmentVariable("SSL_CERT_FILE");
         if (!string.IsNullOrEmpty(sslCertFile))
         {
             Environment.SetEnvironmentVariable("SSL_CERT_FILE", null);
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                unsetenv("SSL_CERT_FILE");
         }
 
         var current = Environment.GetEnvironmentVariable("SSL_CERT_DIR") ?? "";
@@ -78,6 +92,8 @@ public static class EmulatorInfrastructure
                 ? $"{trustDir}:{systemCerts}"
                 : $"{trustDir}:{current}";
             Environment.SetEnvironmentVariable("SSL_CERT_DIR", newValue);
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                setenv("SSL_CERT_DIR", newValue, 1);
         }
     }
 }

@@ -10,3 +10,6 @@
 	path = external/NServiceBus.Transport.AzureServiceBus
 	url = https://github.com/Particular/NServiceBus.Transport.AzureServiceBus.git
 	ignore = dirty
+[submodule "external/azure-sdk-for-net"]
+	path = external/azure-sdk-for-net
+	url = https://github.com/Azure/azure-sdk-for-net.git

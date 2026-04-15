@@ -8,6 +8,7 @@ public enum MessageEventType
     Completed,
     DeadLettered,
     Abandoned,
+    Deferred,
     NamespaceCreated
 }
 

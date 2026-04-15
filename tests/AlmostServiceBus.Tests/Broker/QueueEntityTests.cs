@@ -230,7 +230,7 @@ public class QueueEntityTests
     }
 
     [Fact]
-    public async Task TrackPending_TracksMessage()
+    public Task TrackPending_TracksMessage()
     {
         var queue = new QueueEntity("test-queue");
         var msg = CreateMessage();
@@ -241,6 +241,7 @@ public class QueueEntityTests
         // Completing a tracked message should succeed (not throw)
         var ex = Record.Exception(() => queue.Complete(msg.LockToken!));
         Assert.Null(ex);
+        return Task.CompletedTask;
     }
 
     [Fact]

@@ -19,6 +19,7 @@ public sealed class QueueEntity : IDisposable
     private readonly Channel<BrokeredMessage> _redeliveryChannel;
     private readonly ConcurrentDictionary<string, BrokeredMessage> _pending = new();
     private readonly ConcurrentDictionary<string, BrokeredMessage> _allMessages = new();
+    private readonly ConcurrentDictionary<long, BrokeredMessage> _deferredBySequence = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _recentMessageIds = new();
     /// <summary>
     /// Lock tokens removed by <see cref="SweepExpiredLocks"/>. When a consumer calls
@@ -166,8 +167,12 @@ public sealed class QueueEntity : IDisposable
         {
             if (string.IsNullOrEmpty(message.SessionId))
             {
-                System.Diagnostics.Debug.WriteLine($"[QUEUE] Dropping message without SessionId on session queue '{Name}', MessageId={message.MessageId}, Subject={message.Subject}");
-                return; // silently drop messages without SessionId
+                // Real Service Bus rejects with InvalidOperationException when sending
+                // a non-session message to a session-required entity. The SDK propagates
+                // this back to the caller; previously we silently dropped, which masked
+                // application bugs.
+                throw new InvalidOperationException(
+                    $"Cannot send a message without a SessionId to session-required queue '{Name}'.");
             }
             System.Diagnostics.Debug.WriteLine($"[QUEUE] Enqueue to session queue '{Name}', SessionId={message.SessionId}, MessageId={message.MessageId}, Subject={message.Subject}");
             Console.Error.WriteLine($"[QUEUE] Enqueue to session queue '{Name}', SessionId={message.SessionId}, MessageId={message.MessageId}, Subject={message.Subject}, CorrelationId={message.CorrelationId}");
@@ -371,13 +376,26 @@ public sealed class QueueEntity : IDisposable
     /// Abandons a message. If delivery count has reached <see cref="MaxDeliveryCount"/>,
     /// the message is moved to the dead-letter queue; otherwise it is re-enqueued.
     /// </summary>
-    public void Abandon(string lockToken)
+    public void Abandon(string lockToken) => Abandon(lockToken, null);
+
+    /// <summary>
+    /// Abandons a pending message, optionally merging the supplied properties into
+    /// the message's ApplicationProperties before re-delivery. Used by the SDK's
+    /// AbandonMessageAsync(message, propertiesToModify) overload.
+    /// </summary>
+    public void Abandon(string lockToken, IDictionary<string, object>? propertiesToModify)
     {
         if (!_pending.TryRemove(lockToken, out var message))
         {
             if (_sweptLockTokens.TryRemove(lockToken, out _))
                 throw new MessageLockLostException(lockToken);
             return;
+        }
+
+        if (propertiesToModify is not null)
+        {
+            foreach (var kvp in propertiesToModify)
+                message.ApplicationProperties[kvp.Key] = kvp.Value;
         }
 
         _eventBus?.Publish(new MessageEvent(
@@ -406,7 +424,14 @@ public sealed class QueueEntity : IDisposable
     /// <summary>
     /// Moves a pending message to the dead-letter queue with the given reason and description.
     /// </summary>
-    public void DeadLetter(string lockToken, string? reason, string? description)
+    public void DeadLetter(string lockToken, string? reason, string? description) =>
+        DeadLetter(lockToken, reason, description, null);
+
+    /// <summary>
+    /// Moves a pending message to the dead-letter queue with the given reason, description,
+    /// and optional properties to merge into ApplicationProperties.
+    /// </summary>
+    public void DeadLetter(string lockToken, string? reason, string? description, IDictionary<string, object>? propertiesToModify)
     {
         if (!_pending.TryRemove(lockToken, out var message))
         {
@@ -415,9 +440,103 @@ public sealed class QueueEntity : IDisposable
             return;
         }
 
+        if (propertiesToModify is not null)
+        {
+            foreach (var kvp in propertiesToModify)
+            {
+                // Standard Service Bus convention: dead-letter reason/description can be
+                // supplied via either the reason/description args or as well-known property
+                // keys on properties-to-modify.
+                if (kvp.Key == "DeadLetterReason" && reason is null)
+                    reason = kvp.Value?.ToString();
+                else if (kvp.Key == "DeadLetterErrorDescription" && description is null)
+                    description = kvp.Value?.ToString();
+                else if (kvp.Value is not null)
+                    message.ApplicationProperties[kvp.Key] = kvp.Value;
+            }
+        }
+
         if (_allMessages.TryGetValue(lockToken, out var tracked))
             tracked.State = MessageState.DeadLettered;
         DeadLetter(message, reason, description);
+    }
+
+    /// <summary>
+    /// Defers a pending message — it stays in the queue but is no longer visible to
+    /// regular receivers. The message can only be retrieved via
+    /// ReceiveDeferred(sequenceNumber).
+    /// </summary>
+    public void Defer(string lockToken, IDictionary<string, object>? propertiesToModify = null)
+    {
+        if (!_pending.TryRemove(lockToken, out var message))
+        {
+            if (_sweptLockTokens.TryRemove(lockToken, out _))
+                throw new MessageLockLostException(lockToken);
+            return;
+        }
+
+        if (propertiesToModify is not null)
+        {
+            foreach (var kvp in propertiesToModify)
+                message.ApplicationProperties[kvp.Key] = kvp.Value;
+        }
+
+        message.State = MessageState.Deferred;
+        // Stash by SequenceNumber so the SDK can retrieve via ReceiveBySequenceNumber.
+        _deferredBySequence[message.SequenceNumber] = message;
+        // Also remove from the active _allMessages map (it's now in the deferred map).
+        _allMessages.TryRemove(lockToken, out _);
+
+        _eventBus?.Publish(new MessageEvent(
+            MessageEventType.Deferred, _namespaceName ?? "", _entityName ?? "",
+            message.MessageId, message.SequenceNumber, message.ContentType,
+            null, null, DateTimeOffset.UtcNow));
+    }
+
+    /// <summary>
+    /// Retrieves a deferred message by its sequence number. Used by the SDK's
+    /// ReceiveDeferredMessagesAsync. Returns null if no deferred message exists for
+    /// the given sequence number.
+    /// </summary>
+    public BrokeredMessage? ReceiveDeferred(long sequenceNumber)
+    {
+        if (!_deferredBySequence.TryGetValue(sequenceNumber, out var msg))
+            return null;
+
+        // Stamp a fresh lock token and add to pending so the consumer can settle it.
+        msg.LockToken = Guid.NewGuid().ToString();
+        msg.LockedUntil = DateTimeOffset.UtcNow.Add(LockDuration);
+        _pending[msg.LockToken] = msg;
+        return msg;
+    }
+
+    /// <summary>
+    /// Returns up to <paramref name="maxCount"/> active or deferred messages with
+    /// SequenceNumber >= <paramref name="fromSequenceNumber"/>. Used by the SDK's
+    /// PeekMessageAsync.
+    /// </summary>
+    public IEnumerable<BrokeredMessage> PeekFromSequence(long fromSequenceNumber, int maxCount, string? sessionFilter = null)
+    {
+        var candidates = new List<BrokeredMessage>();
+        foreach (var msg in _allMessages.Values)
+        {
+            // Peek only returns messages that haven't been settled (Active state).
+            // Consumed/DeadLettered messages are filtered out — they're either gone or
+            // moved to the DLQ (which is a separate entity).
+            if (msg.State != MessageState.Active) continue;
+            if (msg.SequenceNumber < fromSequenceNumber) continue;
+            if (sessionFilter is not null && msg.SessionId != sessionFilter) continue;
+            candidates.Add(msg);
+        }
+        foreach (var msg in _deferredBySequence.Values)
+        {
+            if (msg.SequenceNumber < fromSequenceNumber) continue;
+            if (sessionFilter is not null && msg.SessionId != sessionFilter) continue;
+            candidates.Add(msg);
+        }
+
+        candidates.Sort((a, b) => a.SequenceNumber.CompareTo(b.SequenceNumber));
+        return candidates.Take(maxCount);
     }
 
     private void DeadLetter(BrokeredMessage message, string? reason, string? description)

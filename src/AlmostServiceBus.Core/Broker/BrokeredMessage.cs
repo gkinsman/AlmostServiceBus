@@ -4,7 +4,8 @@ public enum MessageState
 {
     Active,
     Consumed,
-    DeadLettered
+    DeadLettered,
+    Deferred
 }
 
 /// <summary>

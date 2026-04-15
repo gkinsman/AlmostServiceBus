@@ -80,6 +80,18 @@ public class ManagementLinkEndpoint : IRequestProcessor
                     HandleSetSessionState(requestContext);
                     break;
 
+                case "com.microsoft:peek-message":
+                    HandlePeekMessage(requestContext);
+                    break;
+
+                case "com.microsoft:receive-by-sequence-number":
+                    HandleReceiveBySequenceNumber(requestContext);
+                    break;
+
+                case "com.microsoft:update-disposition":
+                    HandleUpdateDisposition(requestContext);
+                    break;
+
                 default:
                     ReplyOk(requestContext);
                     break;
@@ -487,6 +499,298 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 return queue.Sessions;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Handles com.microsoft:peek-message — returns active messages from the queue
+    /// without removing them. Used by ServiceBusReceiver.PeekMessageAsync.
+    /// </summary>
+    private void HandlePeekMessage(RequestContext requestContext)
+    {
+        var ns = ResolveNamespace(requestContext);
+        var queue = ResolveScopedQueue(requestContext, ns);
+        if (queue is null)
+        {
+            SendNoContentResponse(requestContext);
+            return;
+        }
+
+        long fromSeq = 0;
+        int messageCount = 1;
+        string? sessionFilter = null;
+
+        if (requestContext.Message.Body is Map peekBody)
+        {
+            if (TryGetMapValue(peekBody, "from-sequence-number", out var seqObj))
+                fromSeq = Convert.ToInt64(seqObj ?? 0L);
+            if (TryGetMapValue(peekBody, "message-count", out var ctObj))
+                messageCount = Convert.ToInt32(ctObj ?? 1);
+            if (TryGetMapValue(peekBody, "session-id", out var sidObj))
+                sessionFilter = sidObj?.ToString();
+        }
+
+        var matches = new List<BrokeredMessage>();
+
+        // Include scheduled messages so PeekMessageAsync(seq) returns them with State=Scheduled.
+        if (_scheduledProcessor is not null)
+        {
+            foreach (var msg in _scheduledProcessor.GetScheduledForEntity(ns.Name, queue.Name, fromSeq))
+            {
+                if (sessionFilter is not null && msg.SessionId != sessionFilter) continue;
+                matches.Add(msg);
+            }
+        }
+
+        foreach (var msg in queue.PeekFromSequence(fromSeq, messageCount, sessionFilter))
+        {
+            matches.Add(msg);
+        }
+
+        // Apply final ordering and limit.
+        matches.Sort((a, b) => a.SequenceNumber.CompareTo(b.SequenceNumber));
+        if (matches.Count > messageCount)
+            matches = matches.Take(messageCount).ToList();
+
+        if (matches.Count == 0)
+        {
+            SendNoContentResponse(requestContext);
+            return;
+        }
+
+        // Build the response: messages key contains a list of maps, each with a "message" key
+        // containing the AMQP-encoded message bytes.
+        var messageList = new List();
+        foreach (var brokered in matches)
+        {
+            var amqpMessage = ReceiverLinkEndpoint.ConvertToAmqpMessage(brokered);
+            // Stamp the actual SequenceNumber via x-opt-sequence-number annotation
+            // so PeekMessage can return the correct sequence info to the SDK.
+            var encoded = amqpMessage.Encode();
+            var bytes = new byte[encoded.Length];
+            Array.Copy(encoded.Buffer, encoded.Offset, bytes, 0, encoded.Length);
+            messageList.Add(new Map
+            {
+                { "message", bytes }
+            });
+        }
+
+        var responseBody = new Map
+        {
+            { "messages", messageList }
+        };
+        var response = new Message(responseBody)
+        {
+            ApplicationProperties = new ApplicationProperties
+            {
+                ["statusCode"] = 200,
+                ["statusDescription"] = "OK"
+            },
+            Properties = new Properties
+            {
+                CorrelationId = requestContext.Message.Properties?.MessageId
+            }
+        };
+        requestContext.Complete(response);
+    }
+
+    /// <summary>
+    /// Handles com.microsoft:receive-by-sequence-number — used by
+    /// ServiceBusReceiver.ReceiveDeferredMessagesAsync to retrieve deferred messages.
+    /// </summary>
+    private void HandleReceiveBySequenceNumber(RequestContext requestContext)
+    {
+        var ns = ResolveNamespace(requestContext);
+        var queue = ResolveScopedQueue(requestContext, ns);
+        if (queue is null)
+        {
+            SendErrorResponse(requestContext, 404, "Entity not found",
+                errorCondition: "com.microsoft:message-not-found");
+            return;
+        }
+
+        long[] sequenceNumbers = [];
+        if (requestContext.Message.Body is Map body
+            && TryGetMapValue(body, "sequence-numbers", out var seqObj))
+        {
+            sequenceNumbers = seqObj switch
+            {
+                long[] arr => arr,
+                List list => list.OfType<long>().ToArray(),
+                _ => []
+            };
+        }
+
+        var found = new List<BrokeredMessage>();
+        foreach (var seq in sequenceNumbers)
+        {
+            var msg = queue.ReceiveDeferred(seq);
+            if (msg is not null)
+                found.Add(msg);
+        }
+
+        // If any sequence number wasn't found, return MessageNotFound.
+        if (found.Count != sequenceNumbers.Length)
+        {
+            SendErrorResponse(requestContext, 404,
+                "One or more deferred messages were not found.",
+                errorCondition: "com.microsoft:message-not-found");
+            return;
+        }
+
+        var messageList = new List();
+        foreach (var brokered in found)
+        {
+            var amqpMessage = ReceiverLinkEndpoint.ConvertToAmqpMessage(brokered);
+            var encoded = amqpMessage.Encode();
+            var bytes = new byte[encoded.Length];
+            Array.Copy(encoded.Buffer, encoded.Offset, bytes, 0, encoded.Length);
+            messageList.Add(new Map
+            {
+                { "message", bytes }
+            });
+        }
+
+        var responseBody = new Map
+        {
+            { "messages", messageList }
+        };
+        var response = new Message(responseBody)
+        {
+            ApplicationProperties = new ApplicationProperties
+            {
+                ["statusCode"] = 200,
+                ["statusDescription"] = "OK"
+            },
+            Properties = new Properties
+            {
+                CorrelationId = requestContext.Message.Properties?.MessageId
+            }
+        };
+        requestContext.Complete(response);
+    }
+
+    /// <summary>
+    /// Handles com.microsoft:update-disposition — used by the SDK to settle messages
+    /// that were peeked or fetched via receive-by-sequence-number (lock token settlement
+    /// happens in the regular receiver link path).
+    /// </summary>
+    private void HandleUpdateDisposition(RequestContext requestContext)
+    {
+        var ns = ResolveNamespace(requestContext);
+        var queue = ResolveScopedQueue(requestContext, ns);
+        if (queue is null)
+        {
+            SendErrorResponse(requestContext, 404, "Entity not found");
+            return;
+        }
+
+        Guid[] lockTokens = [];
+        string dispositionStatus = "completed";
+        Map? propertiesToModify = null;
+        string? deadLetterReason = null;
+        string? deadLetterDescription = null;
+
+        if (requestContext.Message.Body is Map body)
+        {
+            if (TryGetMapValue(body, "lock-tokens", out var tokensObj) && tokensObj is Guid[] tokens)
+                lockTokens = tokens;
+            if (TryGetMapValue(body, "disposition-status", out var statusObj))
+                dispositionStatus = statusObj?.ToString() ?? "completed";
+            if (TryGetMapValue(body, "properties-to-modify", out var propsObj) && propsObj is Map propsMap)
+                propertiesToModify = propsMap;
+            if (TryGetMapValue(body, "deadletter-reason", out var reasonObj))
+                deadLetterReason = reasonObj?.ToString();
+            if (TryGetMapValue(body, "deadletter-description", out var descObj))
+                deadLetterDescription = descObj?.ToString();
+        }
+
+        Dictionary<string, object>? propsDict = null;
+        if (propertiesToModify is not null)
+        {
+            propsDict = new Dictionary<string, object>();
+            foreach (var entry in propertiesToModify)
+            {
+                if (entry.Key is null) continue;
+                propsDict[entry.Key.ToString()!] = entry.Value!;
+            }
+        }
+
+        foreach (var token in lockTokens)
+        {
+            var lockTokenStr = token.ToString();
+            switch (dispositionStatus)
+            {
+                case "completed":
+                    queue.Complete(lockTokenStr);
+                    break;
+                case "abandoned":
+                    queue.Abandon(lockTokenStr, propsDict);
+                    break;
+                case "suspended":
+                case "deadletter":
+                    queue.DeadLetter(lockTokenStr, deadLetterReason, deadLetterDescription, propsDict);
+                    break;
+                case "defered":
+                case "deferred":
+                    queue.Defer(lockTokenStr, propsDict);
+                    break;
+            }
+        }
+
+        ReplyOk(requestContext);
+    }
+
+    /// <summary>
+    /// Resolves the queue to use for this management request. Uses scoped queue when
+    /// available, otherwise tries to look up the queue by associated-link-name in the
+    /// request properties.
+    /// </summary>
+    private QueueEntity? ResolveScopedQueue(RequestContext requestContext, NamespaceContext ns)
+    {
+        if (_scopedQueue is not null)
+            return _scopedQueue;
+
+        // Fall back to looking up by associated-link-name. Ths is used by global $management
+        // links (where the link itself is not scoped to an entity).
+        var linkName = requestContext.Message.ApplicationProperties?["associated-link-name"]?.ToString();
+        if (!string.IsNullOrEmpty(linkName))
+        {
+            // Try as direct entity path first
+            var queue = ns.ResolveQueue(linkName);
+            if (queue is not null) return queue;
+
+            // Try via the sender-link registry
+            if (_senderLinkNames is not null)
+            {
+                foreach (var key in EmulatorContainer.BuildSenderLinkRegistryKeys(requestContext.Link.Session.Connection, linkName))
+                {
+                    if (_senderLinkNames.TryGetValue(key, out var target))
+                    {
+                        var ns2 = _registry?.GetOrCreate(target.NamespaceName) ?? ns;
+                        var resolved = ns2.ResolveQueue(target.Address);
+                        if (resolved is not null) return resolved;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private void SendNoContentResponse(RequestContext requestContext)
+    {
+        var response = new Message()
+        {
+            ApplicationProperties = new ApplicationProperties
+            {
+                ["statusCode"] = 204,
+                ["statusDescription"] = "No Content"
+            },
+            Properties = new Properties
+            {
+                CorrelationId = requestContext.Message.Properties?.MessageId
+            }
+        };
+        requestContext.Complete(response);
     }
 
     private void SendErrorResponse(RequestContext requestContext, int statusCode, string description, string? errorCondition = null)
