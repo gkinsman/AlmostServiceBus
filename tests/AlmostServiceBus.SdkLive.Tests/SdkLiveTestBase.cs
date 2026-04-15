@@ -102,6 +102,11 @@ public abstract class SdkLiveTestBase : IAsyncLifetime
         TimeSpan? defaultMessageTimeToLive = null,
         string? callerName = null)
     {
+        // Default to a long lock duration (5 minutes) so tests running on slow CI
+        // hardware don't hit the 30s default lock expiry during normal receive loops.
+        // Tests that specifically exercise lock expiry can override.
+        lockDuration ??= TimeSpan.FromMinutes(5);
+
         var name = $"sdk-{Guid.NewGuid():N}"[..20];
         var options = new CreateQueueOptions(name)
         {

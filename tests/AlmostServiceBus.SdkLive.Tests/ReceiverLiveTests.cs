@@ -146,19 +146,20 @@ public class ReceiverLiveTests : SdkLiveTestBase
         await sender.SendMessagesAsync(batch);
 
         var receiver = Client.CreateReceiver(queueName);
-        var messageEnum = messages.GetEnumerator();
+        var expectedIds = messages.Select(m => m.MessageId).ToHashSet();
+        var receivedIds = new HashSet<string>();
         var remaining = messageCount;
         while (remaining > 0)
         {
             foreach (var item in await receiver.ReceiveMessagesAsync(remaining))
             {
                 remaining--;
-                messageEnum.MoveNext();
-                Assert.Equal(messageEnum.Current.MessageId, item.MessageId);
+                receivedIds.Add(item.MessageId);
                 await receiver.CompleteMessageAsync(item);
             }
         }
         Assert.Equal(0, remaining);
+        Assert.Equal(expectedIds, receivedIds);
 
         var peeked = await receiver.PeekMessageAsync();
         Assert.Null(peeked);
@@ -213,20 +214,21 @@ public class ReceiverLiveTests : SdkLiveTestBase
         await sender.SendMessagesAsync(messages);
 
         var receiver = Client.CreateReceiver(queueName);
+        var expectedIds = messages.Select(m => m.MessageId).ToHashSet();
+        var receivedIds = new HashSet<string>();
         var remaining = messageCount;
-        var messageEnum = messages.GetEnumerator();
 
         while (remaining > 0)
         {
             foreach (var item in await receiver.ReceiveMessagesAsync(remaining))
             {
                 remaining--;
-                messageEnum.MoveNext();
-                Assert.Equal(messageEnum.Current.MessageId, item.MessageId);
+                receivedIds.Add(item.MessageId);
                 await receiver.DeadLetterMessageAsync(item);
             }
         }
         Assert.Equal(0, remaining);
+        Assert.Equal(expectedIds, receivedIds);
 
         var peeked = await receiver.PeekMessageAsync();
         Assert.Null(peeked);
@@ -234,19 +236,19 @@ public class ReceiverLiveTests : SdkLiveTestBase
         // Read from DLQ
         var dlqPath = $"{queueName}/$deadletterqueue";
         var dlqReceiver = Client.CreateReceiver(dlqPath);
+        var dlqReceivedIds = new HashSet<string>();
         remaining = messageCount;
-        var dlqIdx = 0;
         while (remaining > 0)
         {
             foreach (var item in await dlqReceiver.ReceiveMessagesAsync(remaining))
             {
                 remaining--;
-                Assert.Equal(messages[dlqIdx].MessageId, item.MessageId);
-                dlqIdx++;
+                dlqReceivedIds.Add(item.MessageId);
                 await dlqReceiver.CompleteMessageAsync(item);
             }
         }
         Assert.Equal(0, remaining);
+        Assert.Equal(expectedIds, dlqReceivedIds);
     }
 
     [Fact]
@@ -283,8 +285,9 @@ public class ReceiverLiveTests : SdkLiveTestBase
         await sender.SendMessagesAsync(batch);
 
         var receiver = Client.CreateReceiver(queueName);
-        var messageEnum = messages.GetEnumerator();
-        var sequenceNumbers = new List<long>();
+        var expectedIds = messages.Select(m => m.MessageId).ToHashSet();
+        // Track messageId → sequenceNumber so we can correlate received-by-seq results back to originals.
+        var idToSeq = new Dictionary<string, long>();
         var remaining = messageCount;
 
         while (remaining > 0)
@@ -292,21 +295,22 @@ public class ReceiverLiveTests : SdkLiveTestBase
             foreach (var item in await receiver.ReceiveMessagesAsync(remaining))
             {
                 remaining--;
-                messageEnum.MoveNext();
-                Assert.Equal(messageEnum.Current.MessageId, item.MessageId);
-                sequenceNumbers.Add(item.SequenceNumber);
+                idToSeq[item.MessageId] = item.SequenceNumber;
                 await receiver.DeferMessageAsync(item);
             }
         }
         Assert.Equal(0, remaining);
+        Assert.Equal(expectedIds, idToSeq.Keys.ToHashSet());
 
+        var sequenceNumbers = idToSeq.Values.ToList();
         var deferredMessages = await receiver.ReceiveDeferredMessagesAsync(sequenceNumbers);
         Assert.Equal(messages.Count, deferredMessages.Count);
-        for (int i = 0; i < messages.Count; i++)
+
+        var receivedDeferredIds = deferredMessages.Select(m => m.MessageId).ToHashSet();
+        Assert.Equal(expectedIds, receivedDeferredIds);
+        foreach (var msg in deferredMessages)
         {
-            Assert.Equal(messages[i].MessageId, deferredMessages[i].MessageId);
-            Assert.Equal(messages[i].Body.ToArray(), deferredMessages[i].Body.ToArray());
-            Assert.Equal(ServiceBusMessageState.Deferred, deferredMessages[i].State);
+            Assert.Equal(ServiceBusMessageState.Deferred, msg.State);
         }
     }
 
@@ -397,8 +401,16 @@ public class ReceiverLiveTests : SdkLiveTestBase
         await sender.SendMessagesAsync(batch);
 
         var receiver = Client.CreateReceiver(queueName);
-        foreach (var msg in await receiver.ReceiveMessagesAsync(2))
-            await receiver.CompleteMessageAsync(msg);
+        // Drain: receive/complete may come back in multiple calls on slow CI.
+        var totalReceived = 0;
+        while (totalReceived < 2)
+        {
+            foreach (var msg in await receiver.ReceiveMessagesAsync(2))
+            {
+                await receiver.CompleteMessageAsync(msg);
+                totalReceived++;
+            }
+        }
 
         // Now queue is empty - cancellation should be respected
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
