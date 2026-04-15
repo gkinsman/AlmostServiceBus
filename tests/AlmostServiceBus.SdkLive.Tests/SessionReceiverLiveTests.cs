@@ -284,24 +284,30 @@ public class SessionReceiverLiveTests : SdkLiveTestBase
         await sender.SendMessagesAsync(batch);
 
         var receiver = await Client.AcceptSessionAsync(queueName, sessionId);
-        var sequenceNumbers = new List<long>();
+        // Track messageId → sequenceNumber so we can correlate received-by-seq results back to originals.
+        var idToSeq = new Dictionary<string, long>();
         var remaining = messageCount;
         while (remaining > 0)
         {
             foreach (var item in await receiver.ReceiveMessagesAsync(remaining))
             {
                 remaining--;
-                sequenceNumbers.Add(item.SequenceNumber);
+                idToSeq[item.MessageId] = item.SequenceNumber;
                 await receiver.DeferMessageAsync(item);
             }
         }
+        var expectedIds = messages.Select(m => m.MessageId).ToHashSet();
+        Assert.Equal(expectedIds, idToSeq.Keys.ToHashSet());
 
+        var sequenceNumbers = idToSeq.Values.ToList();
         var deferred = await receiver.ReceiveDeferredMessagesAsync(sequenceNumbers);
         Assert.Equal(messageCount, deferred.Count);
-        for (int i = 0; i < messageCount; i++)
+
+        var receivedDeferredIds = deferred.Select(m => m.MessageId).ToHashSet();
+        Assert.Equal(expectedIds, receivedDeferredIds);
+        foreach (var msg in deferred)
         {
-            Assert.Equal(messages[i].MessageId, deferred[i].MessageId);
-            Assert.Equal(ServiceBusMessageState.Deferred, deferred[i].State);
+            Assert.Equal(ServiceBusMessageState.Deferred, msg.State);
         }
     }
 

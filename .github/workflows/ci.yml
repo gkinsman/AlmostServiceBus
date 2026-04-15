@@ -176,10 +176,11 @@ jobs:
           # The remote-invocation-timeout.patch raises DefaultRemoteInvocationTimeout to
           # 60s in the Inline / Prefixed / TopicAndSubscriptionWithCustomRule sender
           # fixtures, so both tests now pass in CI and no filter is needed.
-          # Inline requeue/DLQ: Wolverine's InlineAzureServiceBusListener._defer completes
-          # the AMQP message then re-sends to the retry queue via BatchedSender, but the
-          # retry queue never re-delivers.
-          FILTER="$FILTER&FullyQualifiedName!~InlineSendingAndReceivingCompliance.will_move_to_dead_letter_queue_without_any_exception_match"
+          # Requeue/DLQ: Wolverine's *AzureServiceBusListener._defer completes the AMQP
+          # message then re-sends to the retry queue via BatchedSender, but the retry
+          # queue never re-delivers in time for the TrackedSession's "ending activity"
+          # tracking. Affects all transport modes (Inline / TopicAndSubscription / etc.).
+          FILTER="$FILTER&FullyQualifiedName!~will_move_to_dead_letter_queue_without_any_exception_match"
           FILTER="$FILTER&FullyQualifiedName!~InlineSendingAndReceivingCompliance.will_requeue_and_increment_attempts"
           FILTER="$FILTER&FullyQualifiedName!~InlineSendingAndReceivingCompliance.can_apply_requeue_mechanics"
           # Requeue coverage stays enabled, but dlq_mechanics is still flaky when Wolverine

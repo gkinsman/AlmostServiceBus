@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -73,7 +74,7 @@ public static class EmulatorInfrastructure
     }
 
     const string AspNetHttpsOid = "1.3.6.1.4.1.311.84.1.1";
-    
+
     /// <summary>
     /// Loads the ASP.NET Core HTTPS development certificate from the current user's certificate store.
     /// Throws if no dev cert is found.
@@ -93,18 +94,67 @@ public static class EmulatorInfrastructure
             .FirstOrDefault();
     }
 
+    private static int s_trustEnsured;
+
     /// <summary>
-    /// On Linux, ensures the ASP.NET dev cert is in SSL_CERT_DIR so the Azure SDK's
-    /// AMQP TLS client trusts it. dotnet dev-certs --trust places the cert in
-    /// ~/.aspnet/dev-certs/trust but doesn't update SSL_CERT_DIR automatically.
+    /// Ensures the ASP.NET Core HTTPS development certificate is trusted by the process's
+    /// TLS stack, so the Azure SDK's AMQPS client accepts it without client-side
+    /// validation overrides.
     ///
-    /// Also handles the SSL_CERT_FILE override: when SSL_CERT_FILE is set (e.g. to
-    /// /etc/ssl/certs/ca-certificates.crt), OpenSSL ignores SSL_CERT_DIR entirely.
-    /// We unset SSL_CERT_FILE so SSL_CERT_DIR takes effect, allowing the dev cert
-    /// trust directory to be included in the search path.
+    /// Two layers:
+    ///
+    /// 1. Shell out to <c>dotnet dev-certs https --trust</c>. On Windows/macOS this is
+    ///    sufficient — the cert ends up in the per-user trust store that the platform's
+    ///    TLS stack consults automatically. On Linux it updates <c>~/.aspnet/dev-certs/trust/</c>
+    ///    (and, on newer distros with NSS tooling, some browser trust dbs), but doesn't
+    ///    touch the system CA bundle that OpenSSL-based stacks read.
+    ///
+    /// 2. On Linux, point OpenSSL at <c>~/.aspnet/dev-certs/trust/</c> via
+    ///    <c>SSL_CERT_DIR</c>, and unset <c>SSL_CERT_FILE</c> (which overrides
+    ///    <c>SSL_CERT_DIR</c> when both are set). We do this with native
+    ///    <c>setenv(3)</c>/<c>unsetenv(3)</c> because <see cref="Environment.SetEnvironmentVariable"/>
+    ///    only updates the managed copy of the environment; OpenSSL reads the native
+    ///    <c>getenv(3)</c> view.
+    ///
+    /// CI environments that set up system trust themselves (e.g. via
+    /// <c>sudo update-ca-certificates</c>) don't need any of this — the CLI is
+    /// idempotent when the cert is already trusted, and the env-var step short-circuits
+    /// when <c>~/.aspnet/dev-certs/trust/</c> doesn't exist.
     /// </summary>
     public static void EnsureDevCertTrusted()
     {
+        // Only attempt once per process — the CLI takes a second or two even when the
+        // cert is already trusted.
+        if (Interlocked.Exchange(ref s_trustEnsured, 1) != 0)
+            return;
+
+        // Step 1: let the platform CLI handle trust wherever it can.
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = "dev-certs https --trust",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+
+            if (proc is not null && !proc.WaitForExit(TimeSpan.FromSeconds(10)))
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { }
+            }
+        }
+        catch
+        {
+            // `dotnet` may not be on PATH in packaged scenarios; fall through.
+        }
+
+        // Step 2: Linux-only — bridge the dev-certs trust dir into OpenSSL's search path.
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return;
+
         var trustDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".aspnet", "dev-certs", "trust");
@@ -112,20 +162,13 @@ public static class EmulatorInfrastructure
         if (!Directory.Exists(trustDir))
             return;
 
-        // SSL_CERT_FILE overrides SSL_CERT_DIR in OpenSSL. If it's set, unset it
-        // so our SSL_CERT_DIR additions take effect. The system CA bundle is already
-        // included via the /usr/lib/ssl/certs directory in SSL_CERT_DIR.
-        //
-        // We must use native setenv/unsetenv (P/Invoke) because
-        // Environment.SetEnvironmentVariable only updates the managed view.
-        // OpenSSL reads environment variables via native getenv(3), which is
-        // not affected by the managed API.
+        // SSL_CERT_FILE overrides SSL_CERT_DIR in OpenSSL. If set, unset it so
+        // SSL_CERT_DIR takes effect.
         var sslCertFile = Environment.GetEnvironmentVariable("SSL_CERT_FILE");
         if (!string.IsNullOrEmpty(sslCertFile))
         {
             Environment.SetEnvironmentVariable("SSL_CERT_FILE", null);
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                unsetenv("SSL_CERT_FILE");
+            unsetenv("SSL_CERT_FILE");
         }
 
         var current = Environment.GetEnvironmentVariable("SSL_CERT_DIR") ?? "";
@@ -136,8 +179,7 @@ public static class EmulatorInfrastructure
                 ? $"{trustDir}:{systemCerts}"
                 : $"{trustDir}:{current}";
             Environment.SetEnvironmentVariable("SSL_CERT_DIR", newValue);
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                setenv("SSL_CERT_DIR", newValue, 1);
+            setenv("SSL_CERT_DIR", newValue, 1);
         }
     }
 }
