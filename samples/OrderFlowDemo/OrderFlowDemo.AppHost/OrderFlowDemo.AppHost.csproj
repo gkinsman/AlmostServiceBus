@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Sdk Name="Aspire.AppHost.Sdk" Version="9.2.1" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsAspireHost>true</IsAspireHost>
+    <!-- NU1902: transitive KubernetesClient vulnerability from Aspire.Hosting -->
+    <NoWarn>$(NoWarn);NU1902</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" Version="9.2.1" />
+    <!-- The emulator's Aspire integration, referenced from source -->
+    <ProjectReference Include="..\..\..\src\AlmostServiceBus.Aspire.Hosting\AlmostServiceBus.Aspire.Hosting.csproj"
+                      IsAspireProjectResource="false" />
+    <!-- The demo projects this AppHost orchestrates -->
+    <ProjectReference Include="..\OrderFlowDemo.OrderApi\OrderFlowDemo.OrderApi.csproj" />
+    <ProjectReference Include="..\OrderFlowDemo.FulfillmentWorker\OrderFlowDemo.FulfillmentWorker.csproj" />
+  </ItemGroup>
+</Project>

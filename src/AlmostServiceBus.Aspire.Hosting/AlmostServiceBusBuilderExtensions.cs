@@ -28,11 +28,12 @@ public static class AlmostServiceBusBuilderExtensions
         this IDistributedApplicationBuilder builder,
         string name,
         int? port = null,
-        int dashboardPort = 15672)
+        int dashboardPort = 15672,
+        bool disableTls = false)
     {
         var hostDll = ResolveHostDll();
 
-        var resource = new AlmostServiceBusResource(name, Path.GetDirectoryName(hostDll)!, dashboardPort);
+        var resource = new AlmostServiceBusResource(name, Path.GetDirectoryName(hostDll)!, dashboardPort, disableTls);
 
         var args = new List<object>
         {
@@ -47,7 +48,7 @@ public static class AlmostServiceBusBuilderExtensions
             .WithEndpoint(dashboardPort, dashboardPort, name: "dashboard", scheme: "http", isProxied: false)
             .WithExternalHttpEndpoints();
 
-        // Pass the allocated port to the Host as --Port
+        // Pass the allocated port + TLS flag to the Host as CLI args
         resourceBuilder = resourceBuilder.WithArgs(context =>
         {
             var serviceBusEndpoint = resource.GetEndpoint("servicebus");
@@ -56,6 +57,12 @@ public static class AlmostServiceBusBuilderExtensions
 
             context.Args.Add("--DashboardPort");
             context.Args.Add(dashboardPort.ToString());
+
+            if (disableTls)
+            {
+                context.Args.Add("--DisableTls");
+                context.Args.Add("true");
+            }
         });
 
         return resourceBuilder;
@@ -75,9 +82,10 @@ public static class AlmostServiceBusBuilderExtensions
         string name,
         string hostProjectPath,
         int port = 5672,
-        int dashboardPort = 15672)
+        int dashboardPort = 15672,
+        bool disableTls = false)
     {
-        var resource = new AlmostServiceBusResource(name, ".", dashboardPort);
+        var resource = new AlmostServiceBusResource(name, ".", dashboardPort, disableTls);
 
         var args = new List<object>
         {
@@ -101,6 +109,12 @@ public static class AlmostServiceBusBuilderExtensions
 
             context.Args.Add("--DashboardPort");
             context.Args.Add(dashboardPort.ToString());
+
+            if (disableTls)
+            {
+                context.Args.Add("--DisableTls");
+                context.Args.Add("true");
+            }
         });
 
         return resourceBuilder;

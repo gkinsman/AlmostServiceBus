@@ -35,6 +35,12 @@ AmqpLog.Factory = LoggerFactory.Create(b => b
 var publicPort = mgmtBuilder.Configuration.GetValue("Port", 5672);
 var dashboardPort = mgmtBuilder.Configuration.GetValue("DashboardPort", 15672);
 var amqpsPort = 5671;
+// When DisableTls is set, the emulator runs in MS-compat mode:
+// - no TLS termination anywhere, no cert load
+// - skip AMQPS (5671) and HTTPS (443) listeners entirely
+// - clients connect with `UseDevelopmentEmulator=true` in the connection string,
+//   which makes Azure.Messaging.ServiceBus use plain AMQP on the public port
+var disableTls = mgmtBuilder.Configuration.GetValue("DisableTls", false);
 var internalHttpPort = EmulatorInfrastructure.GetFreePort();
 var internalAmqpPort = EmulatorInfrastructure.GetFreePort();
 
@@ -97,35 +103,41 @@ scheduledProcessor.StartBackground(TimeSpan.FromMilliseconds(500));
 var amqpServer = new AmqpServer(new AmqpServerOptions { Port = internalAmqpPort }, registry, scheduledProcessor);
 amqpServer.Start();
 
-// ── TLS multiplexers ──
+// ── Connection multiplexers (TLS-capable unless DisableTls) ──
 
-var cert = EmulatorInfrastructure.LoadDevCert();
+System.Security.Cryptography.X509Certificates.X509Certificate2? cert = disableTls
+    ? null
+    : EmulatorInfrastructure.LoadDevCert();
 var multiplexerCts = new CancellationTokenSource();
 
 var multiplexer = new TcpMultiplexer(publicPort, internalAmqpPort, internalHttpPort, cert);
 _ = multiplexer.StartAsync(multiplexerCts.Token);
-
-if (amqpsPort != publicPort)
-{
-    var amqpsMultiplexer = new TcpMultiplexer(amqpsPort, internalAmqpPort, internalHttpPort, cert);
-    _ = amqpsMultiplexer.StartAsync(multiplexerCts.Token);
-}
 
 // Microsoft emulator compatibility: management API on port 5300
 var mgmtApiPort = 5300;
 var mgmtMultiplexer = new TcpMultiplexer(mgmtApiPort, internalAmqpPort, internalHttpPort, cert);
 _ = mgmtMultiplexer.StartAsync(multiplexerCts.Token);
 
-// HTTPS on port 443 — the Azure SDK's FQDN-based admin client defaults here
-// when using NamedKeyCredential (MassTransit's test infrastructure pattern)
-try
+// TLS-only listeners — skip entirely in no-TLS mode
+if (!disableTls)
 {
-    var httpsMultiplexer = new TcpMultiplexer(443, internalAmqpPort, internalHttpPort, cert);
-    _ = httpsMultiplexer.StartAsync(multiplexerCts.Token);
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"  Warning: Could not bind port 443 ({ex.Message}). FQDN-based admin clients may not work.");
+    if (amqpsPort != publicPort)
+    {
+        var amqpsMultiplexer = new TcpMultiplexer(amqpsPort, internalAmqpPort, internalHttpPort, cert);
+        _ = amqpsMultiplexer.StartAsync(multiplexerCts.Token);
+    }
+
+    // HTTPS on port 443 — the Azure SDK's FQDN-based admin client defaults here
+    // when using NamedKeyCredential (MassTransit's test infrastructure pattern)
+    try
+    {
+        var httpsMultiplexer = new TcpMultiplexer(443, internalAmqpPort, internalHttpPort, cert);
+        _ = httpsMultiplexer.StartAsync(multiplexerCts.Token);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"  Warning: Could not bind port 443 ({ex.Message}). FQDN-based admin clients may not work.");
+    }
 }
 
 // ── Shutdown ──
@@ -148,18 +160,27 @@ Console.WriteLine($"{cyan}  ██║  ██║███████╗██�
 Console.WriteLine($"{cyan}  ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝ ╚═════╝ ╚══════╝   ╚═╝   {reset}");
 Console.WriteLine($"{bold}        S E R V I C E   B U S   E M U L A T O R{reset}");
 Console.WriteLine();
-Console.WriteLine($"  {green}●{reset} {bold}Service Bus{reset}  {dim}──▶{reset} localhost:{yellow}{publicPort}{reset} {dim}(HTTPS/AMQP){reset}, localhost:{yellow}{amqpsPort}{reset} {dim}(AMQPS){reset}");
-Console.WriteLine($"  {green}●{reset} {bold}Management {reset}  {dim}──▶{reset} localhost:{yellow}{mgmtApiPort}{reset} {dim}(HTTP){reset}, localhost:{yellow}443{reset} {dim}(HTTPS){reset}");
+if (disableTls)
+{
+    Console.WriteLine($"  {green}●{reset} {bold}Service Bus{reset}  {dim}──▶{reset} localhost:{yellow}{publicPort}{reset} {dim}(plain AMQP/HTTP — TLS disabled){reset}");
+    Console.WriteLine($"  {green}●{reset} {bold}Management {reset}  {dim}──▶{reset} localhost:{yellow}{mgmtApiPort}{reset} {dim}(plain HTTP){reset}");
+}
+else
+{
+    Console.WriteLine($"  {green}●{reset} {bold}Service Bus{reset}  {dim}──▶{reset} localhost:{yellow}{publicPort}{reset} {dim}(HTTPS/AMQP){reset}, localhost:{yellow}{amqpsPort}{reset} {dim}(AMQPS){reset}");
+    Console.WriteLine($"  {green}●{reset} {bold}Management {reset}  {dim}──▶{reset} localhost:{yellow}{mgmtApiPort}{reset} {dim}(HTTP){reset}, localhost:{yellow}443{reset} {dim}(HTTPS){reset}");
+}
 Console.WriteLine($"  {green}●{reset} {bold}Dashboard  {reset}  {dim}──▶{reset} {cyan}http://localhost:{dashboardPort}{reset}");
 Console.WriteLine();
-var connStr = $"Endpoint=sb://localhost:{publicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator";
+var emulatorFlag = disableTls ? ";UseDevelopmentEmulator=true" : "";
+var connStr = $"Endpoint=sb://localhost:{publicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator{emulatorFlag}";
 var boxInner = connStr.Length + 2; // one space padding each side
 const string label = " connection string ";
 var topFill = new string('─', boxInner - label.Length - 1);
 var botFill = new string('─', boxInner);
 var padRight = new string(' ', boxInner - connStr.Length - 1);
 Console.WriteLine($"  {dim}┌─{label}{topFill}┐{reset}");
-Console.WriteLine($"  {dim}│{reset} Endpoint=sb://localhost:{yellow}{publicPort}{reset};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator{padRight}{dim}│{reset}");
+Console.WriteLine($"  {dim}│{reset} Endpoint=sb://localhost:{yellow}{publicPort}{reset};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator{emulatorFlag}{padRight}{dim}│{reset}");
 Console.WriteLine($"  {dim}└{botFill}┘{reset}");
 Console.WriteLine();
 Console.WriteLine($"  {dim}press Ctrl+C to shut down{reset}");
