@@ -20,7 +20,10 @@ var emulator = builder.AddServiceBusEmulator(
 
 builder.AddProject<Projects.OrderFlowDemo_OrderApi>("orderapi")
     .WithReference(emulator)
-    .WaitFor(emulator);
+    .WaitFor(emulator)
+    // Force Production so UseViteDevelopmentServer() is skipped and the pre-built
+    // wwwroot/ is served as static files — no separate `npm run dev` needed.
+    .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Production");
 
 builder.AddProject<Projects.OrderFlowDemo_FulfillmentWorker>("fulfillment")
     .WithReference(emulator)

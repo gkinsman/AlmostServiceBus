@@ -30,4 +30,13 @@
     <Exec Command="npm run build --prefix $(DashboardDir)" />
   </Target>
 
+  <!-- The Host overrides ContentRootPath to AppContext.BaseDirectory so the
+       dotnet-tool deployment path works (wwwroot must sit alongside the DLL).
+       Microsoft.NET.Sdk.Web's default Static Web Assets pipeline serves wwwroot
+       from source, but that doesn't apply once ContentRootPath is overridden —
+       so copy wwwroot explicitly into the output directory. -->
+  <ItemGroup>
+    <Content Update="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -7,7 +7,9 @@
     <ProjectReference Include="..\OrderFlowDemo.ServiceDefaults\OrderFlowDemo.ServiceDefaults.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="MassTransit.Azure.ServiceBus.Core" Version="8.4.0" />
+    <PackageReference Include="MassTransit.Azure.ServiceBus.Core" Version="8.5.3" />
+    <!-- Pin a recent Azure SDK to override the older transitive and pick up emulator fixes -->
+    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
     <PackageReference Include="Vite.AspNetCore" Version="2.4.1" />
   </ItemGroup>
   <Target Name="BuildDashboard" BeforeTargets="Build"
