@@ -1,6 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
-using Azure.Core.Pipeline;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 using AlmostServiceBus.TestHost;
@@ -18,39 +15,20 @@ public class EmulatorConformanceTests : ConformanceTestBase
     {
         await _fixture.StartAsync();
 
-        // --- ServiceBusClient (AMQP over TLS) ---
-        var clientOptions = new ServiceBusClientOptions
+        // Emulator is plaintext; the fixture's ConnectionString carries
+        // `UseDevelopmentEmulator=true` so the Azure SDK uses plain AMQP/HTTP.
+        var connectionString = _fixture.ConnectionString;
+
+        var client = new ServiceBusClient(connectionString, new ServiceBusClientOptions
         {
-            TransportType = ServiceBusTransportType.AmqpTcp,
-            CustomEndpointAddress = new Uri($"sb://localhost:{_fixture.PublicPort}"),
             RetryOptions = new ServiceBusRetryOptions
             {
                 MaxRetries = 0,
                 TryTimeout = TimeSpan.FromSeconds(10)
             }
-        };
+        });
 
-        var connectionString =
-            $"Endpoint=sb://localhost:{_fixture.PublicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator";
-
-        var client = new ServiceBusClient(connectionString, clientOptions);
-
-        // --- ServiceBusAdministrationClient (HTTPS with cert bypass + DNS redirect) ---
-        var handler = new SocketsHttpHandler
-        {
-            SslOptions = { RemoteCertificateValidationCallback = (_, _, _, _) => true },
-            ConnectCallback = async (context, ct) =>
-            {
-                var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                await socket.ConnectAsync(IPAddress.Loopback, context.DnsEndPoint.Port, ct);
-                return new NetworkStream(socket, ownsSocket: true);
-            }
-        };
-
-        var adminOptions = new ServiceBusAdministrationClientOptions();
-        adminOptions.Transport = new HttpClientTransport(new HttpClient(handler));
-
-        var admin = new ServiceBusAdministrationClient(connectionString, adminOptions);
+        var admin = new ServiceBusAdministrationClient(connectionString);
 
         return (client, admin);
     }

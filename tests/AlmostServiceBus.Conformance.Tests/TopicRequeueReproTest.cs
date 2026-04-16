@@ -277,7 +277,7 @@ public class EmulatorTopicRequeueReproTest : TopicRequeueReproTestBase
     protected override async Task SetupClientsAsync()
     {
         await _fixture.StartAsync();
-        var cs = $"Endpoint=sb://localhost:{_fixture.PublicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator";
+        var cs = $"Endpoint=sb://localhost:{_fixture.PublicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
 
         Client = new ServiceBusClient(cs, new ServiceBusClientOptions
         {
@@ -286,20 +286,7 @@ public class EmulatorTopicRequeueReproTest : TopicRequeueReproTestBase
             RetryOptions = new ServiceBusRetryOptions { MaxRetries = 0, TryTimeout = TimeSpan.FromSeconds(10) }
         });
 
-        var handler = new SocketsHttpHandler
-        {
-            SslOptions = { RemoteCertificateValidationCallback = (_, _, _, _) => true },
-            ConnectCallback = async (context, ct) =>
-            {
-                var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                await socket.ConnectAsync(IPAddress.Loopback, context.DnsEndPoint.Port, ct);
-                return new NetworkStream(socket, ownsSocket: true);
-            }
-        };
-
-        var adminOptions = new ServiceBusAdministrationClientOptions();
-        adminOptions.Transport = new HttpClientTransport(new HttpClient(handler));
-        Admin = new ServiceBusAdministrationClient(cs, adminOptions);
+        Admin = new ServiceBusAdministrationClient(cs);
     }
 
     public override async Task DisposeAsync()

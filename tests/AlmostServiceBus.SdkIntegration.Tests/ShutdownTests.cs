@@ -29,7 +29,7 @@ public class ShutdownTests : IAsyncLifetime
     private ServiceBusClient CreateServiceBusClient()
     {
         var connectionString =
-            $"Endpoint=sb://localhost:{_fixture.PublicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator";
+            $"Endpoint=sb://localhost:{_fixture.PublicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
 
         var clientOptions = new ServiceBusClientOptions
         {

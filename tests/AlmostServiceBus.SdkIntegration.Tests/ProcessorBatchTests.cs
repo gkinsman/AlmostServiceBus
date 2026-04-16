@@ -22,7 +22,7 @@ public class ProcessorBatchTests : IAsyncLifetime
 
     private ServiceBusClient CreateClient()
     {
-        var cs = $"Endpoint=sb://localhost:{_fixture.PublicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator";
+        var cs = $"Endpoint=sb://localhost:{_fixture.PublicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
         return new ServiceBusClient(cs, new ServiceBusClientOptions
         {
             TransportType = ServiceBusTransportType.AmqpTcp,

@@ -37,8 +37,7 @@ public class AmqpFrameTraceTests : IAsyncLifetime
 
     private ServiceBusClient CreateClient()
     {
-        // Use TLS path (same as our passing standalone tests)
-        var cs = $"Endpoint=sb://localhost:{_fixture.PublicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator";
+        var cs = $"Endpoint=sb://localhost:{_fixture.PublicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
         return new ServiceBusClient(cs, new ServiceBusClientOptions
         {
             TransportType = ServiceBusTransportType.AmqpTcp,
