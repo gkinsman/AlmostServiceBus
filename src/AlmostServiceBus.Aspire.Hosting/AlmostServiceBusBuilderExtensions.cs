@@ -16,7 +16,7 @@ public static class AlmostServiceBusBuilderExtensions
     /// <param name="builder">The distributed application builder.</param>
     /// <param name="name">The resource name (used in the Aspire dashboard and for <c>WithReference</c>).</param>
     /// <param name="port">
-    /// The port the emulator listens on for AMQP and HTTPS traffic.
+    /// The port the emulator listens on for AMQP traffic.
     /// When <c>null</c>, Aspire assigns a free port automatically.
     /// </param>
     /// <param name="dashboardPort">
@@ -28,12 +28,11 @@ public static class AlmostServiceBusBuilderExtensions
         this IDistributedApplicationBuilder builder,
         string name,
         int? port = null,
-        int dashboardPort = 15672,
-        bool disableTls = false)
+        int dashboardPort = 15672)
     {
         var hostDll = ResolveHostDll();
 
-        var resource = new AlmostServiceBusResource(name, Path.GetDirectoryName(hostDll)!, dashboardPort, disableTls);
+        var resource = new AlmostServiceBusResource(name, Path.GetDirectoryName(hostDll)!, dashboardPort);
 
         var args = new List<object>
         {
@@ -48,7 +47,7 @@ public static class AlmostServiceBusBuilderExtensions
             .WithEndpoint(dashboardPort, dashboardPort, name: "dashboard", scheme: "http", isProxied: false)
             .WithExternalHttpEndpoints();
 
-        // Pass the allocated port + TLS flag to the Host as CLI args
+        // Pass the allocated port to the Host as --Port
         resourceBuilder = resourceBuilder.WithArgs(context =>
         {
             var serviceBusEndpoint = resource.GetEndpoint("servicebus");
@@ -57,12 +56,6 @@ public static class AlmostServiceBusBuilderExtensions
 
             context.Args.Add("--DashboardPort");
             context.Args.Add(dashboardPort.ToString());
-
-            if (disableTls)
-            {
-                context.Args.Add("--DisableTls");
-                context.Args.Add("true");
-            }
         });
 
         return resourceBuilder;
@@ -82,10 +75,9 @@ public static class AlmostServiceBusBuilderExtensions
         string name,
         string hostProjectPath,
         int port = 5672,
-        int dashboardPort = 15672,
-        bool disableTls = false)
+        int dashboardPort = 15672)
     {
-        var resource = new AlmostServiceBusResource(name, ".", dashboardPort, disableTls);
+        var resource = new AlmostServiceBusResource(name, ".", dashboardPort);
 
         var args = new List<object>
         {
@@ -109,12 +101,6 @@ public static class AlmostServiceBusBuilderExtensions
 
             context.Args.Add("--DashboardPort");
             context.Args.Add(dashboardPort.ToString());
-
-            if (disableTls)
-            {
-                context.Args.Add("--DisableTls");
-                context.Args.Add("true");
-            }
         });
 
         return resourceBuilder;

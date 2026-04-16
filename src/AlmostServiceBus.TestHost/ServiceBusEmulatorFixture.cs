@@ -32,7 +32,7 @@ public class ServiceBusEmulatorFixture : IAsyncDisposable
     public string Namespace => _namespace;
 
     public string ConnectionString =>
-        $"Endpoint=sb://localhost:{PublicPort};SharedAccessKeyName={_namespace};SharedAccessKey=emulator";
+        $"Endpoint=sb://localhost:{PublicPort};SharedAccessKeyName={_namespace};SharedAccessKey=emulator;UseDevelopmentEmulator=true";
 
     public string AmqpConnectionString =>
         $"amqp://localhost:{AmqpPort}";
@@ -46,8 +46,6 @@ public class ServiceBusEmulatorFixture : IAsyncDisposable
 
     public async Task StartAsync()
     {
-        EmulatorInfrastructure.EnsureDevCertTrusted();
-
         for (var attempt = 1; attempt <= MaxStartAttempts; attempt++)
         {
             try
@@ -107,9 +105,8 @@ public class ServiceBusEmulatorFixture : IAsyncDisposable
         _amqpServer = new AmqpServer(new AmqpServerOptions { Port = AmqpPort }, _registry, _scheduledProcessor);
         _amqpServer.Start();
 
-        var cert = EmulatorInfrastructure.LoadDevCert();
         _multiplexerCts = new CancellationTokenSource();
-        _multiplexer = new TcpMultiplexer(PublicPort, AmqpPort, HttpPort, cert);
+        _multiplexer = new TcpMultiplexer(PublicPort, AmqpPort, HttpPort);
         _multiplexerTask = _multiplexer.StartAsync(_multiplexerCts.Token);
 
         // Azure SDK's ServiceBusAdministrationClient connects to localhost:5300
@@ -120,7 +117,7 @@ public class ServiceBusEmulatorFixture : IAsyncDisposable
         {
             try
             {
-                var mgmtMultiplexer = new TcpMultiplexer(5300, AmqpPort, HttpPort, cert);
+                var mgmtMultiplexer = new TcpMultiplexer(5300, AmqpPort, HttpPort);
                 _ = mgmtMultiplexer.StartAsync(_multiplexerCts.Token);
             }
             catch { /* port 5300 may already be in use */ }

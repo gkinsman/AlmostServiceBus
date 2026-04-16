@@ -103,46 +103,4 @@ public class TcpMultiplexerTests : IAsyncDisposable
         }
     }
 
-    [Fact]
-    public async Task Routes_Https_ThroughTlsTermination_ToPlainHttpBackend()
-    {
-        var publicPort = GetFreePort();
-        var amqpPort = GetFreePort();
-        var httpPort = GetFreePort();
-
-        // Kestrel serves plain HTTP (multiplexer handles TLS)
-        var builder = WebApplication.CreateBuilder();
-        builder.WebHost.ConfigureKestrel(k => k.ListenLocalhost(httpPort));
-        builder.Logging.ClearProviders();
-        var app = builder.Build();
-        app.MapGet("/health", () => "ok");
-        await app.StartAsync();
-
-        try
-        {
-            var cert = EmulatorInfrastructure.LoadDevCert();
-            var multiplexer = new TcpMultiplexer(publicPort, amqpPort, httpPort, cert);
-            _ = multiplexer.StartAsync(_cts.Token);
-
-            await Task.Delay(100);
-
-            // Client sends HTTPS — multiplexer terminates TLS, proxies HTTP to Kestrel
-            var handler = new HttpClientHandler
-            {
-                ServerCertificateCustomValidationCallback = (_, _, _, _) => true
-            };
-            using var httpClient = new HttpClient(handler)
-            {
-                BaseAddress = new Uri($"https://localhost:{publicPort}")
-            };
-
-            var response = await httpClient.GetStringAsync("/health");
-            Assert.Equal("ok", response);
-        }
-        finally
-        {
-            await app.StopAsync();
-            await app.DisposeAsync();
-        }
-    }
 }

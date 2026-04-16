@@ -15,8 +15,7 @@ var emulator = builder.AddServiceBusEmulator(
         name: "servicebus",
         hostProjectPath: hostProject,
         port: 5672,
-        dashboardPort: 15672,
-        disableTls: true);
+        dashboardPort: 15672);
 
 builder.AddProject<Projects.OrderFlowDemo_OrderApi>("orderapi")
     .WithReference(emulator)
