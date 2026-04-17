@@ -1,5 +1,5 @@
 diff --git a/src/Transports/MassTransit.Azure.ServiceBus.Core/AzureServiceBusTransport/ConnectionContextFactory.cs b/src/Transports/MassTransit.Azure.ServiceBus.Core/AzureServiceBusTransport/ConnectionContextFactory.cs
-index d618e9819..acdc63be4 100644
+index d618e9819..02b5f5a79 100644
 --- a/src/Transports/MassTransit.Azure.ServiceBus.Core/AzureServiceBusTransport/ConnectionContextFactory.cs
 +++ b/src/Transports/MassTransit.Azure.ServiceBus.Core/AzureServiceBusTransport/ConnectionContextFactory.cs
 @@ -4,6 +4,7 @@ namespace MassTransit.AzureServiceBusTransport
@@ -39,18 +39,26 @@ index d618e9819..acdc63be4 100644
              if (settings.TokenCredential != null)
              {
                  client ??= new ServiceBusClient(endpoint, settings.TokenCredential, clientOptions);
-@@ -85,7 +95,9 @@ async Task<ConnectionContext> CreateConnection(ISupervisor supervisor)
+@@ -84,8 +94,16 @@ async Task<ConnectionContext> CreateConnection(ISupervisor supervisor)
+             }
              else if (settings.NamedKeyCredential != null)
              {
-                 client ??= new ServiceBusClient(endpoint, settings.NamedKeyCredential, clientOptions);
+-                client ??= new ServiceBusClient(endpoint, settings.NamedKeyCredential, clientOptions);
 -                managementClient ??= new ServiceBusAdministrationClient(endpoint, settings.NamedKeyCredential, managementOptions);
-+                managementClient ??= emulatorConnectionString != null
-+                    ? new ServiceBusAdministrationClient(emulatorConnectionString, managementOptions)
-+                    : new ServiceBusAdministrationClient(endpoint, settings.NamedKeyCredential, managementOptions);
++                if (emulatorConnectionString != null)
++                {
++                    client ??= new ServiceBusClient(emulatorConnectionString, clientOptions);
++                    managementClient ??= new ServiceBusAdministrationClient(emulatorConnectionString, managementOptions);
++                }
++                else
++                {
++                    client ??= new ServiceBusClient(endpoint, settings.NamedKeyCredential, clientOptions);
++                    managementClient ??= new ServiceBusAdministrationClient(endpoint, settings.NamedKeyCredential, managementOptions);
++                }
              }
              else if (settings.SasCredential != null)
              {
-@@ -118,5 +130,35 @@ static bool HasSharedAccess(string connectionString)
+@@ -118,5 +136,35 @@ static bool HasSharedAccess(string connectionString)
              return !string.IsNullOrEmpty(connectionStringProperties.SharedAccessKeyName)
                  && !string.IsNullOrEmpty(connectionStringProperties.SharedAccessKey) || !string.IsNullOrEmpty(connectionStringProperties.SharedAccessSignature);
          }
