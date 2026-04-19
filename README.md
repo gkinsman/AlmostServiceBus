@@ -21,7 +21,7 @@ AlmostServiceBus is flexible in how you run it:
 - **Scheduled messages** with enqueue-time semantics
 - **Batch message support** — correctly decodes Azure SDK `ServiceBusMessageBatch` transfers
 - **Management API** — Atom XML REST API for queue/topic/subscription CRUD
-- **TLS termination** — single port serves AMQPS, HTTPS, and plain AMQP/HTTP
+- **Plaintext, MS-emulator compatible** — clients connect with `UseDevelopmentEmulator=true`, the same flag used with Microsoft's official Service Bus emulator. No TLS, no dev cert, no privileged ports.
 - **Vue diagnostic dashboard** on port 15672
 
 
@@ -107,11 +107,11 @@ var serviceBus = builder.AddServiceBusEmulator("servicebus");
 
 ```
 Client (Azure SDK / MassTransit / Wolverine / NServiceBus)
+UseDevelopmentEmulator=true in the connection string
     │
     ▼
-TcpMultiplexer (port 5672) ─── first-byte sniffing
+TcpMultiplexer (port 5672, plaintext) ─── first-byte sniffing
     ├── 0x41 (AMQP)  → plain AMQP backend
-    ├── 0x16 (TLS)   → SslStream → AMQP or HTTP
     └── HTTP verb     → plain HTTP backend
     │
     ├── AMQPNetLite + EmulatorContainer (message send/receive)
@@ -123,6 +123,11 @@ NamespaceRegistry (shared in-memory broker)
     ├── TopicEntity → SubscriptionEntity (filters, forwarding)
     └── SessionManager (per-queue session partitioning)
 ```
+
+The emulator is plaintext-only and compatible with Microsoft's official
+Service Bus emulator: clients use the same `UseDevelopmentEmulator=true`
+connection-string flag, which makes `Azure.Messaging.ServiceBus` use plain
+AMQP for data and plain HTTP for admin.
 
 The emulator uses AMQPNetLite as the AMQP server (Microsoft.Azure.Amqp's server API is internal). A custom `EmulatorContainer` (replacing AMQPNetLite's `ContainerHost`) handles delivery tag rewriting, batch message decoding, and coordinator link rejection. Message delivery uses channel-based waiting for instant wake-up on enqueue.
 
@@ -148,13 +153,11 @@ The emulator uses AMQPNetLite as the AMQP server (Microsoft.Azure.Amqp's server 
 
 | CLI argument | Default | Description |
 |-------------|---------|-------------|
-| `--Port` | 5672 | Main public port (AMQPS + AMQP + HTTP) |
+| `--Port` | 5672 | Main public port (plain AMQP + plain HTTP, multiplexed) |
 | `--DashboardPort` | 15672 | Vue dashboard port (0 to disable) |
 
 Additional ports bound automatically:
-- **5671** — dedicated AMQPS
-- **5300** — management API (HTTP, for `UseDevelopmentEmulator=true` clients)
-- **443** — HTTPS (if available)
+- **5300** — admin HTTP, the port `Azure.Messaging.ServiceBus` uses for management when `UseDevelopmentEmulator=true`
 
 ## Known Limitations
 

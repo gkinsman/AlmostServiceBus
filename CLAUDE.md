@@ -7,14 +7,13 @@ A from-scratch Azure Service Bus emulator that runs locally, compatible with the
 ## Architecture
 
 ```
-Client (Azure SDK / MassTransit / etc.)
+Client (Azure SDK / MassTransit / etc.) — UseDevelopmentEmulator=true
     |
-Port 5672 (public) — also 5671 (AMQPS), 5300 (HTTP), 443 (HTTPS)
+Port 5672 (public AMQP/HTTP), Port 5300 (admin HTTP, MS-emulator compat)
     |
-TcpMultiplexer (first-byte sniffing)
-    ├── 0x41 (AMQP) → plain AMQP backend
-    ├── 0x16 (TLS) → SslStream termination → detect HTTP vs AMQP
-    └── HTTP methods → plain HTTP backend
+TcpMultiplexer (first-byte sniffing — plaintext only)
+    ├── 0x41 (AMQP)    → plain AMQP backend
+    └── HTTP verb byte → plain HTTP backend
     |
 ┌───────────────────┐    ┌──────────────────┐
 │ AMQPNetLite        │    │ Kestrel HTTP      │
@@ -25,9 +24,15 @@ TcpMultiplexer (first-byte sniffing)
     NamespaceRegistry (shared in-memory broker)
 ```
 
+The emulator is plaintext-only — it matches Microsoft's official Service Bus
+emulator, which clients reach via `UseDevelopmentEmulator=true` in the
+connection string. That flag tells `Azure.Messaging.ServiceBus` to use plain
+AMQP for data and plain HTTP for admin. No TLS, no certificates, no
+privileged port binding.
+
 ### Key Components
 
-- **TcpMultiplexer** (`src/.../Hosting/TcpMultiplexer.cs`) — single port serves TLS/HTTPS/AMQP/plain HTTP
+- **TcpMultiplexer** (`src/.../Hosting/TcpMultiplexer.cs`) — single port serves plain AMQP and plain HTTP, routed by first-byte sniffing
 - **EmulatorContainer** (`src/.../Amqp/EmulatorContainer.cs`) — custom `IContainer` replacing AMQPNetLite's `ContainerHost` (fixes transaction coordinator crash)
 - **ReceiverLinkEndpoint** (`src/.../Amqp/ReceiverLinkEndpoint.cs`) — message pump with channel-based delivery (`WaitToReadAsync`), AMQP drain support, credit checking via reflection
 - **SessionReceiverLinkEndpoint** (`src/.../Amqp/SessionReceiverLinkEndpoint.cs`) — session-aware variant
@@ -123,6 +128,6 @@ No csproj changes needed — just tag and push.
 
 1. **AMQPNetLite not Microsoft.Azure.Amqp** — Microsoft.Azure.Amqp's server-side API is internal/undocumented. AMQPNetLite works but needs workarounds (delivery tags, credit reflection).
 2. **Custom IContainer** — replaced `ContainerHost` to handle `Coordinator` targets without crashing.
-3. **TLS termination in multiplexer** — single port serves everything. Kestrel runs plain HTTP internally.
+3. **Plaintext-only, MS-emulator compatible** — no TLS, no dev cert, no privileged ports. Clients connect via `UseDevelopmentEmulator=true`, which makes the Azure SDK speak plain AMQP (port 5672) and plain HTTP (port 5300) — the same wire-level behaviour as Microsoft's official emulator.
 4. **Channel-based message pump** — `TryDequeueImmediate` + `WaitToReadAsync` (channel reader). Wakes instantly when a message is enqueued or abandoned. The only micro-delay is 1ms when waiting for AMQP link credit from the client.
 5. **Clone() doesn't copy LockToken or SequenceNumber** — each queue assigns fresh values on enqueue. Copying caused R-DUPE in MassTransit.

@@ -6,7 +6,8 @@ namespace AlmostServiceBus.SdkIntegration.Tests;
 
 /// <summary>
 /// Tests that reproduce the Wolverine failure path: ServiceBusProcessor with
-/// UseDevelopmentEmulator=true (plain AMQP, no TLS) receiving batch messages.
+/// UseDevelopmentEmulator=true (plain AMQP) receiving batch messages — the same
+/// wire-level mode as Microsoft's official Service Bus emulator.
 /// </summary>
 public class ProcessorPlainAmqpTests : IAsyncLifetime
 {
@@ -17,12 +18,12 @@ public class ProcessorPlainAmqpTests : IAsyncLifetime
 
     /// <summary>
     /// Creates a client using the same connection path as Wolverine's UseDevelopmentEmulator=true:
-    /// plain AMQP (no TLS) directly to the public port.
+    /// plain AMQP directly to the public port.
     /// </summary>
     private ServiceBusClient CreatePlainAmqpClient()
     {
         // UseDevelopmentEmulator=true in the connection string tells the SDK to:
-        // 1. Use plain AMQP (no TLS)
+        // 1. Use plain AMQP
         // 2. Use AmqpTcp transport type
         // 3. Connect directly to the specified port
         var cs = $"Endpoint=sb://localhost:{_fixture.PublicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";

@@ -54,7 +54,8 @@ public class MassTransitBulkMessageTests : IAsyncLifetime
 
             x.UsingAzureServiceBus((ctx, cfg) =>
             {
-                // UseDevelopmentEmulator=true skips TLS, uses port 5672 AMQP + 5300 mgmt.
+                // UseDevelopmentEmulator=true selects plain AMQP on 5672 + plain admin HTTP on 5300
+                // (MS-emulator compatibility mode — the only mode this emulator supports).
                 // RootManageSharedAccessKey maps to "default" namespace in the emulator.
                 var cs = "Endpoint=sb://localhost:5672;" +
                          "SharedAccessKeyName=RootManageSharedAccessKey;" +

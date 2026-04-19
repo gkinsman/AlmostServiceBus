@@ -19,8 +19,8 @@ jobs:
   # ── Internal test suite ─────────────────────────────────────────────────────
   # Runs all tests that live inside this repository.  The emulator starts
   # inside each test fixture on random ports, so no separate emulator process
-  # is required.  The dev cert MUST be trusted so that the Azure SDK can open
-  # AMQPS connections to localhost.
+  # is required.  Everything is plaintext (MS-emulator compatibility mode),
+  # so no cert setup is needed.
   internal-tests:
     name: Internal Tests
     runs-on: ubuntu-latest
@@ -36,18 +36,6 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.x"
-
-      # Export the ASP.NET Core dev cert and add it to the system CA bundle so
-      # that the Azure SDK's AMQPS client accepts it without any client-side
-      # validation override.
-      - name: Trust HTTPS dev certificate
-        run: |
-          dotnet dev-certs https
-          dotnet dev-certs https -ep /tmp/devhttps.pfx -p ""
-          openssl pkcs12 -in /tmp/devhttps.pfx -nokeys -out /tmp/devhttps.crt -passin pass: 2>/dev/null \
-            || openssl pkcs12 -legacy -in /tmp/devhttps.pfx -nokeys -out /tmp/devhttps.crt -passin pass:
-          sudo cp /tmp/devhttps.crt /usr/local/share/ca-certificates/aspnetcore-dev.crt
-          sudo update-ca-certificates
 
       - name: Restore & Build
         run: dotnet build AlmostServiceBus.sln
@@ -76,7 +64,7 @@ jobs:
   # ── Wolverine conformance ───────────────────────────────────────────────────
   # Wolverine's own Azure Service Bus tests connect to the official emulator
   # API on port 5673 (AMQP) and 5300 (HTTP management) using
-  # UseDevelopmentEmulator=true, which disables TLS.  We start
+  # UseDevelopmentEmulator=true (plain AMQP + plain HTTP).  We start
   # AlmostServiceBus on port 5673 so it becomes a drop-in replacement.
   #
   # Tests run in parallel both within each job (per-class namespace isolation,
@@ -117,19 +105,13 @@ jobs:
         with:
           dotnet-version: "10.x"
 
-      # The emulator host calls LoadDevCert() at startup, so the cert must
-      # exist in the CurrentUser/My store even though Wolverine tests bypass TLS.
-      - name: Generate HTTPS dev certificate
-        run: dotnet dev-certs https
-
       - name: Build emulator host
         run: dotnet build src/AlmostServiceBus.Host
 
       - name: Start emulator on port 5673
         run: |
-          # Port 5673: AMQP (matches Wolverine's Servers.AzureServiceBusConnectionString)
-          # Port 5300: management HTTP (already bound by default in the host)
-          # Port 443:  may fail without root — the host already handles that gracefully
+          # Port 5673: plain AMQP (matches Wolverine's Servers.AzureServiceBusConnectionString)
+          # Port 5300: plain admin HTTP (already bound by default in the host)
           dotnet run --project src/AlmostServiceBus.Host --no-build \
             -- --Port 5673 --DashboardPort 0 &
           echo "EMULATOR_PID=$!" >> "$GITHUB_ENV"
@@ -289,16 +271,6 @@ jobs:
           dotnet-version: |
             9.x
             10.x
-
-      # Trust the dev cert so the Azure SDK accepts AMQPS connections to localhost.
-      - name: Trust HTTPS dev certificate
-        run: |
-          dotnet dev-certs https
-          dotnet dev-certs https -ep /tmp/devhttps.pfx -p ""
-          openssl pkcs12 -in /tmp/devhttps.pfx -nokeys -out /tmp/devhttps.crt -passin pass: 2>/dev/null \
-            || openssl pkcs12 -legacy -in /tmp/devhttps.pfx -nokeys -out /tmp/devhttps.crt -passin pass:
-          sudo cp /tmp/devhttps.crt /usr/local/share/ca-certificates/aspnetcore-dev.crt
-          sudo update-ca-certificates
 
       - name: Apply submodule patches
         run: pwsh apply-patches.ps1

@@ -42,8 +42,8 @@ public class AmqpServer : IDisposable
 
         _listener = new ConnectionListener(address, container);
 
-        // Enable SASL so the Azure SDK's AMQPS connections can authenticate.
-        // The SDK uses MSSBCBS (Microsoft Service Bus CBS) mechanism.
+        // Enable SASL so the Azure SDK's plain-AMQP connections (UseDevelopmentEmulator=true)
+        // can authenticate. The SDK uses MSSBCBS (Microsoft Service Bus CBS) mechanism.
         _listener.SASL.EnableAnonymousMechanism = true;
         _listener.SASL.EnablePlainMechanism("RootManageSharedAccessKey", "emulator");
         _listener.SASL.EnableMechanism(MssbcbsSaslProfile.MechanismName, new MssbcbsSaslProfile());

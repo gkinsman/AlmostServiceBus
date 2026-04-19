@@ -27,7 +27,6 @@ public class RealTopologyTests : IAsyncLifetime
 
         var handler = new SocketsHttpHandler
         {
-            SslOptions = { RemoteCertificateValidationCallback = (_, _, _, _) => true },
             ConnectCallback = async (context, ct) =>
             {
                 var port = context.DnsEndPoint.Port;

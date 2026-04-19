@@ -42,7 +42,6 @@ public abstract class SdkLiveTestBase : IAsyncLifetime
 
         var handler = new SocketsHttpHandler
         {
-            SslOptions = { RemoteCertificateValidationCallback = (_, _, _, _) => true },
             ConnectCallback = async (context, ct) =>
             {
                 var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);

@@ -31,13 +31,12 @@ public class MassTransitTopologyTests : IAsyncLifetime
 
         var handler = new SocketsHttpHandler
         {
-            SslOptions = { RemoteCertificateValidationCallback = (_, _, _, _) => true },
             ConnectCallback = async (context, ct) =>
             {
                 // The SDK builds URIs from the connection string FQDN (e.g. test-xxx.localhost:port).
                 // That subdomain doesn't resolve in DNS, so we redirect the TCP connection to
-                // 127.0.0.1 on the same port. The TLS SNI / Host header still carries the
-                // original hostname, which the emulator uses for namespace resolution.
+                // 127.0.0.1 on the same port. The Host header still carries the original
+                // hostname, which the emulator uses for namespace resolution.
                 var port = context.DnsEndPoint.Port;
                 var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 await socket.ConnectAsync(IPAddress.Loopback, port, ct);

@@ -18,10 +18,11 @@ namespace AlmostServiceBus.MassTransit.Tests;
 ///   1. Creates topology via <see cref="ServiceBusAdministrationClient"/> (REST API)
 ///   2. Sends/receives messages via <see cref="Azure.Messaging.ServiceBus.ServiceBusClient"/> (AMQP)
 ///
-/// The AMQP client (<see cref="Azure.Messaging.ServiceBus.ServiceBusClient"/>) requires
-/// TLS and SAS token negotiation that our emulator's plain AMQP endpoint doesn't support.
-/// Instead, we use AMQPNetLite directly to exercise the same AMQP message flow, while
-/// the topology creation uses the real Azure SDK admin client via the multiplexer's HTTPS endpoint.
+/// Rather than spinning up MassTransit's full bus (which negotiates SAS tokens over
+/// AMQP and adds framework machinery around the test), we use AMQPNetLite directly
+/// to exercise the underlying AMQP message flow. Topology creation still goes through
+/// the real Azure SDK admin client via plain HTTP through the multiplexer — clients
+/// connect with <c>UseDevelopmentEmulator=true</c>, matching Microsoft's official emulator.
 ///
 /// This proves the emulator correctly handles the full MassTransit lifecycle:
 /// topology creation + message routing + pub/sub forwarding.
@@ -37,7 +38,9 @@ public class MassTransitPubSubTests : IAsyncLifetime
 
         var handler = new SocketsHttpHandler
         {
-            SslOptions = { RemoteCertificateValidationCallback = (_, _, _, _) => true },
+            // Redirect the admin client's HTTP connection to 127.0.0.1 regardless of the
+            // hostname built from the connection-string FQDN — the Host header still carries
+            // the original hostname, which the emulator uses for namespace resolution.
             ConnectCallback = async (context, ct) =>
             {
                 var port = context.DnsEndPoint.Port;

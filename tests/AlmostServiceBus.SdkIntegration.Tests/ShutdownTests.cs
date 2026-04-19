@@ -8,9 +8,9 @@ namespace AlmostServiceBus.SdkIntegration.Tests;
 
 /// <summary>
 /// Tests that verify graceful shutdown of Azure SDK clients completes quickly.
-/// The Azure SDK's ServiceBusClient uses AMQPS (TLS) and performs a graceful
-/// AMQP connection close handshake. If the emulator doesn't handle this properly,
-/// shutdown takes 30+ seconds instead of being near-instant.
+/// The Azure SDK's ServiceBusClient performs a graceful AMQP connection close
+/// handshake. If the emulator doesn't handle this properly, shutdown takes
+/// 30+ seconds instead of being near-instant.
 /// </summary>
 public class ShutdownTests : IAsyncLifetime
 {
