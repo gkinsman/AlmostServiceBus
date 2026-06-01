@@ -16,11 +16,13 @@ public class ServiceBusLinkProcessor : ILinkProcessor
     private static readonly ILogger Log = AmqpLog.CreateLogger<ServiceBusLinkProcessor>();
     private readonly NamespaceRegistry _registry;
     private readonly ScheduledMessageProcessor? _scheduledProcessor;
+    private readonly Broker.Transactions.TransactionManager? _transactions;
 
-    public ServiceBusLinkProcessor(NamespaceRegistry registry, ScheduledMessageProcessor? scheduledProcessor = null)
+    public ServiceBusLinkProcessor(NamespaceRegistry registry, ScheduledMessageProcessor? scheduledProcessor = null, Broker.Transactions.TransactionManager? transactions = null)
     {
         _registry = registry;
         _scheduledProcessor = scheduledProcessor;
+        _transactions = transactions;
     }
 
     public void Process(AttachContext attachContext)
@@ -30,7 +32,8 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         var isServerReceiver = attachContext.Link.Role;
 
         // Note: Transaction coordinator links (Amqp.Transactions.Coordinator targets) are
-        // rejected upstream in EmulatorContainer.AttachLink before this processor is called.
+        // handled upstream in EmulatorContainer.AttachLink (attached to a
+        // TransactionCoordinatorEndpoint) before this processor is called.
 
         string? address;
         if (isServerReceiver)
@@ -84,7 +87,7 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         {
             // Client is sending messages to us -- auto-create entity if needed
             EnsureEntityExists(context, address);
-            var endpoint = new SenderLinkEndpoint(context, address, _scheduledProcessor);
+            var endpoint = new SenderLinkEndpoint(context, address, _scheduledProcessor, _transactions);
             attachContext.Complete(endpoint, 300);
         }
         else
@@ -164,7 +167,7 @@ public class ServiceBusLinkProcessor : ILinkProcessor
             // The broker should settle messages on send and not expect a disposition.
             // SndSettleMode is a byte: 0=Unsettled, 1=Settled, 2=Mixed.
             var preSettled = (byte)attachContext.Attach.SndSettleMode == 1;
-            var endpoint = new ReceiverLinkEndpoint(queue, preSettled);
+            var endpoint = new ReceiverLinkEndpoint(queue, preSettled, _transactions);
             attachContext.Complete(endpoint, 0);
         }
     }
@@ -289,7 +292,7 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         });
     }
 
-    private static void CompleteSessionAttach(AttachContext attachContext, QueueEntity queue, BrokerSessionState session)
+    private void CompleteSessionAttach(AttachContext attachContext, QueueEntity queue, BrokerSessionState session)
     {
         // Reclaim any pending messages orphaned by a previous receiver of this session.
         // Because we just locked the session (via TryAcceptSession), any pending messages
@@ -331,7 +334,7 @@ public class ServiceBusLinkProcessor : ILinkProcessor
 
         // Pre-settled mode (ReceiveAndDelete) — same logic as the regular receiver.
         var preSettled = (byte)attachContext.Attach.SndSettleMode == 1;
-        var endpoint = new SessionReceiverLinkEndpoint(queue, session, preSettled);
+        var endpoint = new SessionReceiverLinkEndpoint(queue, session, preSettled, _transactions);
         attachContext.Complete(endpoint, 0);
     }
 

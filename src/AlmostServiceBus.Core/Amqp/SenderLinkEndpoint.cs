@@ -17,6 +17,7 @@ public class SenderLinkEndpoint : LinkEndpoint
     private readonly NamespaceContext _context;
     private readonly ScheduledMessageProcessor? _scheduledProcessor;
     private readonly string _address;
+    private readonly Broker.Transactions.TransactionManager? _transactions;
     // AMQPNetLite dispatches OnMessage on a thread-pool thread per Transfer frame, so
     // multiple Transfer frames on the same link can be processed concurrently. Without
     // serialization, NextSequenceNumber and Enqueue race: thread B's later frame can
@@ -26,11 +27,12 @@ public class SenderLinkEndpoint : LinkEndpoint
     // around routing to enforce the same.
     private readonly Lock _routeLock = new();
 
-    public SenderLinkEndpoint(NamespaceContext context, string address, ScheduledMessageProcessor? scheduledProcessor = null)
+    public SenderLinkEndpoint(NamespaceContext context, string address, ScheduledMessageProcessor? scheduledProcessor = null, Broker.Transactions.TransactionManager? transactions = null)
     {
         _context = context;
         _address = address;
         _scheduledProcessor = scheduledProcessor;
+        _transactions = transactions;
     }
 
     public override void OnMessage(MessageContext messageContext)
@@ -39,29 +41,41 @@ public class SenderLinkEndpoint : LinkEndpoint
         {
             var rawMsg = messageContext.Message;
 
-            // Hold the per-link lock for the entire routing path so concurrent OnMessage
-            // dispatches don't reorder NextSequenceNumber relative to Enqueue.
+            // Decode the incoming transfer into one or more brokered messages. The Azure
+            // SDK's ServiceBusMessageBatch arrives as a single transfer whose body is a
+            // Data[] of complete AMQP-encoded inner messages (wrapper has no Subject).
+            var brokeredMessages = new List<BrokeredMessage>();
+            if (rawMsg.Body is Data[] dataArray && dataArray.Length > 0
+                && rawMsg.Properties?.Subject is null)
+            {
+                Log.LogDebug("RECV BATCH ({Count} messages) → '{Address}'", dataArray.Length, _address);
+                foreach (var data in dataArray)
+                {
+                    var innerMsg = Message.Decode(new ByteBuffer(data.Binary, 0, data.Binary.Length, data.Binary.Length));
+                    brokeredMessages.Add(ConvertToBrokeredMessage(innerMsg));
+                }
+            }
+            else
+            {
+                brokeredMessages.Add(ConvertToBrokeredMessage(rawMsg));
+            }
+
+            // Transactional send: the transfer's delivery-state carries a txn-id. Buffer the
+            // routing under that transaction so the messages only become visible on commit,
+            // then echo a transactional disposition rather than a plain Accepted.
+            if (messageContext.DeliveryState is global::Amqp.Transactions.TransactionalState txnState)
+            {
+                EnlistTransactionalSend(messageContext, txnState, brokeredMessages);
+                return;
+            }
+
+            // Non-transactional path: route immediately. Hold the per-link lock for the
+            // whole routing path so concurrent OnMessage dispatches don't reorder
+            // NextSequenceNumber relative to Enqueue.
             lock (_routeLock)
             {
-                // Detect Azure SDK batch messages: when the Azure SDK sends messages via
-                // ServiceBusMessageBatch, it wraps them in a single AMQP transfer where the
-                // body contains Data[] sections, each being a complete AMQP-encoded message.
-                // The wrapper has minimal Properties (just MessageId) with no Subject.
-                if (rawMsg.Body is Data[] dataArray && dataArray.Length > 0
-                    && rawMsg.Properties?.Subject is null)
+                foreach (var brokered in brokeredMessages)
                 {
-                    Log.LogDebug("RECV BATCH ({Count} messages) → '{Address}'", dataArray.Length, _address);
-                    foreach (var data in dataArray)
-                    {
-                        var innerMsg = Message.Decode(new ByteBuffer(data.Binary, 0, data.Binary.Length, data.Binary.Length));
-                        var brokered = ConvertToBrokeredMessage(innerMsg);
-                        Log.LogDebug("RECV {MessageId} → '{Address}' (batch)", brokered.MessageId, _address);
-                        RouteMessage(_address, brokered);
-                    }
-                }
-                else
-                {
-                    var brokered = ConvertToBrokeredMessage(rawMsg);
                     Log.LogDebug("RECV {MessageId} → '{Address}'", brokered.MessageId, _address);
                     RouteMessage(_address, brokered);
                 }
@@ -78,6 +92,65 @@ public class SenderLinkEndpoint : LinkEndpoint
                 Description = "Failed to process message"
             });
         }
+    }
+
+    /// <summary>
+    /// Buffers a transactional send: the routing is deferred until the client commits the
+    /// transaction (so the messages' sequence numbers and visibility happen at commit time),
+    /// and the transfer is settled with a transactional disposition echoing the txn-id.
+    /// </summary>
+    private void EnlistTransactionalSend(
+        MessageContext messageContext,
+        global::Amqp.Transactions.TransactionalState txnState,
+        List<BrokeredMessage> brokeredMessages)
+    {
+        if (_transactions is null)
+        {
+            // Coordinator links are rejected when no manager is configured, so we should
+            // never see a transactional transfer here — fail loudly rather than silently route.
+            Log.LogWarning("Transactional send on '{Address}' but no transaction manager configured.", _address);
+            messageContext.Complete(new global::Amqp.Framing.Error(new Symbol("amqp:not-implemented"))
+            {
+                Description = "Transactions are not supported."
+            });
+            return;
+        }
+
+        try
+        {
+            foreach (var brokered in brokeredMessages)
+            {
+                var captured = brokered;
+                Log.LogDebug("RECV {MessageId} → '{Address}' (txn {TxnId}, buffered)",
+                    captured.MessageId, _address, Convert.ToHexString(txnState.TxnId));
+                _transactions.Enlist(txnState.TxnId, commit: () =>
+                {
+                    lock (_routeLock)
+                    {
+                        RouteMessage(_address, captured);
+                    }
+                });
+            }
+        }
+        catch (Broker.Transactions.TransactionNotFoundException)
+        {
+            messageContext.Link.DisposeMessage(messageContext.Message, new global::Amqp.Framing.Rejected
+            {
+                Error = new global::Amqp.Framing.Error(new Symbol("amqp:transaction-unknown-id"))
+                {
+                    Description = "Unknown or already-discharged transaction id."
+                }
+            }, true);
+            return;
+        }
+
+        // Settle the transfer with a transactional outcome so the client knows the work is
+        // enrolled in the transaction (it becomes durable only on discharge/commit).
+        messageContext.Link.DisposeMessage(messageContext.Message, new global::Amqp.Transactions.TransactionalState
+        {
+            TxnId = txnState.TxnId,
+            Outcome = new global::Amqp.Framing.Accepted()
+        }, true);
     }
 
     public override void OnFlow(FlowContext flowContext)

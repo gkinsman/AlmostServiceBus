@@ -73,9 +73,19 @@ Namespace is extracted from `SharedAccessKeyName` in the connection string (NOT 
 
 Azure SDK's `ServiceBusMessageBatch` sends messages as a single AMQP transfer where the body contains `Data[]` sections, each being a complete AMQP-encoded inner message. The emulator detects this format and decodes individual messages, preserving all properties (Subject, ApplicationProperties, etc.). Verified by 15 dedicated integration tests covering batch+processor, plain AMQP, two-client, and cascading-send scenarios.
 
+## AMQP Transactions
+
+Supported. The emulator runs a server-side transaction coordinator so the Azure
+SDK's `TransactionScope` works end-to-end, including cross-entity transactions
+(`ServiceBusClientOptions.EnableCrossEntityTransactions = true`).
+
+- **TransactionManager** (`src/.../Broker/Transactions/TransactionManager.cs`) — broker-agnostic. `Declare()` issues a GUID `txn-id`; callers `Enlist` commit/rollback delegates; `Commit` applies them in order, `Rollback` discards. Globally-unique ids mean one flat table spans all connections and entities.
+- **TransactionCoordinatorEndpoint** (`src/.../Amqp/TransactionCoordinatorEndpoint.cs`) — accepts the `Coordinator` link (previously rejected) and services `declare`/`discharge`, replying with `Declared`/`Accepted`.
+- **Buffering** — `SenderLinkEndpoint` buffers transactional sends (delivery-state is `TransactionalState`), the receiver endpoints buffer transactional settlements. Both echo a transactional disposition; the work applies on commit. On rollback, sends are discarded and uncommitted completes simply let the lock expire (redelivery bumps `DeliveryCount`).
+- Verified by `TransactionManagerTests` (unit) and `TransactionTests` (real Azure SDK: commit/rollback, single- and cross-entity).
+
 ## Known Gaps
 
-- **AMQP Transactions** — `Coordinator` links are gracefully rejected (`amqp:not-implemented`). NServiceBus defaults to transactions; use `TransportTransactionMode.ReceiveOnly` as workaround.
 - **Wolverine tracking** — `tracking_correlation_id_on_everything` compliance tests time out. Standalone tests confirm correct AMQP behavior; the timeout is in Wolverine's handler pipeline. See `tests/ms-emulator-comparison/` to verify against Microsoft's official emulator.
 
 ## Running

@@ -21,13 +21,15 @@ public class ReceiverLinkEndpoint : LinkEndpoint
     private readonly QueueEntity _queue;
     private readonly Lock _pumpLock = new();
     private readonly bool _preSettled;
+    private readonly Broker.Transactions.TransactionManager? _transactions;
     private CancellationTokenSource? _pumpCts;
     private Task? _pumpTask;
 
-    public ReceiverLinkEndpoint(QueueEntity queue, bool preSettled = false)
+    public ReceiverLinkEndpoint(QueueEntity queue, bool preSettled = false, Broker.Transactions.TransactionManager? transactions = null)
     {
         _queue = queue;
         _preSettled = preSettled;
+        _transactions = transactions;
     }
 
     public override void OnFlow(FlowContext flowContext)
@@ -152,6 +154,16 @@ public class ReceiverLinkEndpoint : LinkEndpoint
         };
         Log.LogDebug("DISP lock={LockToken} state={State} queue='{Queue}'", lockToken, stateInfo, _queue.Name);
 
+        // Transactional settlement: the disposition's delivery-state carries a txn-id and an
+        // inner outcome. Buffer the real settlement under that transaction and echo a
+        // transactional disposition. The message stays locked until the client commits; on
+        // rollback nothing is applied and the lock simply expires (redelivery bumps DeliveryCount).
+        if (dispositionContext.DeliveryState is global::Amqp.Transactions.TransactionalState txnState)
+        {
+            EnlistTransactionalSettlement(dispositionContext, txnState, lockToken);
+            return;
+        }
+
         try
         {
             if (lockToken is not null && dispositionContext.DeliveryState is not null)
@@ -186,6 +198,65 @@ public class ReceiverLinkEndpoint : LinkEndpoint
         {
             Log.LogWarning(ex, "OnDisposition failed for queue '{Queue}', lock={LockToken}", _queue.Name, lockToken);
         }
+    }
+
+    /// <summary>
+    /// Buffers a transactional settlement (complete/abandon/dead-letter/defer) so it is
+    /// applied only when the client commits the transaction, then echoes a transactional
+    /// disposition. Mirrors <see cref="SenderLinkEndpoint"/>'s transactional-send handling.
+    /// </summary>
+    private void EnlistTransactionalSettlement(
+        DispositionContext dispositionContext,
+        global::Amqp.Transactions.TransactionalState txnState,
+        string? lockToken)
+    {
+        if (_transactions is null || lockToken is null)
+        {
+            // No manager (shouldn't happen — coordinator links are rejected then) or no lock
+            // token to act on: fall back to settling normally so the link doesn't stall.
+            dispositionContext.Complete();
+            return;
+        }
+
+        // A transactional disposition always names the real intent in its inner outcome;
+        // default to Accepted (complete) if it is somehow absent.
+        var outcome = txnState.Outcome ?? new Accepted();
+        var token = lockToken;
+
+        try
+        {
+            _transactions.Enlist(txnState.TxnId, commit: () =>
+            {
+                try
+                {
+                    SettleMessage(token, outcome);
+                }
+                catch (MessageLockLostException)
+                {
+                    // The lock expired before the transaction committed. We already echoed an
+                    // accepted disposition, so we can't un-send it; log and move on. Short
+                    // transactions (the normal case) keep the lock alive.
+                    Log.LogWarning("Txn commit: lock {LockToken} lost before settlement on '{Queue}'", token, _queue.Name);
+                }
+            });
+        }
+        catch (Broker.Transactions.TransactionNotFoundException)
+        {
+            dispositionContext.Link.DisposeMessage(dispositionContext.Message, new Rejected
+            {
+                Error = new Error(new Symbol("amqp:transaction-unknown-id"))
+                {
+                    Description = "Unknown or already-discharged transaction id."
+                }
+            }, true);
+            return;
+        }
+
+        dispositionContext.Link.DisposeMessage(dispositionContext.Message, new global::Amqp.Transactions.TransactionalState
+        {
+            TxnId = txnState.TxnId,
+            Outcome = outcome
+        }, true);
     }
 
     public override void OnLinkClosed(ListenerLink link, Error error)

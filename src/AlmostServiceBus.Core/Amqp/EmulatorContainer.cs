@@ -18,8 +18,9 @@ namespace AlmostServiceBus.Core.Amqp;
 /// target (used for AMQP transactions by NServiceBus). ContainerHost blindly casts
 /// attach.Target to <see cref="Target"/>, which throws an InvalidCastException.
 ///
-/// By implementing IContainer ourselves, we can intercept Coordinator targets
-/// and detach the link gracefully before the cast occurs.
+/// By implementing IContainer ourselves, we intercept Coordinator targets before
+/// that cast and attach a <see cref="TransactionCoordinatorEndpoint"/> instead, so
+/// AMQP transactions are supported rather than crashing.
 /// </summary>
 public class EmulatorContainer : IContainer
 {
@@ -29,6 +30,7 @@ public class EmulatorContainer : IContainer
     private ILinkProcessor? _linkProcessor;
     private NamespaceRegistry? _registry;
     private ScheduledMessageProcessor? _scheduledProcessor;
+    private AlmostServiceBus.Core.Broker.Transactions.TransactionManager? _transactions;
 
     // Tracks sender link names → entity paths so that com.microsoft:schedule-message
     // can resolve the target entity from the "associated-link-name" (which is typically
@@ -73,6 +75,16 @@ public class EmulatorContainer : IContainer
     {
         _registry = registry;
         _scheduledProcessor = scheduledProcessor;
+    }
+
+    /// <summary>
+    /// Supplies the shared transaction manager used to coordinate AMQP transactions.
+    /// Must be set before coordinator links are attached, otherwise such links are
+    /// rejected with <c>amqp:not-implemented</c>.
+    /// </summary>
+    public void SetTransactionManager(AlmostServiceBus.Core.Broker.Transactions.TransactionManager transactions)
+    {
+        _transactions = transactions;
     }
 
     /// <summary>
@@ -139,16 +151,38 @@ public class EmulatorContainer : IContainer
     {
         var listenerLink = (ListenerLink)link;
 
-        // Reject transaction coordinator links. This is the whole reason we replaced ContainerHost:
-        // ContainerHost.AttachLink does ((Target)attach.Target).Address which throws InvalidCastException
-        // when attach.Target is Coordinator.
+        // Transaction coordinator links. ContainerHost can't handle these at all —
+        // it does ((Target)attach.Target).Address which throws InvalidCastException
+        // when attach.Target is Coordinator (the original reason we replaced it).
+        // We accept the link and drive it with a TransactionCoordinatorEndpoint that
+        // services declare/discharge against the shared TransactionManager.
         if (attach.Target is global::Amqp.Transactions.Coordinator)
         {
-            Log.LogInformation("Rejecting transaction coordinator link '{LinkName}' — transactions not supported.", attach.LinkName);
-            listenerLink.CompleteAttach(attach, new Error(new Symbol("amqp:not-implemented"))
+            if (_transactions is null)
             {
-                Description = "AMQP transactions are not supported by the emulator."
-            });
+                Log.LogWarning("Rejecting transaction coordinator link '{LinkName}' — no transaction manager configured.", attach.LinkName);
+                listenerLink.CompleteAttach(attach, new Error(new Symbol("amqp:not-implemented"))
+                {
+                    Description = "AMQP transactions are not supported by the emulator."
+                });
+                return false;
+            }
+
+            Log.LogDebug("Accepting transaction coordinator link '{LinkName}'.", attach.LinkName);
+            var coordinatorContext = CreateAttachContext(listenerLink, attach);
+            if (coordinatorContext != null)
+            {
+                coordinatorContext.Complete(new TransactionCoordinatorEndpoint(_transactions), 300);
+            }
+            else
+            {
+                listenerLink.CompleteAttach(attach, new Error(new Symbol("amqp:internal-error"))
+                {
+                    Description = "Internal error creating coordinator link context."
+                });
+            }
+
+            // The attach is completed (async) via the AttachContext above.
             return false;
         }
 

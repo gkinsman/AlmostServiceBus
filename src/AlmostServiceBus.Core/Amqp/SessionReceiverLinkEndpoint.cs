@@ -19,14 +19,16 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
     private readonly BrokerSessionState _session;
     private readonly Lock _pumpLock = new();
     private readonly bool _preSettled;
+    private readonly Broker.Transactions.TransactionManager? _transactions;
     private CancellationTokenSource? _pumpCts;
     private Task? _pumpTask;
 
-    public SessionReceiverLinkEndpoint(QueueEntity queue, BrokerSessionState session, bool preSettled = false)
+    public SessionReceiverLinkEndpoint(QueueEntity queue, BrokerSessionState session, bool preSettled = false, Broker.Transactions.TransactionManager? transactions = null)
     {
         _queue = queue;
         _session = session;
         _preSettled = preSettled;
+        _transactions = transactions;
     }
 
     public override void OnFlow(FlowContext flowContext)
@@ -125,42 +127,19 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
     {
         var lockToken = ReceiverLinkEndpoint.GetLockTokenStatic(dispositionContext.Message);
 
+        // Transactional settlement: buffer the real outcome under the transaction and echo a
+        // transactional disposition. The message stays locked until the client commits; on
+        // rollback nothing is applied and the session lock governs redelivery.
+        if (dispositionContext.DeliveryState is global::Amqp.Transactions.TransactionalState txnState)
+        {
+            EnlistTransactionalSettlement(dispositionContext, txnState, lockToken);
+            return;
+        }
+
         try
         {
             if (lockToken is not null && dispositionContext.DeliveryState is not null)
-            {
-                switch (dispositionContext.DeliveryState)
-                {
-                    case Accepted:
-                        _queue.Complete(lockToken);
-                        break;
-                    case Released:
-                        _queue.Abandon(lockToken);
-                        break;
-                    case Rejected rejected:
-                        // Use the shared helper so the Azure SDK's DeadLetterReason /
-                        // DeadLetterErrorDescription (sent in Error.Info map) are
-                        // extracted consistently on session and non-session queues.
-                        var (dlReason, dlDescription) =
-                            ReceiverLinkEndpoint.ExtractDeadLetterInfoStatic(rejected);
-                        _queue.DeadLetter(lockToken, dlReason, dlDescription,
-                            ReceiverLinkEndpoint.ExtractRejectedProperties(rejected));
-                        break;
-                    case Modified modified:
-                        // Azure Service Bus semantics:
-                        //   Modified.UndeliverableHere=true  → Defer
-                        //   Modified.UndeliverableHere=false → Abandon with property modifications
-                        var modProps = ReceiverLinkEndpoint.ExtractMessageAnnotationProperties(modified);
-                        if (modified.UndeliverableHere == true)
-                            _queue.Defer(lockToken, modProps);
-                        else
-                            _queue.Abandon(lockToken, modProps);
-                        break;
-                    default:
-                        _queue.Complete(lockToken);
-                        break;
-                }
-            }
+                ApplySettlement(lockToken, dispositionContext.DeliveryState);
 
             dispositionContext.Complete();
         }
@@ -186,6 +165,96 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
         {
             Log.LogWarning(ex, "OnDisposition failed for session '{SessionId}', lock={LockToken}", _session.SessionId, lockToken);
         }
+    }
+
+    /// <summary>
+    /// Applies a settlement outcome to a pending session message. Shared by the normal and
+    /// transactional disposition paths.
+    /// </summary>
+    private void ApplySettlement(string lockToken, DeliveryState state)
+    {
+        switch (state)
+        {
+            case Accepted:
+                _queue.Complete(lockToken);
+                break;
+            case Released:
+                _queue.Abandon(lockToken);
+                break;
+            case Rejected rejected:
+                // Use the shared helper so the Azure SDK's DeadLetterReason /
+                // DeadLetterErrorDescription (sent in Error.Info map) are
+                // extracted consistently on session and non-session queues.
+                var (dlReason, dlDescription) =
+                    ReceiverLinkEndpoint.ExtractDeadLetterInfoStatic(rejected);
+                _queue.DeadLetter(lockToken, dlReason, dlDescription,
+                    ReceiverLinkEndpoint.ExtractRejectedProperties(rejected));
+                break;
+            case Modified modified:
+                // Azure Service Bus semantics:
+                //   Modified.UndeliverableHere=true  → Defer
+                //   Modified.UndeliverableHere=false → Abandon with property modifications
+                var modProps = ReceiverLinkEndpoint.ExtractMessageAnnotationProperties(modified);
+                if (modified.UndeliverableHere == true)
+                    _queue.Defer(lockToken, modProps);
+                else
+                    _queue.Abandon(lockToken, modProps);
+                break;
+            default:
+                _queue.Complete(lockToken);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Buffers a transactional settlement so it is applied only on commit, then echoes a
+    /// transactional disposition.
+    /// </summary>
+    private void EnlistTransactionalSettlement(
+        DispositionContext dispositionContext,
+        global::Amqp.Transactions.TransactionalState txnState,
+        string? lockToken)
+    {
+        if (_transactions is null || lockToken is null)
+        {
+            dispositionContext.Complete();
+            return;
+        }
+
+        var outcome = txnState.Outcome ?? new Accepted();
+        var token = lockToken;
+
+        try
+        {
+            _transactions.Enlist(txnState.TxnId, commit: () =>
+            {
+                try
+                {
+                    ApplySettlement(token, outcome);
+                }
+                catch (MessageLockLostException)
+                {
+                    Log.LogWarning("Txn commit: lock {LockToken} lost before settlement on session '{SessionId}'", token, _session.SessionId);
+                }
+            });
+        }
+        catch (Broker.Transactions.TransactionNotFoundException)
+        {
+            dispositionContext.Link.DisposeMessage(dispositionContext.Message, new Rejected
+            {
+                Error = new Error(new Symbol("amqp:transaction-unknown-id"))
+                {
+                    Description = "Unknown or already-discharged transaction id."
+                }
+            }, true);
+            return;
+        }
+
+        dispositionContext.Link.DisposeMessage(dispositionContext.Message, new global::Amqp.Transactions.TransactionalState
+        {
+            TxnId = txnState.TxnId,
+            Outcome = outcome
+        }, true);
     }
 
     public override void OnLinkClosed(ListenerLink link, Error error)

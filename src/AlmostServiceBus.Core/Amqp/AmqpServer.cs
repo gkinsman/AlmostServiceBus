@@ -7,9 +7,10 @@ namespace AlmostServiceBus.Core.Amqp;
 
 /// <summary>
 /// Wraps the AMQPNetLite <see cref="ConnectionListener"/> lifecycle.
-/// Uses a custom <see cref="EmulatorContainer"/> instead of <see cref="ContainerHost"/>
-/// to avoid a crash when clients send Attach frames with Coordinator targets
-/// (used for AMQP transactions by NServiceBus and others).
+/// Uses a custom <see cref="EmulatorContainer"/> instead of <see cref="ContainerHost"/>:
+/// ContainerHost crashes on Attach frames with Coordinator targets, whereas the
+/// custom container accepts them and drives AMQP transactions via a shared
+/// <see cref="Broker.Transactions.TransactionManager"/>.
 /// </summary>
 public class AmqpServer : IDisposable
 {
@@ -34,11 +35,17 @@ public class AmqpServer : IDisposable
         // Build the custom container that handles Coordinator targets gracefully.
         var defaultContext = _registry.GetOrCreate("default");
 
+        // One transaction manager shared across the whole server. Transaction ids are
+        // globally-unique GUIDs, so a single table safely spans every connection and
+        // entity — exactly what cross-entity transactions need.
+        var transactions = new Broker.Transactions.TransactionManager();
+
         var container = new EmulatorContainer();
         container.SetNamespaceRegistry(_registry, _scheduledProcessor);
+        container.SetTransactionManager(transactions);
         container.RegisterRequestProcessor("$cbs", new CbsRequestProcessor());
         container.RegisterRequestProcessor("$management", container.CreateManagementEndpoint(defaultContext, _scheduledProcessor));
-        container.RegisterLinkProcessor(new ServiceBusLinkProcessor(_registry, _scheduledProcessor));
+        container.RegisterLinkProcessor(new ServiceBusLinkProcessor(_registry, _scheduledProcessor, transactions));
 
         _listener = new ConnectionListener(address, container);
 
