@@ -36,7 +36,7 @@ Three-panel layout:
 - **Namespace tabs** at the top: one tab per namespace (default, app1, app2, etc.). Tabs appear dynamically as namespaces are created.
 - **Search/filter** box below tabs.
 - **Queues section**: flat list of queues. Dead-letter sub-queues nested under their parent with a red badge showing count.
-- **Topics section**: topics grouped by common namespace prefix. For example, `AneoPlatform.Messages.Domain.Access/Events-RolePermissionsUpdated` and `AneoPlatform.Messages.Domain.Access/Events-UserRolesAdded` group under the collapsible heading `AneoPlatform.Messages.Domain.Access`. Subscriptions shown as children under each topic.
+- **Topics section**: topics grouped by common namespace prefix. For example, `MyApp.Messages.Domain.Orders/Events-OrderPlaced` and `MyApp.Messages.Domain.Orders/Events-OrderShipped` group under the collapsible heading `MyApp.Messages.Domain.Orders`. Subscriptions shown as children under each topic.
 - **Footer**: entity counts (N queues, N topics, N subscriptions).
 
 ### Middle Panel — Message List (flexible)
