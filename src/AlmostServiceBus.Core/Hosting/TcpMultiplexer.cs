@@ -73,6 +73,11 @@ public class TcpMultiplexer
         TcpClient? backend = null;
         try
         {
+            // Disable Nagle: this is a relay hop and AMQP/HTTP handshakes are many
+            // small round-trip frames. Without NoDelay, Nagle + delayed-ACK adds
+            // tens-to-hundreds of ms per round-trip, making first connects slow.
+            client.NoDelay = true;
+
             var stream = client.GetStream();
 
             var firstByte = new byte[1];
@@ -104,7 +109,14 @@ public class TcpMultiplexer
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log.LogWarning(ex, "TcpMultiplexer: connection error during proxy");
+            // A peer reset/abort is benign here: it's a health probe, port scan, or
+            // a client that disconnected mid-handshake. Aspire's TCP readiness probe
+            // routinely connects and closes without sending a byte, which surfaces as
+            // SocketException 10054. Don't treat these as warnings.
+            if (IsBenignDisconnect(ex))
+                Log.LogDebug("TcpMultiplexer: peer closed connection ({Message})", ex.Message);
+            else
+                Log.LogWarning(ex, "TcpMultiplexer: connection error during proxy");
         }
         finally
         {
@@ -117,8 +129,21 @@ public class TcpMultiplexer
     {
         var backend = new TcpClient();
         await backend.ConnectAsync(IPAddress.Loopback, port, ct);
+        backend.NoDelay = true; // see NoDelay note in HandleConnectionAsync
         return backend;
     }
+
+    /// <summary>
+    /// A connection reset/abort while proxying means the peer went away — a health
+    /// probe, port scan, or client disconnecting mid-handshake. These are expected
+    /// and not actionable, so they're logged at debug rather than warning.
+    /// </summary>
+    private static bool IsBenignDisconnect(Exception ex) => ex switch
+    {
+        SocketException => true,
+        IOException { InnerException: SocketException } => true,
+        _ => false,
+    };
 
     private static async Task ProxyBidirectional(
         Stream clientStream, NetworkStream backendStream,

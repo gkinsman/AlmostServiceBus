@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { inject, onMounted, onUnmounted, watch } from 'vue'
 import NamespaceSelector from './NamespaceSelector.vue'
+import ConnectionStringBar from './ConnectionStringBar.vue'
 import { useEntities } from '../composables/useEntities'
 import { sseKey } from '../composables/useNamespaceSse'
 
@@ -107,6 +108,8 @@ function shortName(fullName: string) {
 
       </template>
     </div>
+
+    <ConnectionStringBar />
 
     <div class="footer">
       {{ filteredQueues.length }}<span v-if="!showAll">/{{ totalQueues }}</span> queues ·

@@ -1,5 +1,6 @@
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AlmostServiceBus.Aspire.Hosting;
 
@@ -58,7 +59,7 @@ public static class AlmostServiceBusBuilderExtensions
             context.Args.Add(dashboardPort.ToString());
         });
 
-        return resourceBuilder;
+        return WithServiceBusReadinessCheck(builder, resourceBuilder, resource, name);
     }
 
     /// <summary>
@@ -103,7 +104,28 @@ public static class AlmostServiceBusBuilderExtensions
             context.Args.Add(dashboardPort.ToString());
         });
 
-        return resourceBuilder;
+        return WithServiceBusReadinessCheck(builder, resourceBuilder, resource, name);
+    }
+
+    /// <summary>
+    /// Registers a TCP health check against the emulator's <c>servicebus</c> endpoint and
+    /// attaches it to the resource, so consumers can gate startup with <c>WaitFor</c> until
+    /// the AMQP listener is actually accepting connections. The endpoint port is resolved
+    /// lazily, honouring Aspire's dynamic port allocation.
+    /// </summary>
+    private static IResourceBuilder<AlmostServiceBusResource> WithServiceBusReadinessCheck(
+        IDistributedApplicationBuilder builder,
+        IResourceBuilder<AlmostServiceBusResource> resourceBuilder,
+        AlmostServiceBusResource resource,
+        string name)
+    {
+        var healthCheckKey = $"{name}_servicebus_tcp";
+
+        builder.Services.AddHealthChecks().AddCheck(
+            healthCheckKey,
+            new TcpEndpointHealthCheck(() => resource.GetEndpoint("servicebus")));
+
+        return resourceBuilder.WithHealthCheck(healthCheckKey);
     }
 
     /// <summary>

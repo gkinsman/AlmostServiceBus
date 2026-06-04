@@ -11,9 +11,12 @@ public static class DashboardApiEndpoints
 {
     public static IEndpointRouteBuilder MapDashboardApi(
         this IEndpointRouteBuilder app,
-        NamespaceRegistry registry)
+        NamespaceRegistry registry,
+        EmulatorInfo info)
     {
         var api = app.MapGroup("/api/dashboard");
+
+        api.MapGet("/info", () => Results.Ok(info));
 
         api.MapGet("/namespaces", () =>
         {

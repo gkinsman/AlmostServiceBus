@@ -1,3 +1,10 @@
+export interface EmulatorInfo {
+  connectionString: string
+  amqpPort: number
+  managementPort: number
+  dashboardPort: number
+}
+
 export interface NamespaceInfo {
   name: string
   queueCount: number

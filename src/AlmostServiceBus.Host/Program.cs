@@ -5,6 +5,11 @@ using AlmostServiceBus.Core.Hosting;
 using AlmostServiceBus.Core.Management;
 using Vite.AspNetCore;
 
+// The startup banner uses Unicode box-drawing/block characters. Force UTF-8 output
+// so they render correctly when stdout is captured (e.g. by Aspire), instead of the
+// Windows OEM code page which mangles them into '�' replacement characters.
+try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { /* no console attached */ }
+
 // Enable AMQPNetLite frame tracing for diagnostic builds. Set TRACE_AMQP=1 env var.
 if (Environment.GetEnvironmentVariable("TRACE_AMQP") == "1")
 {
@@ -34,6 +39,9 @@ AmqpLog.Factory = LoggerFactory.Create(b => b
 
 var publicPort = mgmtBuilder.Configuration.GetValue("Port", 5672);
 var dashboardPort = mgmtBuilder.Configuration.GetValue("DashboardPort", 15672);
+// Microsoft emulator compatibility: admin HTTP on port 5300.
+const int mgmtApiPort = 5300;
+var connStr = $"Endpoint=sb://localhost:{publicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
 var internalHttpPort = EmulatorInfrastructure.GetFreePort();
 var internalAmqpPort = EmulatorInfrastructure.GetFreePort();
 
@@ -79,7 +87,7 @@ if (dashApp.Environment.IsDevelopment())
 }
 
 dashApp.UseStaticFiles();
-dashApp.MapDashboardApi(registry);
+dashApp.MapDashboardApi(registry, new EmulatorInfo(connStr, publicPort, mgmtApiPort, dashboardPort));
 dashApp.MapDashboardSse(eventBus);
 dashApp.MapFallbackToFile("index.html");
 
@@ -103,8 +111,7 @@ var multiplexerCts = new CancellationTokenSource();
 var multiplexer = new TcpMultiplexer(publicPort, internalAmqpPort, internalHttpPort);
 _ = multiplexer.StartAsync(multiplexerCts.Token);
 
-// Microsoft emulator compatibility: admin HTTP on port 5300
-const int mgmtApiPort = 5300;
+// Microsoft emulator compatibility: admin HTTP on port 5300 (mgmtApiPort declared above)
 var mgmtMultiplexer = new TcpMultiplexer(mgmtApiPort, internalAmqpPort, internalHttpPort);
 _ = mgmtMultiplexer.StartAsync(multiplexerCts.Token);
 
@@ -131,7 +138,6 @@ Console.WriteLine($"  {green}●{reset} {bold}Service Bus{reset}  {dim}──▶
 Console.WriteLine($"  {green}●{reset} {bold}Management {reset}  {dim}──▶{reset} localhost:{yellow}{mgmtApiPort}{reset} {dim}(plain HTTP){reset}");
 Console.WriteLine($"  {green}●{reset} {bold}Dashboard  {reset}  {dim}──▶{reset} {cyan}http://localhost:{dashboardPort}{reset}");
 Console.WriteLine();
-var connStr = $"Endpoint=sb://localhost:{publicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
 var boxInner = connStr.Length + 2;
 const string label = " connection string ";
 var topFill = new string('─', boxInner - label.Length - 1);

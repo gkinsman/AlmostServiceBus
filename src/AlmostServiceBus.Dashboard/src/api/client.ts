@@ -1,4 +1,4 @@
-import type { NamespaceInfo, EntityOverview, MessageInfo } from '../types'
+import type { NamespaceInfo, EntityOverview, MessageInfo, EmulatorInfo } from '../types'
 
 const BASE = '/api/dashboard'
 
@@ -14,6 +14,8 @@ async function del(path: string): Promise<void> {
 }
 
 export const api = {
+  getInfo: () => get<EmulatorInfo>('/info'),
+
   getNamespaces: () => get<NamespaceInfo[]>('/namespaces'),
 
   getEntities: (ns: string) => get<EntityOverview>(`/namespaces/${ns}/entities`),

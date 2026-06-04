@@ -1,5 +1,16 @@
 namespace AlmostServiceBus.Core.Dashboard;
 
+/// <summary>
+/// Emulator connection details surfaced on the dashboard so users can copy the
+/// connection string without hunting through console output. The connection string
+/// is the default (<c>RootManageSharedAccessKey</c>) one, matching the startup banner.
+/// </summary>
+public record EmulatorInfo(
+    string ConnectionString,
+    int AmqpPort,
+    int ManagementPort,
+    int DashboardPort);
+
 public record NamespaceInfo(string Name, int QueueCount, int TopicCount, DateTimeOffset LastActivityAt);
 
 public record EntityOverview(
