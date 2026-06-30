@@ -25,6 +25,12 @@ public abstract class ConformanceTestBase : IAsyncLifetime
     protected string? SkipReason { get; set; }
 
     /// <summary>
+    /// The connection string the subclass used to build <see cref="Client"/>. Tests that need a
+    /// client with non-default options (e.g. cross-entity transactions) build their own from this.
+    /// </summary>
+    protected string ConnectionString { get; set; } = null!;
+
+    /// <summary>
     /// Subclasses provide the connection setup. Return null clients and set SkipReason
     /// to skip all tests.
     /// </summary>
@@ -1595,5 +1601,45 @@ public abstract class ConformanceTestBase : IAsyncLifetime
         Assert.NotEqual(firstLockToken, secondLockToken);
 
         await receiver.CompleteMessageAsync(second);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Cross-entity transactions — receiver on a second entity is rejected
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task CrossEntityTransactions_SecondReceiverOnDifferentEntity_IsRejected()
+    {
+        // When EnableCrossEntityTransactions=true, the connection is pinned to the first
+        // receiver's entity. A receiver on a *different* top-level entity is rejected by the
+        // broker with "Local transactions cannot span multiple top-level entities" — even with
+        // no active transaction. This is exactly the failure a shared cross-entity client hits
+        // when reused to peek/receive across multiple queues.
+        ThrowIfSkipped();
+
+        var queueA = await CreateTestQueueAsync();
+        var queueB = await CreateTestQueueAsync();
+
+        await using var crossEntityClient = new ServiceBusClient(ConnectionString, new ServiceBusClientOptions
+        {
+            EnableCrossEntityTransactions = true,
+            RetryOptions = new ServiceBusRetryOptions
+            {
+                MaxRetries = 0,
+                TryTimeout = TimeSpan.FromSeconds(10)
+            }
+        });
+
+        // Open and pin the connection's send-via entity to queue A. The receive opens the
+        // consumer link; the empty queue just yields null after the timeout.
+        await using var receiverA = crossEntityClient.CreateReceiver(queueA);
+        await receiverA.ReceiveMessageAsync(TimeSpan.FromSeconds(1));
+
+        // A receiver on a different entity must be rejected.
+        await using var receiverB = crossEntityClient.CreateReceiver(queueB);
+        var ex = await Assert.ThrowsAnyAsync<Exception>(
+            async () => await receiverB.ReceiveMessageAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.Contains("multiple top-level entities", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

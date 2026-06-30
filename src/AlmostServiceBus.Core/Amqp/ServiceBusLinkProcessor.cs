@@ -92,6 +92,24 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         }
         else
         {
+            // Cross-entity transactions pin the connection to its first receiver's entity. Real
+            // Azure Service Bus rejects a later receiver on a different top-level entity with
+            // "Local transactions cannot span multiple top-level entities" — even outside an active
+            // transaction (this is what breaks a shared cross-entity client reused to peek/receive
+            // across queues). Senders are unaffected: they are transferred "via" the pinned entity.
+            if (!CrossEntityTransactionTracker.TryAdmitReceiver(
+                    attachContext.Link.Session.Connection, address, out var pinnedEntity))
+            {
+                attachContext.Complete(new Error(new Symbol("com.microsoft:operation-cancelled"))
+                {
+                    Description =
+                        "Local transactions cannot span multiple top-level entities such as queue or topic. " +
+                        $"The connection is pinned to '{pinnedEntity}' because cross-entity transactions are enabled; " +
+                        $"a receiver on '{address}' is not allowed. Use a separate client per entity for non-transactional reads."
+                });
+                return;
+            }
+
             // Check for session filter on receiver link.
             // The Azure SDK sends a com.microsoft:session-filter entry in the filter-set for
             // both AcceptSessionAsync (value = specific session ID) and AcceptNextSessionAsync

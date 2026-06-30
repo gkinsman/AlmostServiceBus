@@ -169,6 +169,12 @@ public class EmulatorContainer : IContainer
             }
 
             Log.LogDebug("Accepting transaction coordinator link '{LinkName}'.", attach.LinkName);
+
+            // The Azure SDK opens this coordinator link eagerly when EnableCrossEntityTransactions=true,
+            // before any entity link. Flag the connection so the link processor can enforce the
+            // single-entity receiver rule that real Azure Service Bus applies to such connections.
+            CrossEntityTransactionTracker.MarkCrossEntity(listenerLink.Session.Connection);
+
             var coordinatorContext = CreateAttachContext(listenerLink, attach);
             if (coordinatorContext != null)
             {

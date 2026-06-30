@@ -100,8 +100,11 @@ public class TransactionTests : IAsyncLifetime
             scope.Complete();
         }
 
-        // The replayed copy landed on the destination.
-        var dstReceiver = client.CreateReceiver("txn-dst-commit");
+        // The replayed copy landed on the destination. Verify with the plain (non-cross-entity)
+        // seedClient: a cross-entity client is pinned to the source entity, so opening a receiver
+        // on a *different* entity through `client` is rejected by real Azure Service Bus
+        // ("Local transactions cannot span multiple top-level entities").
+        var dstReceiver = seedClient.CreateReceiver("txn-dst-commit");
         var copy = await dstReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
         Assert.NotNull(copy);
         Assert.Equal("copy", copy!.MessageId);
@@ -136,8 +139,10 @@ public class TransactionTests : IAsyncLifetime
             // no scope.Complete() → rollback
         }
 
-        // The send was discarded — destination stays empty.
-        var dstReceiver = client.CreateReceiver("txn-dst-rollback");
+        // The send was discarded — destination stays empty. Verify with the plain (non-cross-entity)
+        // seedClient: the cross-entity `client` is pinned to the source entity, so a receiver on a
+        // different entity through it is rejected by real Azure Service Bus.
+        var dstReceiver = seedClient.CreateReceiver("txn-dst-rollback");
         var copy = await dstReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(2));
         Assert.Null(copy);
 

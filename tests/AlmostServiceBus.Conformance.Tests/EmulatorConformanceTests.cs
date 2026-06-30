@@ -18,6 +18,7 @@ public class EmulatorConformanceTests : ConformanceTestBase
         // Emulator is plaintext; the fixture's ConnectionString carries
         // `UseDevelopmentEmulator=true` so the Azure SDK uses plain AMQP/HTTP.
         var connectionString = _fixture.ConnectionString;
+        ConnectionString = connectionString;
 
         var client = new ServiceBusClient(connectionString, new ServiceBusClientOptions
         {

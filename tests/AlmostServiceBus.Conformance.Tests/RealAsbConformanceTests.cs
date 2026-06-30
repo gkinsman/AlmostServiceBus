@@ -10,12 +10,12 @@ namespace AlmostServiceBus.Conformance.Tests;
 /// </summary>
 public class RealAsbConformanceTests : ConformanceTestBase
 {
-    private static readonly string? ConnectionString =
+    private static readonly string? RealConnectionString =
         Environment.GetEnvironmentVariable("ASB_CONNECTION_STRING");
 
     protected override Task<(ServiceBusClient? client, ServiceBusAdministrationClient? admin)> CreateClientsAsync()
     {
-        if (string.IsNullOrEmpty(ConnectionString))
+        if (string.IsNullOrEmpty(RealConnectionString))
         {
             SkipReason = "ASB_CONNECTION_STRING environment variable not set — skipping real ASB tests";
             return Task.FromResult<(ServiceBusClient?, ServiceBusAdministrationClient?)>((null, null));
@@ -31,8 +31,9 @@ public class RealAsbConformanceTests : ConformanceTestBase
             }
         };
 
-        var client = new ServiceBusClient(ConnectionString, clientOptions);
-        var admin = new ServiceBusAdministrationClient(ConnectionString);
+        ConnectionString = RealConnectionString;
+        var client = new ServiceBusClient(RealConnectionString, clientOptions);
+        var admin = new ServiceBusAdministrationClient(RealConnectionString);
 
         return Task.FromResult<(ServiceBusClient?, ServiceBusAdministrationClient?)>((client, admin));
     }
