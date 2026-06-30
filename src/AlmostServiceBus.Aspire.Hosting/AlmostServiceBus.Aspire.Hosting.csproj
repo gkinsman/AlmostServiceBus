@@ -4,14 +4,12 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <!-- NU1902: transitive KubernetesClient vulnerability from Aspire.Hosting -->
-    <NoWarn>$(NoWarn);NU1902</NoWarn>
     <!-- Path where Host publish output lands before being packed -->
     <HostPublishDir>$(MSBuildThisFileDirectory)obj\host-publish\</HostPublishDir>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting" Version="9.2.1" />
+    <PackageReference Include="Aspire.Hosting" Version="13.4.6" />
     <!-- Build the Host project before this one, but don't reference its assembly -->
     <ProjectReference Include="..\AlmostServiceBus.Host\AlmostServiceBus.Host.csproj"
                       ReferenceOutputAssembly="false"
