@@ -9,7 +9,7 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="AMQPNetLite" Version="2.5.1" />
+    <PackageReference Include="AMQPNetLite" Version="2.5.3" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="AlmostServiceBus.Tests" />
