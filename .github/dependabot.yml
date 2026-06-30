@@ -1,0 +1,31 @@
+# Dependabot version updates. NuGet discovery from "/" recurses through src/, tests/
+# and samples/; the external/* git submodules (azure-sdk-for-net, MassTransit, etc.)
+# are separate repos and are not scanned.
+#
+# Note: this file enables *version* updates only. Dependabot security updates and
+# vulnerability alerts (e.g. the MessagePack advisory) are toggled in the repo's
+# Settings → Code security, not here.
+version: 2
+updates:
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      # Roll routine minor/patch bumps into a single weekly PR to cut noise;
+      # major bumps still come through as their own PRs for individual review.
+      nuget-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        update-types:
+          - "minor"
+          - "patch"
