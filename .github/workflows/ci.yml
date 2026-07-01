@@ -21,11 +21,39 @@ jobs:
   # inside each test fixture on random ports, so no separate emulator process
   # is required.  Everything is plaintext (MS-emulator compatibility mode),
   # so no cert setup is needed.
+  #
+  # One assembly per job (matrix): `dotnet test <solution>` runs every test
+  # project in parallel via MSBuild, so on a 2-core runner the emulator-backed
+  # assemblies oversubscribe the CPU and throughput/timing-sensitive tests
+  # (bulk send, scheduled delivery, lock renewal) intermittently time out.
+  # (vstest's runsettings MaxCpuCount does NOT help here — it only caps
+  # assembly parallelism within a single vstest invocation, and per-project
+  # runs never have more than one.)  Giving each assembly its own runner
+  # removes the contention while keeping wall-clock low (jobs run in parallel).
   internal-tests:
-    name: Internal Tests
+    name: "Internal: ${{ matrix.name }}"
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Unit
+            slug: unit
+            project: tests/AlmostServiceBus.Tests
+          - name: SDK Integration
+            slug: sdkintegration
+            project: tests/AlmostServiceBus.SdkIntegration.Tests
+          - name: MassTransit
+            slug: masstransit
+            project: tests/AlmostServiceBus.MassTransit.Tests
+          - name: Conformance
+            slug: conformance
+            project: tests/AlmostServiceBus.Conformance.Tests
+          - name: SDK Live
+            slug: sdklive
+            project: tests/AlmostServiceBus.SdkLive.Tests
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,26 +66,26 @@ jobs:
           dotnet-version: "10.x"
 
       - name: Restore & Build
-        run: dotnet build AlmostServiceBus.sln
+        run: dotnet build ${{ matrix.project }}
 
       - name: Test
         run: |
-          dotnet test AlmostServiceBus.sln \
+          dotnet test ${{ matrix.project }} \
             --no-build \
-            --settings AlmostServiceBus.runsettings \
             --filter "FullyQualifiedName!~RealAsbConformanceTests&FullyQualifiedName!~RealAsbTopicRequeueReproTest" \
             --results-directory artifacts/test-results/internal \
             --logger "trx"
 
       - name: Summarize test results
         if: always()
-        run: python3 .github/scripts/summarize_trx.py "Internal Tests" artifacts/test-results/internal
+        run: |
+          python3 .github/scripts/summarize_trx.py "Internal: ${{ matrix.name }}" artifacts/test-results/internal
 
       - name: Upload TRX results on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: internal-tests-trx
+          name: internal-tests-trx-${{ matrix.slug }}
           path: artifacts/test-results/internal
           retention-days: 7
 
