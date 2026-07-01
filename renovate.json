@@ -11,5 +11,18 @@
   },
   "github-actions": {
     "enabled": true
-  }
+  },
+  "platformAutomerge": false,
+  "packageRules": [
+    {
+      "description": "Auto-merge non-major updates once CI is green; majors stay manual for review.",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest",
+        "pin"
+      ],
+      "automerge": true
+    }
+  ]
 }
