@@ -9,7 +9,7 @@
   <ItemGroup>
     <PackageReference Include="MassTransit.Azure.ServiceBus.Core" Version="8.5.10" />
     <!-- Pin a recent Azure SDK to override the older transitive and pick up emulator fixes -->
-    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
+    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.2" />
     <PackageReference Include="Vite.AspNetCore" Version="2.4.1" />
   </ItemGroup>
   <Target Name="BuildDashboard" BeforeTargets="Build"
