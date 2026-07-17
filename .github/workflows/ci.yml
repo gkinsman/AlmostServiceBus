@@ -55,7 +55,7 @@ jobs:
             slug: sdklive
             project: tests/AlmostServiceBus.SdkLive.Tests
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           submodules: false
@@ -117,7 +117,7 @@ jobs:
             # Everything else: ConventionalRouting, Bugs, StatefulResource, Internal unit tests, etc.
             filter_include: "FullyQualifiedName!~Compliance&FullyQualifiedName!~end_to_end&FullyQualifiedName!~using_native_scheduling"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           submodules: false
@@ -237,7 +237,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           submodules: false
@@ -285,7 +285,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           submodules: false
@@ -383,7 +383,7 @@ jobs:
       packages: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0  # MinVer needs full history to derive version from tags
