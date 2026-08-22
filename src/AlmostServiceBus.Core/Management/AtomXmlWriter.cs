@@ -50,6 +50,8 @@ public static class AtomXmlWriter
             Elem("DefaultMessageTimeToLive", FormatTimeSpan(queue.DefaultMessageTimeToLive)),
             Elem("DeadLetteringOnMessageExpiration", queue.DeadLetteringOnMessageExpiration),
             Elem("MaxDeliveryCount", queue.MaxDeliveryCount),
+            Elem("EnablePartitioning", queue.EnablePartitioning),
+            Elem("EnableExpress", queue.EnableExpress),
             Elem("EnableBatchedOperations", queue.EnableBatchedOperations),
             OptElem("ForwardTo", queue.ForwardTo),
             OptElem("UserMetadata", queue.UserMetadata),
@@ -74,6 +76,8 @@ public static class AtomXmlWriter
             new XAttribute(XNamespace.Xmlns + "i", Xsi.NamespaceName),
             Elem("DefaultMessageTimeToLive", FormatTimeSpan(topic.DefaultMessageTimeToLive)),
             Elem("MaxSizeInMegabytes", topic.MaxSizeInMegabytes),
+            Elem("EnablePartitioning", topic.EnablePartitioning),
+            Elem("EnableExpress", topic.EnableExpress),
             Elem("EnableBatchedOperations", topic.EnableBatchedOperations),
             OptElem("UserMetadata", topic.UserMetadata),
             topic.AutoDeleteOnIdle.HasValue ? Elem("AutoDeleteOnIdle", FormatTimeSpan(topic.AutoDeleteOnIdle.Value)) : null,
@@ -183,12 +187,22 @@ public static class AtomXmlWriter
 
     // ── Shared helpers ───────────────────────────────────────────────────────
 
-    private static XElement BuildEntry(string name, XElement description) =>
-        new(Atom + "entry",
-            new XElement(Atom + "title", name),
-            new XElement(Atom + "content",
-                new XAttribute("type", "application/xml"),
-                description));
+    private static XElement BuildEntry(string name, XElement description) {
+        var resourceUrl = $"http://localhost:5300/{name}?api-version=2021-05";
+
+        return new XElement(Atom + "entry",
+            new XElement(Atom + "id", resourceUrl),
+            new XElement(Atom + "title", new XAttribute("type", "text"), name),
+            new XElement(Atom + "author",
+                new XElement(Atom + "name", "almost-service-bus")
+            ),
+            new XElement(Atom + "link", 
+                new XAttribute("rel", "self"), 
+                new XAttribute("href", resourceUrl)
+            ),
+            new XElement(Atom + "content", new XAttribute("type", "application/xml"), description)
+        );
+    }
 
     private static XElement BuildFeed(IEnumerable<XElement> entries) =>
         new(Atom + "feed",

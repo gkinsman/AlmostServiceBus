@@ -23,6 +23,8 @@ public class QueueEntityTests
         Assert.False(queue.RequiresSession);
         Assert.False(queue.DeadLetteringOnMessageExpiration);
         Assert.Equal(TimeSpan.MaxValue, queue.DefaultMessageTimeToLive);
+        Assert.False(queue.EnablePartitioning);
+        Assert.False(queue.EnableExpress);
         Assert.True(queue.EnableBatchedOperations);
         Assert.Equal(1024L, queue.MaxSizeInMegabytes);
         Assert.Null(queue.ForwardTo);

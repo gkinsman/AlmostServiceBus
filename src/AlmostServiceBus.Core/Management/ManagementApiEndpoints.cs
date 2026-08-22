@@ -438,6 +438,8 @@ public static class ManagementApiEndpoints
             entity.DefaultMessageTimeToLive = props.DefaultMessageTimeToLive;
             entity.DeadLetteringOnMessageExpiration = props.DeadLetteringOnMessageExpiration;
             entity.MaxDeliveryCount = props.MaxDeliveryCount;
+            entity.EnablePartitioning = props.EnablePartitioning;
+            entity.EnableExpress = props.EnableExpress;
             entity.EnableBatchedOperations = props.EnableBatchedOperations;
             entity.ForwardTo = props.ForwardTo;
             entity.UserMetadata = props.UserMetadata;
@@ -459,6 +461,8 @@ public static class ManagementApiEndpoints
             var props = AtomXmlReader.ReadTopicProperties(body);
             entity.DefaultMessageTimeToLive = props.DefaultMessageTimeToLive;
             entity.MaxSizeInMegabytes = props.MaxSizeInMegabytes;
+            entity.EnablePartitioning = props.EnablePartitioning;
+            entity.EnableExpress = props.EnableExpress;
             entity.EnableBatchedOperations = props.EnableBatchedOperations;
             entity.UserMetadata = props.UserMetadata;
             entity.AutoDeleteOnIdle = props.AutoDeleteOnIdle;
