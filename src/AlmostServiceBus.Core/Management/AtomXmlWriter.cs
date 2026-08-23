@@ -34,13 +34,13 @@ public static class AtomXmlWriter
 
     // ── Queue ────────────────────────────────────────────────────────────────
 
-    public static string WriteQueueEntry(QueueEntity queue) =>
-        SerializeToString(BuildQueueEntry(queue));
+    public static string WriteQueueEntry(QueueEntity queue, string baseUrl) =>
+        SerializeToString(BuildQueueEntry(queue, baseUrl));
 
-    public static string WriteQueueFeed(IEnumerable<QueueEntity> queues) =>
-        SerializeToString(BuildFeed(queues.Select(BuildQueueEntry)));
+    public static string WriteQueueFeed(IEnumerable<QueueEntity> queues, string baseUrl) =>
+        SerializeToString(BuildFeed(queues.Select(q => BuildQueueEntry(q, baseUrl))));
 
-    private static XElement BuildQueueEntry(QueueEntity queue)
+    private static XElement BuildQueueEntry(QueueEntity queue, string baseUrl)
     {
         var desc = new XElement(Sb + "QueueDescription",
             new XAttribute(XNamespace.Xmlns + "i", Xsi.NamespaceName),
@@ -59,18 +59,18 @@ public static class AtomXmlWriter
             queue.RequiresDuplicateDetection ? Elem("RequiresDuplicateDetection", true) : null,
             queue.RequiresDuplicateDetection ? Elem("DuplicateDetectionHistoryTimeWindow", FormatTimeSpan(queue.DuplicateDetectionHistoryTimeWindow)) : null);
 
-        return BuildEntry(queue.Name, desc);
+        return BuildEntry(queue.Name, desc, baseUrl);
     }
 
     // ── Topic ────────────────────────────────────────────────────────────────
 
-    public static string WriteTopicEntry(TopicEntity topic) =>
-        SerializeToString(BuildTopicEntry(topic));
+    public static string WriteTopicEntry(TopicEntity topic, string baseUrl) =>
+        SerializeToString(BuildTopicEntry(topic, baseUrl));
 
-    public static string WriteTopicFeed(IEnumerable<TopicEntity> topics) =>
-        SerializeToString(BuildFeed(topics.Select(BuildTopicEntry)));
+    public static string WriteTopicFeed(IEnumerable<TopicEntity> topics, string baseUrl) =>
+        SerializeToString(BuildFeed(topics.Select(t => BuildTopicEntry(t, baseUrl))));
 
-    private static XElement BuildTopicEntry(TopicEntity topic)
+    private static XElement BuildTopicEntry(TopicEntity topic, string baseUrl)
     {
         var desc = new XElement(Sb + "TopicDescription",
             new XAttribute(XNamespace.Xmlns + "i", Xsi.NamespaceName),
@@ -79,23 +79,24 @@ public static class AtomXmlWriter
             Elem("EnablePartitioning", topic.EnablePartitioning),
             Elem("EnableExpress", topic.EnableExpress),
             Elem("EnableBatchedOperations", topic.EnableBatchedOperations),
+            Elem("SupportOrdering", topic.SupportOrdering),
             OptElem("UserMetadata", topic.UserMetadata),
             topic.AutoDeleteOnIdle.HasValue ? Elem("AutoDeleteOnIdle", FormatTimeSpan(topic.AutoDeleteOnIdle.Value)) : null,
             topic.RequiresDuplicateDetection ? Elem("RequiresDuplicateDetection", true) : null,
             topic.RequiresDuplicateDetection ? Elem("DuplicateDetectionHistoryTimeWindow", FormatTimeSpan(topic.DuplicateDetectionHistoryTimeWindow)) : null);
 
-        return BuildEntry(topic.Name, desc);
+        return BuildEntry(topic.Name, desc, baseUrl);
     }
 
     // ── Subscription ─────────────────────────────────────────────────────────
 
-    public static string WriteSubscriptionEntry(SubscriptionEntity sub) =>
-        SerializeToString(BuildSubscriptionEntry(sub));
+    public static string WriteSubscriptionEntry(SubscriptionEntity sub, string baseUrl) =>
+        SerializeToString(BuildSubscriptionEntry(sub, baseUrl));
 
-    public static string WriteSubscriptionFeed(IEnumerable<SubscriptionEntity> subs) =>
-        SerializeToString(BuildFeed(subs.Select(BuildSubscriptionEntry)));
+    public static string WriteSubscriptionFeed(IEnumerable<SubscriptionEntity> subs, string baseUrl) =>
+        SerializeToString(BuildFeed(subs.Select(s => BuildSubscriptionEntry(s, baseUrl))));
 
-    private static XElement BuildSubscriptionEntry(SubscriptionEntity sub)
+    private static XElement BuildSubscriptionEntry(SubscriptionEntity sub, string baseUrl)
     {
         var desc = new XElement(Sb + "SubscriptionDescription",
             new XAttribute(XNamespace.Xmlns + "i", Xsi.NamespaceName),
@@ -108,18 +109,20 @@ public static class AtomXmlWriter
             OptElem("ForwardTo", sub.ForwardTo),
             OptElem("UserMetadata", sub.UserMetadata));
 
-        return BuildEntry(sub.Name, desc);
+        // Note: For a subscription, the SDK expects the URI to reflect the topic path. 
+        // Ensure sub.Name is constructed as "{topicName}/Subscriptions/{subscriptionName}" if needed by the SDK.
+        return BuildEntry(sub.Name, desc, baseUrl);
     }
 
     // ── Rule ─────────────────────────────────────────────────────────────────
 
-    public static string WriteRuleEntry(RuleEntity rule) =>
-        SerializeToString(BuildRuleEntry(rule));
+    public static string WriteRuleEntry(RuleEntity rule, string baseUrl) =>
+        SerializeToString(BuildRuleEntry(rule, baseUrl));
 
-    public static string WriteRuleFeed(IEnumerable<RuleEntity> rules) =>
-        SerializeToString(BuildFeed(rules.Select(BuildRuleEntry)));
+    public static string WriteRuleFeed(IEnumerable<RuleEntity> rules, string baseUrl) =>
+        SerializeToString(BuildFeed(rules.Select(r => BuildRuleEntry(r, baseUrl))));
 
-    private static XElement BuildRuleEntry(RuleEntity rule)
+    private static XElement BuildRuleEntry(RuleEntity rule, string baseUrl)
     {
         var filterType = rule.FilterType switch
         {
@@ -182,13 +185,16 @@ public static class AtomXmlWriter
             actionElement,
             Elem("Name", rule.Name));
 
-        return BuildEntry(rule.Name, desc);
+        return BuildEntry(rule.Name, desc, baseUrl);
     }
 
     // ── Shared helpers ───────────────────────────────────────────────────────
 
-    private static XElement BuildEntry(string name, XElement description) {
-        var resourceUrl = $"http://localhost:5300/{name}?api-version=2021-05";
+    private static XElement BuildEntry(string name, XElement description, string baseUrl) 
+    {
+        // Strip trailing slashes to prevent "http://hostname.com//topicName"
+        baseUrl = baseUrl.TrimEnd('/');
+        var resourceUrl = $"{baseUrl}/{name}?api-version=2021-05";
 
         return new XElement(Atom + "entry",
             new XElement(Atom + "id", resourceUrl),

@@ -97,6 +97,7 @@ public class AtomXmlWriterTests
             EnablePartitioning = true,
             EnableExpress = true,
             EnableBatchedOperations = false,
+            SupportOrdering = false
         };
 
         var xml = AtomXmlWriter.WriteTopicEntry(topic);
@@ -113,6 +114,7 @@ public class AtomXmlWriterTests
         Assert.Equal("true", topicDesc.Element(Sb + "EnablePartitioning")?.Value);
         Assert.Equal("true", topicDesc.Element(Sb + "EnableExpress")?.Value);
         Assert.Equal("false", topicDesc.Element(Sb + "EnableBatchedOperations")?.Value);
+        Assert.Equal("true", topicDesc.Element(Sb + "SupportOrdering")?.Value);
     }
 
     [Fact]

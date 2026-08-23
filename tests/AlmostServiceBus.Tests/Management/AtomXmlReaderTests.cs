@@ -63,6 +63,7 @@ public class AtomXmlReaderTests
             EnablePartitioning = true,
             EnableExpress = true,
             EnableBatchedOperations = false,
+            SupportOrdering = false,
             UserMetadata = "topic-meta",
         };
 
@@ -74,6 +75,7 @@ public class AtomXmlReaderTests
         Assert.True(topic.EnablePartitioning);
         Assert.True(topic.EnableExpress);
         Assert.False(props.EnableBatchedOperations);
+        Assert.False(props.SupportOrdering)
         Assert.Equal("topic-meta", props.UserMetadata);
     }
 

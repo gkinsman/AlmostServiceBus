@@ -23,6 +23,7 @@ public class TopicEntityTests
         Assert.False(topic.EnablePartitioning);
         Assert.False(topic.EnableExpress);
         Assert.True(topic.EnableBatchedOperations);
+        Assert.True(topic.SupportOrdering);
         Assert.Null(topic.UserMetadata);
     }
 

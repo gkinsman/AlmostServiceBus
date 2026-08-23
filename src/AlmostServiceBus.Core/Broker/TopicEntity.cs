@@ -31,6 +31,8 @@ public sealed class TopicEntity
 
     public bool EnableBatchedOperations { get; set; } = true;
 
+    public bool SupportOrdering { get; set; } = true;
+
     public TimeSpan? AutoDeleteOnIdle { get; set; }
 
     public bool RequiresDuplicateDetection { get; set; }
