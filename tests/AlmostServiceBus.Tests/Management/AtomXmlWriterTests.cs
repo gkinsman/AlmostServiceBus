@@ -19,6 +19,8 @@ public class AtomXmlWriterTests
             MaxSizeInMegabytes = 2048,
             RequiresSession = false,
             DeadLetteringOnMessageExpiration = true,
+            EnablePartitioning = true,
+            EnableExpress = true,
             EnableBatchedOperations = true,
         };
 
@@ -92,7 +94,10 @@ public class AtomXmlWriterTests
         var topic = new TopicEntity("my-topic")
         {
             MaxSizeInMegabytes = 4096,
+            EnablePartitioning = true,
+            EnableExpress = true,
             EnableBatchedOperations = false,
+            SupportOrdering = false
         };
 
         var xml = AtomXmlWriter.WriteTopicEntry(topic);
@@ -106,7 +111,10 @@ public class AtomXmlWriterTests
 
         var topicDesc = doc.Descendants(Sb + "TopicDescription").Single();
         Assert.Equal("4096", topicDesc.Element(Sb + "MaxSizeInMegabytes")?.Value);
+        Assert.Equal("true", topicDesc.Element(Sb + "EnablePartitioning")?.Value);
+        Assert.Equal("true", topicDesc.Element(Sb + "EnableExpress")?.Value);
         Assert.Equal("false", topicDesc.Element(Sb + "EnableBatchedOperations")?.Value);
+        Assert.Equal("true", topicDesc.Element(Sb + "SupportOrdering")?.Value);
     }
 
     [Fact]

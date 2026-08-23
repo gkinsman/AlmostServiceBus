@@ -25,7 +25,13 @@ public sealed class TopicEntity
 
     public TimeSpan DefaultMessageTimeToLive { get; set; } = TimeSpan.MaxValue;
 
+    public bool EnablePartitioning { get; set; } = false;
+
+    public bool EnableExpress { get; set; } = false;
+
     public bool EnableBatchedOperations { get; set; } = true;
+
+    public bool SupportOrdering { get; set; } = true;
 
     public TimeSpan? AutoDeleteOnIdle { get; set; }
 

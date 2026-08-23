@@ -16,6 +16,8 @@ public class AtomXmlReaderTests
             RequiresSession = true,
             DeadLetteringOnMessageExpiration = true,
             DefaultMessageTimeToLive = TimeSpan.FromDays(1),
+            EnablePartitioning = true,
+            EnableExpress = true,
             EnableBatchedOperations = false,
         };
 
@@ -28,6 +30,8 @@ public class AtomXmlReaderTests
         Assert.True(props.RequiresSession);
         Assert.True(props.DeadLetteringOnMessageExpiration);
         Assert.Equal(TimeSpan.FromDays(1), props.DefaultMessageTimeToLive);
+        Assert.True(queue.EnablePartitioning);
+        Assert.True(queue.EnableExpress);
         Assert.False(props.EnableBatchedOperations);
         Assert.Null(props.ForwardTo);
         Assert.Null(props.UserMetadata);
@@ -56,7 +60,10 @@ public class AtomXmlReaderTests
         {
             MaxSizeInMegabytes = 4096,
             DefaultMessageTimeToLive = TimeSpan.FromHours(12),
+            EnablePartitioning = true,
+            EnableExpress = true,
             EnableBatchedOperations = false,
+            SupportOrdering = false,
             UserMetadata = "topic-meta",
         };
 
@@ -65,7 +72,10 @@ public class AtomXmlReaderTests
 
         Assert.Equal(4096L, props.MaxSizeInMegabytes);
         Assert.Equal(TimeSpan.FromHours(12), props.DefaultMessageTimeToLive);
+        Assert.True(topic.EnablePartitioning);
+        Assert.True(topic.EnableExpress);
         Assert.False(props.EnableBatchedOperations);
+        Assert.False(props.SupportOrdering)
         Assert.Equal("topic-meta", props.UserMetadata);
     }
 

@@ -464,6 +464,8 @@ public class EmulatorContainer : IContainer
     /// </summary>
     private static void DispatchRequest(ListenerLink link, Message message, RequestProcessorEntry entry)
     {
+        AmqpPropertiesExtensions.SanitizeProperties(message);
+
         var operation = message.ApplicationProperties?["operation"] as string;
 
         // Find the response link for this request.

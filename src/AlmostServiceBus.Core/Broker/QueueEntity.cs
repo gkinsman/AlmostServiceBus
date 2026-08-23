@@ -96,6 +96,10 @@ public sealed class QueueEntity : IDisposable
 
     public TimeSpan DefaultMessageTimeToLive { get; set; } = TimeSpan.MaxValue;
 
+    public bool EnablePartitioning { get; set; } = false;
+
+    public bool EnableExpress { get; set; } = false;
+
     public bool EnableBatchedOperations { get; set; } = true;
 
     public long MaxSizeInMegabytes { get; set; } = 1024L;

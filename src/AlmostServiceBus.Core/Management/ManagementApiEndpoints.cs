@@ -31,6 +31,8 @@ public static class ManagementApiEndpoints
 
         app.MapPut("/{**path}", async (HttpRequest request) =>
         {
+
+            var baseUrl = $"{request.Scheme}://{request.Host}";
             var path = GetRoutePath(request);
             var ns = ResolveNamespace(request, registry);
             var body = await ReadBodyAsync(request);
@@ -69,7 +71,7 @@ public static class ManagementApiEndpoints
                 };
                 sub.AddOrUpdateRule(rule);
 
-                var xml = AtomXmlWriter.WriteRuleEntry(rule);
+                var xml = AtomXmlWriter.WriteRuleEntry(rule, baseUrl);
                 return Results.Content(xml, AtomXmlContentType,
                     statusCode: isUpdate ? StatusCodes.Status200OK : StatusCodes.Status201Created);
             }
@@ -96,7 +98,7 @@ public static class ManagementApiEndpoints
 
                 ApplySubscriptionProperties(sub, body, ns);
 
-                var xml = AtomXmlWriter.WriteSubscriptionEntry(sub);
+                var xml = AtomXmlWriter.WriteSubscriptionEntry(sub, baseUrl);
                 return Results.Content(xml, AtomXmlContentType,
                     statusCode: isUpdate ? StatusCodes.Status200OK : StatusCodes.Status201Created);
             }
@@ -122,7 +124,7 @@ public static class ManagementApiEndpoints
 
                 ApplyTopicProperties(entity, body);
 
-                var xml = AtomXmlWriter.WriteTopicEntry(entity);
+                var xml = AtomXmlWriter.WriteTopicEntry(entity, baseUrl);
                 return Results.Content(xml, AtomXmlContentType,
                     statusCode: isUpdate ? StatusCodes.Status200OK : StatusCodes.Status201Created);
             }
@@ -143,7 +145,7 @@ public static class ManagementApiEndpoints
 
                 ApplyQueueProperties(entity, body);
 
-                var xml = AtomXmlWriter.WriteQueueEntry(entity);
+                var xml = AtomXmlWriter.WriteQueueEntry(entity, baseUrl);
                 return Results.Content(xml, AtomXmlContentType,
                     statusCode: isUpdate ? StatusCodes.Status200OK : StatusCodes.Status201Created);
             }
@@ -151,6 +153,7 @@ public static class ManagementApiEndpoints
 
         app.MapGet("/{**path}", (HttpRequest request) =>
         {
+            var baseUrl = $"{request.Scheme}://{request.Host}";
             var path = GetRoutePath(request);
             if (string.IsNullOrEmpty(path))
                 return ManagementApiErrors.EntityNotFound("");
@@ -165,7 +168,7 @@ public static class ManagementApiEndpoints
                     .OrderBy(q => q.Name, StringComparer.OrdinalIgnoreCase)
                     .Skip(skip)
                     .Take(top);
-                var feed = AtomXmlWriter.WriteQueueFeed(queues);
+                var feed = AtomXmlWriter.WriteQueueFeed(queues, baseUrl);
                 return Results.Content(feed, AtomXmlContentType);
             }
 
@@ -177,7 +180,7 @@ public static class ManagementApiEndpoints
                     .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
                     .Skip(skip)
                     .Take(top);
-                var feed = AtomXmlWriter.WriteTopicFeed(topics);
+                var feed = AtomXmlWriter.WriteTopicFeed(topics, baseUrl);
                 return Results.Content(feed, AtomXmlContentType);
             }
 
@@ -192,7 +195,7 @@ public static class ManagementApiEndpoints
                 if (rule is null)
                     return ManagementApiErrors.EntityNotFound($"{topicName}/Subscriptions/{subName}/Rules/{ruleName}");
 
-                return Results.Content(AtomXmlWriter.WriteRuleEntry(rule), AtomXmlContentType);
+                return Results.Content(AtomXmlWriter.WriteRuleEntry(rule, baseUrl), AtomXmlContentType);
             }
 
             if (TryParseRuleListPath(path, out topicName, out subName))
@@ -204,7 +207,7 @@ public static class ManagementApiEndpoints
 
                 var (rSkip, rTop) = ParsePagination(request);
                 var rules = sub.GetRules().Skip(rSkip).Take(rTop);
-                var feed = AtomXmlWriter.WriteRuleFeed(rules);
+                var feed = AtomXmlWriter.WriteRuleFeed(rules, baseUrl);
                 return Results.Content(feed, AtomXmlContentType);
             }
 
@@ -215,7 +218,7 @@ public static class ManagementApiEndpoints
                 if (sub is null)
                     return ManagementApiErrors.EntityNotFound($"{topicName}/Subscriptions/{subName}");
 
-                return Results.Content(AtomXmlWriter.WriteSubscriptionEntry(sub), AtomXmlContentType);
+                return Results.Content(AtomXmlWriter.WriteSubscriptionEntry(sub, baseUrl), AtomXmlContentType);
             }
 
             if (TryParseSubscriptionListPath(path, out topicName))
@@ -227,7 +230,7 @@ public static class ManagementApiEndpoints
 
                 var (sSkip, sTop) = ParsePagination(request);
                 var subs = topic.GetSubscriptions().Skip(sSkip).Take(sTop);
-                var feed = AtomXmlWriter.WriteSubscriptionFeed(subs);
+                var feed = AtomXmlWriter.WriteSubscriptionFeed(subs, baseUrl);
                 return Results.Content(feed, AtomXmlContentType);
             }
 
@@ -236,11 +239,11 @@ public static class ManagementApiEndpoints
 
             var queue = ns.GetQueue(entityName);
             if (queue is not null)
-                return Results.Content(AtomXmlWriter.WriteQueueEntry(queue), AtomXmlContentType);
+                return Results.Content(AtomXmlWriter.WriteQueueEntry(queue, baseUrl), AtomXmlContentType);
 
             var topic2 = ns.GetTopic(entityName);
             if (topic2 is not null)
-                return Results.Content(AtomXmlWriter.WriteTopicEntry(topic2), AtomXmlContentType);
+                return Results.Content(AtomXmlWriter.WriteTopicEntry(topic2, baseUrl), AtomXmlContentType);
 
             return ManagementApiErrors.EntityNotFound(entityName);
         });
@@ -438,6 +441,8 @@ public static class ManagementApiEndpoints
             entity.DefaultMessageTimeToLive = props.DefaultMessageTimeToLive;
             entity.DeadLetteringOnMessageExpiration = props.DeadLetteringOnMessageExpiration;
             entity.MaxDeliveryCount = props.MaxDeliveryCount;
+            entity.EnablePartitioning = props.EnablePartitioning;
+            entity.EnableExpress = props.EnableExpress;
             entity.EnableBatchedOperations = props.EnableBatchedOperations;
             entity.ForwardTo = props.ForwardTo;
             entity.UserMetadata = props.UserMetadata;
@@ -459,7 +464,10 @@ public static class ManagementApiEndpoints
             var props = AtomXmlReader.ReadTopicProperties(body);
             entity.DefaultMessageTimeToLive = props.DefaultMessageTimeToLive;
             entity.MaxSizeInMegabytes = props.MaxSizeInMegabytes;
+            entity.EnablePartitioning = props.EnablePartitioning;
+            entity.EnableExpress = props.EnableExpress;
             entity.EnableBatchedOperations = props.EnableBatchedOperations;
+            entity.SupportOrdering = props.SupportOrdering;
             entity.UserMetadata = props.UserMetadata;
             entity.AutoDeleteOnIdle = props.AutoDeleteOnIdle;
             entity.RequiresDuplicateDetection = props.RequiresDuplicateDetection;

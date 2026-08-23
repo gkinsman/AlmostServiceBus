@@ -20,7 +20,10 @@ public class TopicEntityTests
         Assert.Equal("my-topic", topic.Name);
         Assert.Equal(1024L, topic.MaxSizeInMegabytes);
         Assert.Equal(TimeSpan.MaxValue, topic.DefaultMessageTimeToLive);
+        Assert.False(topic.EnablePartitioning);
+        Assert.False(topic.EnableExpress);
         Assert.True(topic.EnableBatchedOperations);
+        Assert.True(topic.SupportOrdering);
         Assert.Null(topic.UserMetadata);
     }
 
