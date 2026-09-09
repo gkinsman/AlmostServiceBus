@@ -216,12 +216,9 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 ["statusCode"] = 200,
                 ["statusDescription"] = "OK"
             },
-            Properties = new Properties
-            {
-                CorrelationId = requestContext.Message.Properties?.MessageId
-            }
+            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
-        requestContext.Complete(response);
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 
     private void HandleRenewLock(RequestContext requestContext)
@@ -311,12 +308,9 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 ["statusCode"] = 200,
                 ["statusDescription"] = "OK"
             },
-            Properties = new Properties
-            {
-                CorrelationId = requestContext.Message.Properties?.MessageId
-            }
+            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
-        requestContext.Complete(response);
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 
     private void HandleCancelScheduledMessage(RequestContext requestContext)
@@ -378,9 +372,9 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 ["statusCode"] = 200,
                 ["statusDescription"] = "OK"
             },
-            Properties = new Properties { CorrelationId = requestContext.Message.Properties?.MessageId }
+            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
-        requestContext.Complete(response);
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 
     private void HandleGetSessionState(RequestContext requestContext)
@@ -414,9 +408,9 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 ["statusCode"] = 200,
                 ["statusDescription"] = "OK"
             },
-            Properties = new Properties { CorrelationId = requestContext.Message.Properties?.MessageId }
+            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
-        requestContext.Complete(response);
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 
     private void HandleSetSessionState(RequestContext requestContext)
@@ -463,9 +457,9 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 ["statusCode"] = 200,
                 ["statusDescription"] = "OK"
             },
-            Properties = new Properties { CorrelationId = requestContext.Message.Properties?.MessageId }
+            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
-        requestContext.Complete(response);
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 
     /// <summary>
@@ -585,12 +579,9 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 ["statusCode"] = 200,
                 ["statusDescription"] = "OK"
             },
-            Properties = new Properties
-            {
-                CorrelationId = requestContext.Message.Properties?.MessageId
-            }
+            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
-        requestContext.Complete(response);
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 
     /// <summary>
@@ -661,12 +652,9 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 ["statusCode"] = 200,
                 ["statusDescription"] = "OK"
             },
-            Properties = new Properties
-            {
-                CorrelationId = requestContext.Message.Properties?.MessageId
-            }
+            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
-        requestContext.Complete(response);
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 
     /// <summary>
@@ -785,12 +773,9 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 ["statusCode"] = 204,
                 ["statusDescription"] = "No Content"
             },
-            Properties = new Properties
-            {
-                CorrelationId = requestContext.Message.Properties?.MessageId
-            }
+            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
-        requestContext.Complete(response);
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 
     private void SendErrorResponse(RequestContext requestContext, int statusCode, string description, string? errorCondition = null)
@@ -802,7 +787,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 ["statusCode"] = statusCode,
                 ["statusDescription"] = description
             },
-            Properties = new Properties { CorrelationId = requestContext.Message.Properties?.MessageId }
+            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
 
         // The Azure SDK reads ApplicationProperties["errorCondition"] to determine the
@@ -814,7 +799,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
             response.ApplicationProperties["errorCondition"] = new global::Amqp.Types.Symbol(errorCondition);
         }
 
-        requestContext.Complete(response);
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 
     /// <summary>
@@ -841,11 +826,8 @@ public class ManagementLinkEndpoint : IRequestProcessor
                 ["statusCode"] = 200,
                 ["statusDescription"] = "OK"
             },
-            Properties = new Properties
-            {
-                CorrelationId = requestContext.Message.Properties?.MessageId
-            }
+            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
-        requestContext.Complete(response);
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 }

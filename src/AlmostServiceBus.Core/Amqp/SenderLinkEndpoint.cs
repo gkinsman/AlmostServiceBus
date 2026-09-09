@@ -213,10 +213,10 @@ public class SenderLinkEndpoint : LinkEndpoint
         {
             var props = amqpMessage.Properties;
 
-            if (props.MessageId is not null)
-                brokered.MessageId = props.MessageId.ToString()!;
-            if (props.CorrelationId is not null)
-                brokered.CorrelationId = props.CorrelationId.ToString();
+            if (AmqpIdentifiers.MessageIdAsText(props) is { } messageId)
+                brokered.MessageId = messageId;
+            if (AmqpIdentifiers.CorrelationIdAsText(props) is { } correlationId)
+                brokered.CorrelationId = correlationId;
             if (props.ContentType is not null)
                 brokered.ContentType = props.ContentType;
             if (props.Subject is not null)

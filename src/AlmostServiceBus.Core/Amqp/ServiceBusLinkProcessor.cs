@@ -56,7 +56,7 @@ public class ServiceBusLinkProcessor : ILinkProcessor
 
         // The Azure SDK sends addresses with a leading '/' (e.g. "/my-queue").
         // Trim it to match entity names created via the REST API.
-        address = address?.TrimStart('/');
+        address = NormaliseAddress(address);
 
         if (string.IsNullOrEmpty(address))
         {
@@ -389,6 +389,33 @@ public class ServiceBusLinkProcessor : ILinkProcessor
 
         // 3. Default
         return _registry.GetOrCreate("default");
+    }
+
+    /// <summary>
+    /// Reduces a link address to the entity path.
+    /// </summary>
+    /// <remarks>
+    /// The .NET client sends the entity path, with or without a leading '/'. The Python client sends
+    /// the whole address it connected to, such as
+    /// "amqps://localhost:5673/my-topic/Subscriptions/my-subscription". Without this, a Python
+    /// receiver is answered "not found", and a Python sender is worse off still: the send target is
+    /// created on demand, so the URI became a queue of its own and every published message went into
+    /// it instead of the topic, with no error on either side.
+    /// </remarks>
+    internal static string? NormaliseAddress(string? address)
+    {
+        if (string.IsNullOrEmpty(address))
+            return address;
+
+        var schemeEnd = address.IndexOf("://", StringComparison.Ordinal);
+
+        if (schemeEnd >= 0)
+        {
+            var pathStart = address.IndexOf('/', schemeEnd + 3);
+            address = pathStart >= 0 ? address[pathStart..] : string.Empty;
+        }
+
+        return address.TrimStart('/');
     }
 
     private static void EnsureEntityExists(NamespaceContext context, string address)
