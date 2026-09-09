@@ -12,6 +12,9 @@
   "github-actions": {
     "enabled": true
   },
+  "git-submodules": {
+    "enabled": true
+  },
   "platformAutomerge": true,
   "packageRules": [
     {
@@ -23,6 +26,27 @@
         "pin"
       ],
       "automerge": true
+    },
+    {
+      "description": "Only the NServiceBus transport tracks upstream. Wolverine and MassTransit carry patches under patches/ that break when upstream moves, and azure-sdk-for-net is reference-only.",
+      "matchManagers": [
+        "git-submodules"
+      ],
+      "matchDepNames": [
+        "external/MassTransit",
+        "external/wolverine",
+        "external/azure-sdk-for-net"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Batch NServiceBus submodule bumps to one PR a week; upstream moves several times a week via its own Renovate.",
+      "matchManagers": [
+        "git-submodules"
+      ],
+      "schedule": [
+        "before 6am on monday"
+      ]
     }
   ]
 }
