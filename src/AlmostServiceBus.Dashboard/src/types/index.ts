@@ -67,6 +67,8 @@ export interface QueueProperties {
   requiresDuplicateDetection: boolean
   duplicateDetectionHistoryTimeWindow: string | null
   enableBatchedOperations: boolean
+  enablePartitioning: boolean
+  enableExpress: boolean
   maxSizeInMegabytes: number
   autoDeleteOnIdle: string | null
   forwardTo: string | null

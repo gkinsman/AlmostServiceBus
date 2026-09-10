@@ -49,6 +49,8 @@ const propertyRows = computed<{ label: string; value: string }[]>(() => {
     { label: 'Dead-letter on expiration', value: yesNo(p.deadLetteringOnMessageExpiration) },
     { label: 'Duplicate detection', value: p.requiresDuplicateDetection ? `Yes, window ${duration(p.duplicateDetectionHistoryTimeWindow)}` : 'No' },
     { label: 'Batched operations', value: yesNo(p.enableBatchedOperations) },
+    { label: 'Partitioning', value: yesNo(p.enablePartitioning) },
+    { label: 'Express', value: yesNo(p.enableExpress) },
     { label: 'Max size', value: `${p.maxSizeInMegabytes} MB` },
     { label: 'Auto-delete on idle', value: p.autoDeleteOnIdle ? duration(p.autoDeleteOnIdle) : 'Never' },
     { label: 'Forward to', value: p.forwardTo ?? '—' },

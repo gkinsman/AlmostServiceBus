@@ -34,10 +34,10 @@ public static class AtomXmlWriter
 
     // ── Queue ────────────────────────────────────────────────────────────────
 
-    public static string WriteQueueEntry(QueueEntity queue, string baseUrl) =>
+    public static string WriteQueueEntry(QueueEntity queue, string baseUrl = "") =>
         SerializeToString(BuildQueueEntry(queue, baseUrl));
 
-    public static string WriteQueueFeed(IEnumerable<QueueEntity> queues, string baseUrl) =>
+    public static string WriteQueueFeed(IEnumerable<QueueEntity> queues, string baseUrl = "") =>
         SerializeToString(BuildFeed(queues.Select(queue => BuildQueueEntry(queue, baseUrl))));
 
     private static XElement BuildQueueEntry(QueueEntity queue, string baseUrl)
@@ -64,10 +64,10 @@ public static class AtomXmlWriter
 
     // ── Topic ────────────────────────────────────────────────────────────────
 
-    public static string WriteTopicEntry(TopicEntity topic, string baseUrl) =>
+    public static string WriteTopicEntry(TopicEntity topic, string baseUrl = "") =>
         SerializeToString(BuildTopicEntry(topic, baseUrl));
 
-    public static string WriteTopicFeed(IEnumerable<TopicEntity> topics, string baseUrl) =>
+    public static string WriteTopicFeed(IEnumerable<TopicEntity> topics, string baseUrl = "") =>
         SerializeToString(BuildFeed(topics.Select(t => BuildTopicEntry(t, baseUrl))));
 
     private static XElement BuildTopicEntry(TopicEntity topic, string baseUrl)
@@ -91,10 +91,10 @@ public static class AtomXmlWriter
 
     // ── Subscription ─────────────────────────────────────────────────────────
 
-    public static string WriteSubscriptionEntry(SubscriptionEntity sub, string baseUrl) =>
+    public static string WriteSubscriptionEntry(SubscriptionEntity sub, string baseUrl = "") =>
         SerializeToString(BuildSubscriptionEntry(sub, baseUrl));
 
-    public static string WriteSubscriptionFeed(IEnumerable<SubscriptionEntity> subs, string baseUrl) =>
+    public static string WriteSubscriptionFeed(IEnumerable<SubscriptionEntity> subs, string baseUrl = "") =>
         SerializeToString(BuildFeed(subs.Select(s => BuildSubscriptionEntry(s, baseUrl))));
 
     private static XElement BuildSubscriptionEntry(SubscriptionEntity sub, string baseUrl)
@@ -115,10 +115,10 @@ public static class AtomXmlWriter
 
     // ── Rule ─────────────────────────────────────────────────────────────────
 
-    public static string WriteRuleEntry(RuleEntity rule, string baseUrl) =>
+    public static string WriteRuleEntry(RuleEntity rule, string baseUrl = "") =>
         SerializeToString(BuildRuleEntry(rule, baseUrl));
 
-    public static string WriteRuleFeed(IEnumerable<RuleEntity> rules, string baseUrl) =>
+    public static string WriteRuleFeed(IEnumerable<RuleEntity> rules, string baseUrl = "") =>
         SerializeToString(BuildFeed(rules.Select(r => BuildRuleEntry(r, baseUrl))));
 
     private static XElement BuildRuleEntry(RuleEntity rule, string baseUrl)
