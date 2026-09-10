@@ -1,13 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Caps vstest's cross-assembly parallelism at 3 so that at most three test
-  DLLs spin up their emulator fixtures concurrently.  Running all five+
-  test projects in parallel under CI contends for ephemeral ports and has
-  surfaced intermittent "Address already in use" / "Connection refused"
-  failures.  Within-assembly xunit parallelism is unaffected.
+  MaxCpuCount caps assembly parallelism *within a single vstest invocation*.
+
+  NOTE: this has NO effect on `dotnet test <solution>` — that builds and runs
+  each test project as a SEPARATE vstest invocation in parallel via MSBuild, so
+  vstest never sees more than one assembly at a time and this setting is inert.
+  (Measured: MaxCpuCount 3/2/1 gave identical wall-clock and did not change how
+  many emulator-backed assemblies ran concurrently.)
+
+  CI therefore does NOT rely on this file for isolation — it runs each test
+  assembly in its own job (see the `internal-tests` matrix in
+  .github/workflows/ci.yml), which is what actually prevents the emulator
+  fixtures from oversubscribing a 2-core runner and starving throughput/
+  timing-sensitive tests (bulk send, scheduled delivery, lock renewal).
+
+  Kept for running multiple assemblies through one vstest invocation, e.g.
+  `dotnet vstest a.dll b.dll --settings AlmostServiceBus.runsettings`.
 -->
 <RunSettings>
   <RunConfiguration>
-    <MaxCpuCount>3</MaxCpuCount>
+    <MaxCpuCount>2</MaxCpuCount>
   </RunConfiguration>
 </RunSettings>

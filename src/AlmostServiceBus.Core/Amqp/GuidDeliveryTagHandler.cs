@@ -14,7 +14,12 @@ namespace AlmostServiceBus.Core.Amqp;
 ///    (the Azure SDK reads the delivery tag as LockTokenGuid — if it's not
 ///    16 bytes, the SDK treats the message as "peeked" and rejects settlement).
 /// 2. Handles connection close events to clean up CBS connection tracking.
-/// 3. Prevents "OnDetach is not valid under state: Start/AttachSent" from killing
+/// 3. Emits the trailing optional fields of the local Open, Begin and Attach performatives.
+///    AMQP 1.0 allows a peer to leave them out, but the Python azure-servicebus client
+///    (pyamqp) reads Open field 9, Begin field 7 and Attach field 13 by position with no
+///    length check and raises IndexError, so it cannot connect at all unless the fields
+///    are present.
+/// 4. Prevents "OnDetach is not valid under state: Start/AttachSent" from killing
 ///    connections when clients send Detach for links whose Attach hasn't been
 ///    completed yet (e.g. session receivers waiting for a session to become available),
 ///    or during connection resets where links are locally closed in incomplete states.
@@ -57,12 +62,23 @@ public class GuidDeliveryTagHandler : IHandler
 
     public bool CanHandle(EventId id) =>
         id == EventId.SendDelivery ||
+        id == EventId.ConnectionLocalOpen ||
+        id == EventId.SessionLocalOpen ||
+        id == EventId.LinkLocalOpen ||
         id == EventId.ConnectionRemoteClose ||
         id == EventId.LinkRemoteClose ||
         id == EventId.LinkLocalClose;
 
     public void Handle(Event protocolEvent)
     {
+        if (protocolEvent.Id == EventId.ConnectionLocalOpen ||
+            protocolEvent.Id == EventId.SessionLocalOpen ||
+            protocolEvent.Id == EventId.LinkLocalOpen)
+        {
+            EmitTrailingFields(protocolEvent.Context);
+            return;
+        }
+
         if (protocolEvent.Id == EventId.ConnectionRemoteClose)
         {
             HandleConnectionRemoteClose(protocolEvent);
@@ -151,6 +167,33 @@ public class GuidDeliveryTagHandler : IHandler
         {
             Log.LogWarning(ex, "HandleLinkClose failed for link '{LinkName}' (event={EventId})",
                 link.Name, protocolEvent.Id);
+        }
+    }
+
+    /// <summary>
+    /// Makes a local Open, Begin or Attach carry its full field list.
+    /// </summary>
+    /// <remarks>
+    /// AMQP 1.0 lets a peer leave out the trailing optional fields of a performative, and
+    /// AMQPNetLite does. The Python azure-servicebus client (pyamqp) reads Open field 9, Begin
+    /// field 7 and Attach field 13 by position with no length check, and raises IndexError. Azure
+    /// itself always sends the full list, so the client never meets this in production. Setting
+    /// the last field of each performative to an empty map is enough, because only *trailing*
+    /// nulls are dropped: give the last field a value and every field before it is encoded too.
+    /// </remarks>
+    internal static void EmitTrailingFields(object? performative)
+    {
+        switch (performative)
+        {
+            case Open open:
+                open.Properties ??= new Fields();
+                break;
+            case Begin begin:
+                begin.Properties ??= new Fields();
+                break;
+            case Attach attach:
+                attach.Properties ??= new Fields();
+                break;
         }
     }
 }

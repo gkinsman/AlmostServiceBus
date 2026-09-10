@@ -35,11 +35,14 @@ public static class AlmostServiceBusBuilderExtensions
 
         var resource = new AlmostServiceBusResource(name, Path.GetDirectoryName(hostDll)!, dashboardPort);
 
+        // No --no-launch-profile here. That is a `dotnet run` flag; `dotnet exec` hands it to the
+        // Host, whose command-line parser pairs it with the "--Port" that follows and drops the
+        // port value. The Host then listened on its default port while the connection string
+        // advertised the requested one, so a non-default port never worked.
         var args = new List<object>
         {
             "exec",
             hostDll,
-            "--no-launch-profile",
         };
 
         var resourceBuilder = builder.AddResource(resource)

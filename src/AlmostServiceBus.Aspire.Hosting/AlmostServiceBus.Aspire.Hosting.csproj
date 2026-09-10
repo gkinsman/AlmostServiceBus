@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting" Version="13.4.6" />
+    <PackageReference Include="Aspire.Hosting" Version="13.5.3" />
     <!-- Build the Host project before this one, but don't reference its assembly -->
     <ProjectReference Include="..\AlmostServiceBus.Host\AlmostServiceBus.Host.csproj"
                       ReferenceOutputAssembly="false"

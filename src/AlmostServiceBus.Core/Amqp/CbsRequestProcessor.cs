@@ -99,12 +99,9 @@ public class CbsRequestProcessor : IRequestProcessor
                 // renewal, flooding the CBS link with requests.
                 ["expiration"] = DateTime.UtcNow.Add(DefaultTokenExpiration)
             },
-            Properties = new Properties
-            {
-                CorrelationId = requestContext.Message.Properties?.MessageId
-            }
+            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
-        requestContext.Complete(response);
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 
     private static void TryExtractNamespace(RequestContext requestContext)
