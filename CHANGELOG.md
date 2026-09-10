@@ -11,8 +11,8 @@ All notable changes to this project are documented here. The format is based on
   Python SDK's `pyamqp` transport: local `open`/`begin`/`attach` performatives
   carry their full field lists, management responses keep the type of the
   request's message-id (pyamqp sends uuids), and link addresses given as a full
-  URI (`amqps://host/entity`) resolve to the entity path. Contributed by
-  @dmitrymizernik (#80).
+  URI (`amqps://host/entity`) resolve to the entity path. Diagnosed and
+  contributed by @dmitrymizernik (#79, #80).
 - **Aspire readiness health check.** The `servicebus` endpoint exposes a TCP
   readiness check so `WaitFor` blocks until the emulator actually accepts
   connections, not just until the process starts.
@@ -39,9 +39,11 @@ All notable changes to this project are documented here. The format is based on
 - **Aspire: non-default ports work.** `AddServiceBusEmulator` no longer passes
   `--no-launch-profile` to `dotnet exec`; the Host's command-line parser was
   swallowing the `--Port` value that followed it, so the emulator listened on
-  5672 while the connection string advertised the requested port (#80).
+  5672 while the connection string advertised the requested port. Found and
+  fixed by @dmitrymizernik (#80).
 - Messages with a non-string AMQP `message-id` or `correlation-id` (uuid,
   ulong, binary) no longer throw on receive; the id is preserved as text.
+  Fixed by @dmitrymizernik (#80).
 
 ### Security
 - Resolved a high-severity `MessagePack` advisory (pulled transitively via
