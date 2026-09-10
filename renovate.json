@@ -28,6 +28,54 @@
       "automerge": true
     },
     {
+      "description": "OrderFlowDemo sample: one grouped PR a month, never auto-merged. CI does not build the sample, so a green check proves nothing about it, and it is not part of any released package.",
+      "matchFileNames": [
+        "samples/**"
+      ],
+      "groupName": "OrderFlowDemo sample dependencies",
+      "schedule": [
+        "before 6am on the first day of the month"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Dashboard frontend toolchain (vite, vue-tsc, plugin-vue, typescript, vue): one grouped PR so the lockfile is regenerated once and the Host build runs once.",
+      "matchFileNames": [
+        "src/AlmostServiceBus.Dashboard/**"
+      ],
+      "groupName": "dashboard frontend dependencies"
+    },
+    {
+      "description": "GitHub Actions: one grouped PR.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "github actions"
+    },
+    {
+      "description": ".NET test tooling: one grouped PR across every test project.",
+      "matchPackageNames": [
+        "Microsoft.NET.Test.Sdk",
+        "coverlet.collector",
+        "/^xunit/"
+      ],
+      "groupName": ".NET test tooling"
+    },
+    {
+      "description": "MassTransit 9 moved from Apache-2.0 to a proprietary licence (massient.com/license). Stay on the open-source 8.x line.",
+      "allowedVersions": "<9",
+      "matchPackageNames": [
+        "/^MassTransit/"
+      ]
+    },
+    {
+      "description": "vue-tsc cannot resolve the TypeScript 7 compiler entry point yet, so TS 7 breaks the dashboard build. Hold at 5.x until vue-tsc supports it.",
+      "matchPackageNames": [
+        "typescript"
+      ],
+      "allowedVersions": "<7"
+    },
+    {
       "description": "Only the NServiceBus transport tracks upstream. Wolverine and MassTransit carry patches under patches/ that break when upstream moves, and azure-sdk-for-net is reference-only.",
       "matchManagers": [
         "git-submodules"
