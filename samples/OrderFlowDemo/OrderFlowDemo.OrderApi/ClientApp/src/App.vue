@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useSse } from './composables/useSse'
 import { useDashboardStore } from './composables/useDashboardStore'
+import { useSnapshotPolling } from './composables/useSnapshotPolling'
 import ScenarioBar from './components/ScenarioBar.vue'
 import MetricCards from './components/MetricCards.vue'
 import PipelineFlow from './components/PipelineFlow.vue'
@@ -10,10 +11,17 @@ import QueueDepths from './components/QueueDepths.vue'
 import WarehouseFifo from './components/WarehouseFifo.vue'
 import LiveFeed from './components/LiveFeed.vue'
 
-const { connected, onEvent } = useSse('/api/dashboard/events')
-const { state, processEvent, inFlight, throughputPerSecond } = useDashboardStore()
+const store = useDashboardStore()
+const { state, processEvent, inFlight, throughputPerSecond } = store
 
+// Counters and pipeline state are polled from the API (authoritative); the SSE stream only
+// drives the live feed and the throughput chart, so a dropped burst can't skew the numbers.
+const polling = useSnapshotPolling(store)
+polling.start()
+
+const { connected, onEvent, onOpen } = useSse('/api/dashboard/events')
 onEvent(processEvent)
+onOpen(() => { void polling.refresh() })
 </script>
 
 <template>
@@ -54,7 +62,7 @@ onEvent(processEvent)
         <!-- Throughput chart full width -->
         <div class="card">
           <div class="card-title">Throughput — 60 s window <span class="card-badge">STREAMING</span></div>
-          <ThroughputChart :history="state.throughputHistory" />
+          <ThroughputChart :buckets="state.throughputBuckets" />
         </div>
 
         <!-- Bottom 3-col grid -->
