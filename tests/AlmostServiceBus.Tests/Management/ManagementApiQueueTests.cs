@@ -78,7 +78,7 @@ public class ManagementApiQueueTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("MessagingEntityNotFound", body);
+        Assert.Contains("could not be found", body);
     }
 
     [Fact]
@@ -98,6 +98,6 @@ public class ManagementApiQueueTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("MessagingEntityNotFound", body);
+        Assert.Contains("could not be found", body);
     }
 }

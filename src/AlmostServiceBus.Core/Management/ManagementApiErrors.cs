@@ -11,13 +11,13 @@ public static class ManagementApiErrors
 
     public static IResult EntityNotFound(string entityName)
     {
-        var xml = $"<Error><Code>MessagingEntityNotFound</Code><Detail>Entity '{entityName}' could not be found.</Detail></Error>";
+        var xml = $"<Error><Code>404</Code><Detail>Entity '{entityName}' could not be found.</Detail></Error>";
         return Results.Content(xml, ContentType, statusCode: StatusCodes.Status404NotFound);
     }
 
     public static IResult EntityAlreadyExists(string entityName)
     {
-        var xml = $"<Error><Code>MessagingEntityAlreadyExists</Code><Detail>Entity '{entityName}' already exists.</Detail></Error>";
+        var xml = $"<Error><Code>509</Code><Detail>Entity '{entityName}' already exists.</Detail></Error>";
         return Results.Content(xml, ContentType, statusCode: StatusCodes.Status409Conflict);
     }
 }

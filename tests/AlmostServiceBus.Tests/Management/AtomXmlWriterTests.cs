@@ -110,6 +110,93 @@ public class AtomXmlWriterTests
     }
 
     [Fact]
+    public void WriteQueueEntry_ContainsPartitioningAndDuplicateDetection()
+    {
+        var queue = new QueueEntity("field-queue")
+        {
+            EnablePartitioning = true,
+            EnableExpress = true,
+            RequiresDuplicateDetection = true,
+        };
+
+        var xml = AtomXmlWriter.WriteQueueEntry(queue);
+        var queueDesc = XDocument.Parse(xml).Descendants(Sb + "QueueDescription").Single();
+
+        Assert.Equal("true", queueDesc.Element(Sb + "EnablePartitioning")?.Value);
+        Assert.Equal("true", queueDesc.Element(Sb + "EnableExpress")?.Value);
+        Assert.Equal("true", queueDesc.Element(Sb + "RequiresDuplicateDetection")?.Value);
+    }
+
+    [Fact]
+    public void WriteTopicEntry_ContainsPartitioningAndOrdering()
+    {
+        var topic = new TopicEntity("field-topic")
+        {
+            EnablePartitioning = true,
+            EnableExpress = true,
+            EnableSubscriptionPartitioning = true,
+            SupportOrdering = true,
+            RequiresDuplicateDetection = true,
+        };
+
+        var xml = AtomXmlWriter.WriteTopicEntry(topic);
+        var topicDesc = XDocument.Parse(xml).Descendants(Sb + "TopicDescription").Single();
+
+        Assert.Equal("true", topicDesc.Element(Sb + "EnablePartitioning")?.Value);
+        Assert.Equal("true", topicDesc.Element(Sb + "EnableExpress")?.Value);
+        Assert.Equal("true", topicDesc.Element(Sb + "EnableSubscriptionPartitioning")?.Value);
+        Assert.Equal("true", topicDesc.Element(Sb + "SupportOrdering")?.Value);
+        Assert.Equal("true", topicDesc.Element(Sb + "RequiresDuplicateDetection")?.Value);
+    }
+
+    [Fact]
+    public void WriteTopicEntry_EmitsBooleanFieldsWhenDefault()
+    {
+        var topic = new TopicEntity("default-topic");
+
+        var xml = AtomXmlWriter.WriteTopicEntry(topic);
+        var topicDesc = XDocument.Parse(xml).Descendants(Sb + "TopicDescription").Single();
+
+        Assert.NotNull(topicDesc.Element(Sb + "EnableSubscriptionPartitioning"));
+        Assert.NotNull(topicDesc.Element(Sb + "SupportOrdering"));
+        Assert.NotNull(topicDesc.Element(Sb + "RequiresDuplicateDetection"));
+        Assert.Equal("false", topicDesc.Element(Sb + "EnableSubscriptionPartitioning")?.Value);
+        Assert.Equal("false", topicDesc.Element(Sb + "SupportOrdering")?.Value);
+        Assert.Equal("false", topicDesc.Element(Sb + "RequiresDuplicateDetection")?.Value);
+    }
+
+    [Fact]
+    public void WriteQueueEntry_IncludesAtomIdAndSelfLink()
+    {
+        var queue = new QueueEntity("link-queue");
+
+        var xml = AtomXmlWriter.WriteQueueEntry(queue, "http://ns.localhost");
+        var entry = XDocument.Parse(xml).Root!;
+
+        var id = entry.Element(Atom + "id");
+        Assert.NotNull(id);
+        Assert.Equal("http://ns.localhost/link-queue?api-version=2021-05", id!.Value);
+
+        var link = entry.Element(Atom + "link");
+        Assert.NotNull(link);
+        Assert.Equal("self", link!.Attribute("rel")?.Value);
+        Assert.Equal("http://ns.localhost/link-queue?api-version=2021-05", link.Attribute("href")?.Value);
+    }
+
+    [Fact]
+    public void WriteTopicEntry_TrimsTrailingSlashFromBaseUrl()
+    {
+        var topic = new TopicEntity("link-topic");
+
+        var xml = AtomXmlWriter.WriteTopicEntry(topic, "http://ns.localhost/");
+        var entry = XDocument.Parse(xml).Root!;
+
+        Assert.Equal("http://ns.localhost/link-topic?api-version=2021-05", entry.Element(Atom + "id")?.Value);
+        Assert.Equal("http://ns.localhost/link-topic?api-version=2021-05",
+            entry.Element(Atom + "link")?.Attribute("href")?.Value);
+    }
+
+    [Fact]
     public void WriteSubscriptionEntry_ContainsSubscriptionDescription()
     {
         var sub = new SubscriptionEntity("my-sub", "my-topic")

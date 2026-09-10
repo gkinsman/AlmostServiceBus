@@ -70,6 +70,46 @@ public class AtomXmlReaderTests
     }
 
     [Fact]
+    public void ReadTopicProperties_ParsesPartitioningAndOrdering()
+    {
+        var topic = new TopicEntity("field-round-trip")
+        {
+            EnablePartitioning = true,
+            EnableExpress = true,
+            EnableSubscriptionPartitioning = true,
+            SupportOrdering = true,
+            RequiresDuplicateDetection = true,
+        };
+
+        var xml = AtomXmlWriter.WriteTopicEntry(topic);
+        var props = AtomXmlReader.ReadTopicProperties(xml);
+
+        Assert.True(props.EnablePartitioning);
+        Assert.True(props.EnableExpress);
+        Assert.True(props.EnableSubscriptionPartitioning);
+        Assert.True(props.SupportOrdering);
+        Assert.True(props.RequiresDuplicateDetection);
+    }
+
+    [Fact]
+    public void ReadQueueProperties_ParsesPartitioning()
+    {
+        var queue = new QueueEntity("field-round-trip-queue")
+        {
+            EnablePartitioning = true,
+            EnableExpress = true,
+            RequiresDuplicateDetection = true,
+        };
+
+        var xml = AtomXmlWriter.WriteQueueEntry(queue);
+        var props = AtomXmlReader.ReadQueueProperties(xml);
+
+        Assert.True(props.EnablePartitioning);
+        Assert.True(props.EnableExpress);
+        Assert.True(props.RequiresDuplicateDetection);
+    }
+
+    [Fact]
     public void ReadSubscriptionProperties_ParsesForwardTo()
     {
         var sub = new SubscriptionEntity("my-sub", "my-topic")
