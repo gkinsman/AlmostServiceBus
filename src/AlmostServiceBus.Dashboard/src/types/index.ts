@@ -50,11 +50,37 @@ export interface MessageInfo {
   applicationProperties: Record<string, unknown> | null
   bodyText: string | null
   scalarProperties: Record<string, unknown> | null
-  state: 'Active' | 'Consumed' | 'DeadLettered'
+  state: 'Active' | 'Consumed' | 'DeadLettered' | 'Deferred'
+  deadLetterReason?: string | null
+  deadLetterErrorDescription?: string | null
+  deadLetterSource?: string | null
+}
+
+/** GET /namespaces/{ns}/queues/{name}/properties. Durations are ISO 8601; null means unbounded. */
+export interface QueueProperties {
+  name: string
+  lockDuration: string
+  maxDeliveryCount: number
+  requiresSession: boolean
+  defaultMessageTimeToLive: string | null
+  deadLetteringOnMessageExpiration: boolean
+  requiresDuplicateDetection: boolean
+  duplicateDetectionHistoryTimeWindow: string | null
+  enableBatchedOperations: boolean
+  maxSizeInMegabytes: number
+  autoDeleteOnIdle: string | null
+  forwardTo: string | null
+  forwardDeadLetteredMessagesTo: string | null
+  userMetadata: string | null
+  messageCount: number
+  deadLetterCount: number
+  totalMessageCount: number
+  consumedCount: number
+  sessionCount: number
 }
 
 export interface MessageEvent {
-  type: 'Enqueued' | 'Completed' | 'DeadLettered' | 'Abandoned' | 'NamespaceCreated'
+  type: 'Enqueued' | 'Completed' | 'DeadLettered' | 'Abandoned' | 'Deferred' | 'NamespaceCreated'
   namespace: string
   entity: string
   messageId: string
@@ -63,6 +89,10 @@ export interface MessageEvent {
   bodyPreview: string | null
   scalarProperties: Record<string, unknown> | null
   timestamp: string
+  /** Only on Enqueued events. */
+  applicationProperties?: Record<string, unknown> | null
+  subject?: string | null
+  correlationId?: string | null
 }
 
 export interface EntityGroup {

@@ -4,9 +4,31 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.5.0] - 2026-09-10
+
+### Added
+- **Queue Properties tab** in the dashboard, backed by a new
+  `GET /api/dashboard/namespaces/{ns}/queues/{name}/properties` endpoint:
+  lock duration, max delivery count, session and duplicate-detection settings,
+  TTL, auto-delete, forwarding, user metadata, and live counts.
+- **Dead-letter reason and description** are returned by the dashboard API
+  (`deadLetterReason`, `deadLetterErrorDescription`, `deadLetterSource`) and
+  shown on dead-lettered rows and in the message detail pane.
+- `Enqueued` dashboard events now carry the message's application properties,
+  subject and correlation id, so rows that appear live show them without a
+  refresh.
 
 ### Fixed
+- **Explicitly dead-lettered messages were invisible.** `DeadLetterMessageAsync`
+  stamped the shared message object as dead-lettered before enqueuing it in the
+  DLQ, so the dashboard's Dead Letter tab and the SDK's peek of the dead-letter
+  sub-queue (`SubQueue.DeadLetter`) both filtered it out. Receiving from the DLQ
+  still worked, which made the count and the list disagree. The source queue's
+  history now keeps a snapshot and the DLQ copy stays active.
+- Messages dead-lettered by exceeding `MaxDeliveryCount` were left in the source
+  queue's live view (dashboard and SDK peek) as well as appearing in the DLQ.
+- Application properties showed as "No application properties" on dashboard
+  rows created from the live stream until the entity was re-selected.
 - **Connection kills under sustained load.** A `ServiceBusSessionProcessor`
   with more session slots than sessions long-polls for "next available
   session". The SDK tells the service how long it will wait (the
