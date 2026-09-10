@@ -323,7 +323,11 @@ public class EmulatorContainer : IContainer
             && !address.Equals("$management", StringComparison.OrdinalIgnoreCase)
             && !address.Equals("$cbs", StringComparison.OrdinalIgnoreCase))
         {
-            var target = new SenderLinkTarget(address, ResolveNamespace(listenerLink.Session.Connection));
+            // Store the entity path, not the raw link address: the Python client attaches its
+            // sender to "amqps://host:port/queue", and a scheduled message resolved through this
+            // registry would otherwise be routed to an entity literally named that.
+            var entityPath = ServiceBusLinkProcessor.NormaliseAddress(address) ?? address;
+            var target = new SenderLinkTarget(entityPath, ResolveNamespace(listenerLink.Session.Connection));
             foreach (var key in BuildSenderLinkRegistryKeys(listenerLink.Session.Connection, attach.LinkName))
                 _senderLinkNames[key] = target;
         }
@@ -393,9 +397,15 @@ public class EmulatorContainer : IContainer
             // Fall back to the link name if Target.Address is unexpectedly null.
             var replyTo = target.Address ?? link.Name;
 
+            // Key by connection as well as reply-to. The Java SDK uses the same reply-to address
+            // ("cbs-client-reply-to") on every connection; keyed by reply-to alone, a second
+            // connection's response link overwrote the first's, and when either connection closed
+            // it removed the entry the other still needed — leaving that connection's next CBS
+            // token refresh (and everything waiting on it, e.g. a scheduleMessage call) unanswered.
+            var responseKey = ResponseLinkKey(link.Session.Connection, replyTo);
             lock (entry.ResponseLinks)
             {
-                entry.ResponseLinks[replyTo] = link;
+                entry.ResponseLinks[responseKey] = link;
             }
 
             Log.LogDebug("AttachRequestProcessorLink: response link for '{Address}', replyTo='{ReplyTo}'", address, replyTo);
@@ -405,7 +415,7 @@ public class EmulatorContainer : IContainer
             link.InitializeSender(
                 onCredit: (c, p, s) => { },
                 onDispose: (msg, state, settled, s) => { },
-                state: Tuple.Create(entry, replyTo));
+                state: Tuple.Create(entry, responseKey));
 
             link.Closed += (sender, error) =>
             {
@@ -466,7 +476,7 @@ public class EmulatorContainer : IContainer
     {
         var operation = message.ApplicationProperties?["operation"] as string;
 
-        // Find the response link for this request.
+        // Find the response link for this request: the reply-to address, on this connection.
         ListenerLink? responseLink = null;
         if (message.Properties?.ReplyTo != null)
         {
@@ -474,7 +484,7 @@ public class EmulatorContainer : IContainer
             {
                 Log.LogDebug("DispatchRequest: operation={Operation}, ReplyTo={ReplyTo}, ResponseLinkCount={Count}",
                     operation, message.Properties?.ReplyTo, entry.ResponseLinks.Count);
-                entry.ResponseLinks.TryGetValue(message.Properties!.ReplyTo, out responseLink);
+                entry.ResponseLinks.TryGetValue(ResponseLinkKey(link.Session.Connection, message.Properties!.ReplyTo), out responseLink);
                 Log.LogDebug(
                     "DispatchRequest: ReplyTo={ReplyTo}, ResponseLinkKeys=[{Keys}], Found={Found}",
                     message.Properties.ReplyTo,
@@ -616,6 +626,10 @@ public class EmulatorContainer : IContainer
     {
         return $"{ResolveNamespace(connection)}|{address}";
     }
+
+    /// <summary>Key for a request processor's response link: reply-to address scoped to its connection.</summary>
+    private static string ResponseLinkKey(Connection connection, string replyTo) =>
+        $"{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(connection)}|{replyTo}";
 
     internal static string BuildSenderLinkRegistryKey(Connection connection, string linkName)
     {

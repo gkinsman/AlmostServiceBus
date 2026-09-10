@@ -486,3 +486,6 @@ wwwroot
 orderflow-sagas*
 .vite
 .claude/settings.local.json
+
+# Client SDK smoke test build output
+tests/client-sdk-smoke/java/target/

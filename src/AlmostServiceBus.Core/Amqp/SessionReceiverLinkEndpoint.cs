@@ -20,6 +20,7 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
     private readonly Lock _pumpLock = new();
     private readonly bool _preSettled;
     private readonly Broker.Transactions.TransactionManager? _transactions;
+    private readonly ReceiverLinkEndpoint.CreditShadow _credit = new();
     private CancellationTokenSource? _pumpCts;
     private Task? _pumpTask;
 
@@ -38,9 +39,12 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
             if (flowContext.Link.IsDraining)
             {
                 flowContext.Link.CompleteDrain();
+                _credit.Reset();
                 _pumpCts?.Cancel();
                 return;
             }
+
+            _credit.OnFlow(flowContext);
 
             lock (_pumpLock)
             {
@@ -94,6 +98,7 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
                 try
                 {
                     link.SendMessage(amqpMessage);
+                    _credit.OnSent();
 
                     // ReceiveAndDelete (pre-settled) mode: auto-complete since the client
                     // never sends a disposition.
@@ -150,7 +155,7 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
             if (lockToken is not null && dispositionContext.DeliveryState is not null)
                 ApplySettlement(lockToken, dispositionContext.DeliveryState);
 
-            dispositionContext.Complete();
+            ReceiverLinkEndpoint.SettleWithClientOutcome(dispositionContext);
         }
         catch (MessageLockLostException)
         {
