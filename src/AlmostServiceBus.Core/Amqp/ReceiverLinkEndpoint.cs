@@ -154,6 +154,12 @@ public class ReceiverLinkEndpoint : LinkEndpoint
         };
         Log.LogDebug("DISP lock={LockToken} state={State} queue='{Queue}'", lockToken, stateInfo, _queue.Name);
 
+        if (IsTeardownOutcome(dispositionContext))
+        {
+            Log.LogDebug("DISP lock={LockToken} ignored: link closed, outcome synthesised by teardown queue='{Queue}'", lockToken, _queue.Name);
+            return;
+        }
+
         // Transactional settlement: the disposition's delivery-state carries a txn-id and an
         // inner outcome. Buffer the real settlement under that transaction and echo a
         // transactional disposition. The message stays locked until the client commits; on
@@ -251,6 +257,25 @@ public class ReceiverLinkEndpoint : LinkEndpoint
             Outcome = outcome
         }, true);
     }
+
+    /// <summary>
+    /// Whether a disposition was manufactured by AMQPNetLite tearing the link down rather than
+    /// sent by the client.
+    /// </summary>
+    /// <remarks>
+    /// When a link is aborted — the client detached it, ended the AMQP session, or the connection
+    /// dropped — AMQPNetLite's <c>Session.AbortLinks</c> first aborts the link and then calls
+    /// <c>Delivery.ReleaseAll</c> on every unsettled outgoing delivery, which reaches
+    /// <see cref="OnDisposition"/> as <see cref="Released"/> (or <see cref="Rejected"/> when the
+    /// close carried an error). Treating those as client settlements abandoned — or dead-lettered —
+    /// every message the consumer had in flight or prefetched, re-enqueued them a second later,
+    /// and the reconnected consumer received them again while its handlers for the first delivery
+    /// were still running. Real Service Bus does no such thing: a lost link leaves the messages
+    /// locked until the lock expires. Because the link is aborted before the deliveries are
+    /// released, <see cref="global::Amqp.AmqpObject.IsClosed"/> identifies the synthetic outcomes.
+    /// </remarks>
+    internal static bool IsTeardownOutcome(DispositionContext dispositionContext) =>
+        dispositionContext.Link.IsClosed;
 
     public override void OnLinkClosed(ListenerLink link, Error error)
     {

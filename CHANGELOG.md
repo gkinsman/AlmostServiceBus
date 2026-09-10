@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Connection kills under sustained load.** A `ServiceBusSessionProcessor`
+  with more session slots than sessions long-polls for "next available
+  session". The SDK tells the service how long it will wait (the
+  `com.microsoft:timeout` attach property) so the service answers first; the
+  emulator ignored it and waited a fixed 65 s against the SDK's 60 s default.
+  The client gave up, ended its AMQP session, and the emulator's late Attach
+  landed on a channel that no longer existed — Microsoft.Azure.Amqp then closed
+  the whole connection ("The session channel 'N' cannot be found") and every
+  link on it went down. In MassTransit this surfaced as bursts of `R-DUPE`
+  and `T-FAULT` across unrelated queues every ~60 s. The emulator now honours
+  the client's timeout (capped at 65 s like the real service) and never sends
+  a frame on a pending session attach once the client has closed the link.
+- **Messages in flight were redelivered when a receive link dropped.** When a
+  link is aborted (detach, session end, connection loss) AMQPNetLite
+  synthesises a `Released` outcome for every unsettled delivery; the emulator
+  treated these as client abandons and re-enqueued everything the consumer
+  had prefetched or was still processing, producing duplicate deliveries and
+  premature dead-lettering. Real Service Bus keeps the lock until it expires.
+  Teardown outcomes are now ignored; for session queues the messages are
+  reclaimed when a receiver next accepts the session.
+- **Session queue `MessageCount` never went down.** Session dequeues bypassed
+  the queue's counter, so the dashboard showed a session queue growing forever
+  even while it was being drained.
+- Settled messages are no longer kept in memory indefinitely; each queue keeps
+  a bounded history (200) for the dashboard. `TotalMessageCount` /
+  `ConsumedCount` are plain counters instead of scans.
+- Removed a per-message `Console.Error` write on session-queue enqueue.
+- OrderFlow demo: the fulfillment worker now has a retry policy, so the
+  `ShipOrderConsumer`'s "will retry" is true and Black Friday runs drain
+  completely instead of parking ~2% of orders in `logistics-dispatch_error`.
+
 ## [0.4.0] - 2026-09-10
 
 ### Added
