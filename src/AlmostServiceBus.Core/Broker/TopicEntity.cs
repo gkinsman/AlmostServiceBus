@@ -25,11 +25,19 @@ public sealed class TopicEntity
 
     public TimeSpan DefaultMessageTimeToLive { get; set; } = TimeSpan.MaxValue;
 
+    public bool EnablePartitioning { get; set; } = false;
+
+    public bool EnableExpress { get; set; } = false;
+
     public bool EnableBatchedOperations { get; set; } = true;
+
+    public bool EnableSubscriptionPartitioning { get; set; } = false;
+
+    public bool SupportOrdering { get; set; } = true;
 
     public TimeSpan? AutoDeleteOnIdle { get; set; }
 
-    public bool RequiresDuplicateDetection { get; set; }
+    public bool RequiresDuplicateDetection { get; set; } = false;
 
     public TimeSpan DuplicateDetectionHistoryTimeWindow { get; set; } = TimeSpan.FromMinutes(10);
 
