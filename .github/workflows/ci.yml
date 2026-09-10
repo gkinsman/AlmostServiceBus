@@ -55,13 +55,13 @@ jobs:
             slug: sdklive
             project: tests/AlmostServiceBus.SdkLive.Tests
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           submodules: false
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.x"
 
@@ -117,7 +117,7 @@ jobs:
             # Everything else: ConventionalRouting, Bugs, StatefulResource, Internal unit tests, etc.
             filter_include: "FullyQualifiedName!~Compliance&FullyQualifiedName!~end_to_end&FullyQualifiedName!~using_native_scheduling"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           submodules: false
@@ -129,7 +129,7 @@ jobs:
         run: pwsh apply-patches.ps1
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.x"
 
@@ -237,7 +237,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           submodules: false
@@ -246,7 +246,7 @@ jobs:
         run: git submodule update --init --depth 1 external/NServiceBus.Transport.AzureServiceBus
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.x"
 
@@ -285,7 +285,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           submodules: false
@@ -294,7 +294,7 @@ jobs:
         run: git submodule update --init --depth 1 external/MassTransit
 
       - name: Setup .NET (9 for MassTransit tests, 10 for emulator host)
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
             9.x
@@ -383,13 +383,13 @@ jobs:
       packages: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0  # MinVer needs full history to derive version from tags
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.x"
 
