@@ -18,10 +18,16 @@ export function useSse(url: string) {
   const connected = ref(false)
   const lastEvent = ref<DashboardEvent | null>(null)
   const handlers: Array<(event: DashboardEvent) => void> = []
+  const openHandlers: Array<() => void> = []
 
   const eventSource = new EventSource(url)
 
-  eventSource.onopen = () => { connected.value = true }
+  eventSource.onopen = () => {
+    connected.value = true
+    // Fires on the initial connect and after every automatic reconnect. Anything sent while
+    // we were disconnected is gone (SSE has no replay here), so listeners resync from the API.
+    openHandlers.forEach(h => h())
+  }
   eventSource.onerror = () => { connected.value = false }
 
   eventSource.onmessage = (e) => {
@@ -34,9 +40,13 @@ export function useSse(url: string) {
     handlers.push(handler)
   }
 
+  function onOpen(handler: () => void) {
+    openHandlers.push(handler)
+  }
+
   onUnmounted(() => {
     eventSource.close()
   })
 
-  return { connected, lastEvent, onEvent }
+  return { connected, lastEvent, onEvent, onOpen }
 }

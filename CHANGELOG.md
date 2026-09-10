@@ -37,6 +37,14 @@ All notable changes to this project are documented here. The format is based on
 - OrderFlow demo: the fulfillment worker now has a retry policy, so the
   `ShipOrderConsumer`'s "will retry" is true and Black Friday runs drain
   completely instead of parking ~2% of orders in `logistics-dispatch_error`.
+- OrderFlow demo dashboard: the browser tab no longer freezes under Black
+  Friday load. Counters and pipeline state are polled from the API once a
+  second (and resynced when the SSE stream reconnects) instead of being
+  counted from events, so dropped bursts no longer skew the numbers; the
+  throughput chart uses a fixed 60-bucket ring instead of re-filtering every
+  event; SSE events are applied on a 250 ms tick with chart animation off; the
+  server batches SSE writes, sends keep-alives and buffers 4096 events per
+  subscriber.
 
 ## [0.4.0] - 2026-09-10
 

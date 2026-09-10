@@ -44,6 +44,8 @@ const options = {
     legend: { position: 'right' as const, labels: { font: { size: 11 } } },
   },
   cutout: '65%',
+  // Counts refresh once a second from the API; animating every change is wasted work under load.
+  animation: false as const,
 }
 </script>
 
