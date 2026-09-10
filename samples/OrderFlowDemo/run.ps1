@@ -16,7 +16,7 @@ $ErrorActionPreference = "Stop"
 $scriptDir = $PSScriptRoot
 $repoRoot  = Resolve-Path "$scriptDir\..\.."
 
-$connStr = "Endpoint=sb://localhost:5672;SharedAccessKeyName=OrderFlowDemo;SharedAccessKey=emulator"
+$connStr = "Endpoint=sb://localhost:5672;SharedAccessKeyName=OrderFlowDemo;SharedAccessKey=emulator;UseDevelopmentEmulator=true"
 
 # Build the Vue dashboard so changes are picked up
 Write-Host "Building Vue dashboard..." -ForegroundColor Cyan

@@ -55,7 +55,7 @@ almost-servicebus
 
 Connection string:
 ```
-Endpoint=sb://localhost:5672;SharedAccessKeyName=<my-namespace>;SharedAccessKey=emulator
+Endpoint=sb://localhost:5672;SharedAccessKeyName=<my-namespace>;SharedAccessKey=emulator;UseDevelopmentEmulator=true
 ```
 *Note: using "RootManageSharedAccessKey" as the SharedAccessKeyName will map to the 'default' namespace.*
 
