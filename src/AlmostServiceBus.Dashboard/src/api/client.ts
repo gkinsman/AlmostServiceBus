@@ -1,4 +1,4 @@
-import type { NamespaceInfo, EntityOverview, MessageInfo, EmulatorInfo } from '../types'
+import type { NamespaceInfo, EntityOverview, MessageInfo, EmulatorInfo, QueueProperties } from '../types'
 
 const BASE = '/api/dashboard'
 
@@ -28,6 +28,9 @@ export const api = {
 
   getDeadLetterMessages: (ns: string, queueName: string) =>
     get<MessageInfo[]>(`/namespaces/${ns}/queues/${queueName}/deadletter`),
+
+  getQueueProperties: (ns: string, queueName: string) =>
+    get<QueueProperties>(`/namespaces/${ns}/queues/${queueName}/properties`),
 
   purgeQueue: (ns: string, queueName: string) =>
     del(`/namespaces/${ns}/queues/${queueName}/messages`),

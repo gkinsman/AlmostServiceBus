@@ -203,11 +203,7 @@ public sealed class QueueEntity : IDisposable
             _allMessages[message.LockToken!] = message;
             Interlocked.Increment(ref _messageCount);
             Interlocked.Increment(ref _totalMessageCount);
-            _eventBus?.Publish(new MessageEvent(
-                MessageEventType.Enqueued, _namespaceName ?? "", _entityName ?? "",
-                message.MessageId, message.SequenceNumber, message.ContentType,
-                TruncateBody(message), ExtractScalars(message),
-                DateTimeOffset.UtcNow));
+            PublishEnqueued(message);
             return;
         }
 
@@ -234,11 +230,24 @@ public sealed class QueueEntity : IDisposable
         _allMessages[message.LockToken!] = message;
         Interlocked.Increment(ref _messageCount);
         Interlocked.Increment(ref _totalMessageCount);
-        _eventBus?.Publish(new MessageEvent(
+        PublishEnqueued(message);
+    }
+
+    private void PublishEnqueued(BrokeredMessage message)
+    {
+        if (_eventBus is null) return;
+        _eventBus.Publish(new MessageEvent(
             MessageEventType.Enqueued, _namespaceName ?? "", _entityName ?? "",
             message.MessageId, message.SequenceNumber, message.ContentType,
             TruncateBody(message), ExtractScalars(message),
-            DateTimeOffset.UtcNow));
+            DateTimeOffset.UtcNow,
+            // Snapshot so a later properties-to-modify on abandon/defer can't mutate what the
+            // dashboard already received.
+            ApplicationProperties: message.ApplicationProperties.Count > 0
+                ? new Dictionary<string, object>(message.ApplicationProperties)
+                : null,
+            Subject: message.Subject,
+            CorrelationId: message.CorrelationId));
     }
 
     /// <summary>
@@ -457,7 +466,8 @@ public sealed class QueueEntity : IDisposable
 
         if (message.DeliveryCount >= MaxDeliveryCount)
         {
-            DeadLetter(message, "MaxDeliveryCountExceeded", $"Message delivery count exceeded the maximum of {MaxDeliveryCount}.");
+            MoveToDeadLetterQueue(lockToken, message, "MaxDeliveryCountExceeded",
+                $"Message delivery count exceeded the maximum of {MaxDeliveryCount}.");
         }
         else
         {
@@ -508,25 +518,83 @@ public sealed class QueueEntity : IDisposable
             }
         }
 
-        RecordSettled(lockToken, message, MessageState.DeadLettered);
-        DeadLetter(message, reason, description);
+        MoveToDeadLetterQueue(lockToken, message, reason, description);
     }
 
     /// <summary>
-    /// Takes a settled message out of the live map and keeps it in the bounded recent-history
-    /// ring so the dashboard can still show it. Previously settled messages stayed in
-    /// <see cref="_allMessages"/> forever, so a busy queue grew without limit and every
-    /// dashboard poll walked the whole history.
+    /// Takes a settled message out of the live map and keeps a snapshot of it in the bounded
+    /// recent-history ring so the dashboard can still show it. Previously settled messages
+    /// stayed in <see cref="_allMessages"/> forever, so a busy queue grew without limit and
+    /// every dashboard poll walked the whole history.
     /// </summary>
+    /// <remarks>
+    /// The history holds a <em>copy</em>. A dead-lettered message goes on to live in the
+    /// dead-letter queue, where it must be <see cref="MessageState.Active"/> to be peekable;
+    /// stamping <see cref="MessageState.DeadLettered"/> on the shared object made explicitly
+    /// dead-lettered messages invisible to both the dashboard's DLQ view and the SDK's
+    /// dead-letter peek.
+    /// </remarks>
     private void RecordSettled(string lockToken, BrokeredMessage message, MessageState state)
     {
-        message.State = state;
         _allMessages.TryRemove(lockToken, out _);
 
-        _recentSettled.Enqueue(message);
+        _recentSettled.Enqueue(HistorySnapshot(message, state));
         while (_recentSettled.Count > RecentSettledCapacity && _recentSettled.TryDequeue(out _))
         {
         }
+    }
+
+    private static BrokeredMessage HistorySnapshot(BrokeredMessage message, MessageState state) => new()
+    {
+        State = state,
+        MessageId = message.MessageId,
+        Body = message.Body,
+        ContentType = message.ContentType,
+        CorrelationId = message.CorrelationId,
+        SessionId = message.SessionId,
+        PartitionKey = message.PartitionKey,
+        Subject = message.Subject,
+        ReplyTo = message.ReplyTo,
+        ReplyToSessionId = message.ReplyToSessionId,
+        To = message.To,
+        ScheduledEnqueueTimeUtc = message.ScheduledEnqueueTimeUtc,
+        TimeToLive = message.TimeToLive,
+        ApplicationProperties = new Dictionary<string, object>(message.ApplicationProperties),
+        SequenceNumber = message.SequenceNumber,
+        DeliveryCount = message.DeliveryCount,
+        DeadLetterReason = message.DeadLetterReason,
+        DeadLetterErrorDescription = message.DeadLetterErrorDescription,
+        DeadLetterSource = message.DeadLetterSource,
+        EnqueuedTimeUtc = message.EnqueuedTimeUtc,
+        LockToken = message.LockToken,
+    };
+
+    /// <summary>
+    /// Single exit for every path that dead-letters a pending message (explicit dead-letter,
+    /// abandon past <see cref="MaxDeliveryCount"/>, lock-expiry sweep past the limit): stamps
+    /// the reason, records the message in this queue's history, and enqueues it — still
+    /// <see cref="MessageState.Active"/> — in the dead-letter queue.
+    /// </summary>
+    private void MoveToDeadLetterQueue(string lockToken, BrokeredMessage message, string? reason, string? description)
+    {
+        message.DeadLetterReason = reason;
+        message.DeadLetterErrorDescription = description;
+        message.DeadLetterSource = Name;
+
+        RecordSettled(lockToken, message, MessageState.DeadLettered);
+
+        _eventBus?.Publish(new MessageEvent(
+            MessageEventType.DeadLettered, _namespaceName ?? "", _entityName ?? "",
+            message.MessageId, message.SequenceNumber, message.ContentType,
+            null, null, DateTimeOffset.UtcNow));
+
+        // Moving a message to the DLQ creates a new delivery in a different queue.
+        // Reusing the old lock token can collide with an in-flight settlement for the
+        // original delivery in Azure SDK clients ("A pending operation with the same
+        // identifier already exists"), so force the DLQ enqueue to assign a fresh token.
+        message.LockToken = null;
+        message.State = MessageState.Active;
+        DeadLetterQueue.Enqueue(message);
     }
 
     /// <summary>
@@ -607,25 +675,6 @@ public sealed class QueueEntity : IDisposable
         return candidates.Take(maxCount);
     }
 
-    private void DeadLetter(BrokeredMessage message, string? reason, string? description)
-    {
-        message.DeadLetterReason = reason;
-        message.DeadLetterErrorDescription = description;
-        message.DeadLetterSource = Name;
-
-        _eventBus?.Publish(new MessageEvent(
-            MessageEventType.DeadLettered, _namespaceName ?? "", _entityName ?? "",
-            message.MessageId, message.SequenceNumber, message.ContentType,
-            null, null, DateTimeOffset.UtcNow));
-
-        // Moving a message to the DLQ creates a new delivery in a different queue.
-        // Reusing the old lock token can collide with an in-flight settlement for the
-        // original delivery in Azure SDK clients ("A pending operation with the same
-        // identifier already exists"), so force the DLQ enqueue to assign a fresh token.
-        message.LockToken = null;
-        DeadLetterQueue.Enqueue(message);
-    }
-
     /// <summary>
     /// Renews the lock on a pending message, extending <see cref="BrokeredMessage.LockedUntil"/>
     /// by <see cref="LockDuration"/>. Returns the new <see cref="BrokeredMessage.LockedUntil"/>
@@ -670,16 +719,15 @@ public sealed class QueueEntity : IDisposable
         // MessageLockLostException instead of silently returning.
         _sweptLockTokens[oldLockToken] = 0;
 
-        // Remove old dashboard entry — ReEnqueue will create a new one with fresh lock token.
-        _allMessages.TryRemove(oldLockToken, out _);
-
         if (message.DeliveryCount >= MaxDeliveryCount)
         {
-            DeadLetter(message, "MaxDeliveryCountExceeded",
+            MoveToDeadLetterQueue(oldLockToken, message, "MaxDeliveryCountExceeded",
                 $"Message delivery count exceeded the maximum of {MaxDeliveryCount}.");
         }
         else
         {
+            // Remove old dashboard entry — ReEnqueue will create a new one with fresh lock token.
+            _allMessages.TryRemove(oldLockToken, out _);
             message.LockToken = null;
             ReEnqueue(message);
         }

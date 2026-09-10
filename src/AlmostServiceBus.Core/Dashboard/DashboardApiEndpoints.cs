@@ -74,6 +74,14 @@ public static class DashboardApiEndpoints
                 return Results.Ok(queue.DeadLetterQueue.PeekMessages(50).Select(ToMessageInfo).ToList());
             }
 
+            if (path.EndsWith("/properties", StringComparison.OrdinalIgnoreCase))
+            {
+                var queueName = path[..^"/properties".Length];
+                var queue = context.GetQueue(queueName);
+                if (queue is null) return Results.NotFound();
+                return Results.Ok(ToQueueProperties(queue));
+            }
+
             return Results.NotFound();
         });
 
@@ -176,8 +184,34 @@ public static class DashboardApiEndpoints
             m.MessageId, m.SequenceNumber, m.ContentType,
             m.CorrelationId, m.DeliveryCount, m.EnqueuedTimeUtc,
             m.Subject, m.ApplicationProperties, bodyText, scalars,
-            m.State.ToString());
+            m.State.ToString(),
+            m.DeadLetterReason, m.DeadLetterErrorDescription, m.DeadLetterSource);
     }
+
+    internal static QueueProperties ToQueueProperties(QueueEntity q) => new(
+        q.Name,
+        Duration(q.LockDuration)!,
+        q.MaxDeliveryCount,
+        q.RequiresSession,
+        Duration(q.DefaultMessageTimeToLive),
+        q.DeadLetteringOnMessageExpiration,
+        q.RequiresDuplicateDetection,
+        q.RequiresDuplicateDetection ? Duration(q.DuplicateDetectionHistoryTimeWindow) : null,
+        q.EnableBatchedOperations,
+        q.MaxSizeInMegabytes,
+        q.AutoDeleteOnIdle is { } idle ? Duration(idle) : null,
+        q.ForwardTo,
+        q.ForwardDeadLetteredMessagesTo,
+        q.UserMetadata,
+        q.MessageCount,
+        q.DeadLetterQueue.MessageCount,
+        q.TotalMessageCount,
+        q.ConsumedCount,
+        q.Sessions?.GetSessionIds().Count ?? 0);
+
+    /// <summary>ISO 8601 duration, or null for "unbounded" (TimeSpan.MaxValue).</summary>
+    private static string? Duration(TimeSpan ts) =>
+        ts == TimeSpan.MaxValue ? null : System.Xml.XmlConvert.ToString(ts);
 
     private static Dictionary<string, object>? ExtractScalars(string json)
     {

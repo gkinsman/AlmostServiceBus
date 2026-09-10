@@ -22,6 +22,9 @@ function timeAgo(iso: string): string {
       </span>
       <span class="time">{{ timeAgo(message.enqueuedTimeUtc) }}</span>
     </div>
+    <div v-if="message.deadLetterReason" class="dl-reason" :title="message.deadLetterErrorDescription ?? ''">
+      {{ message.deadLetterReason }}
+    </div>
     <div v-if="message.scalarProperties" class="tags">
       <span
         v-for="(val, key) in message.scalarProperties" :key="key"
@@ -45,6 +48,7 @@ function timeAgo(iso: string): string {
 .consumed-icon { color: var(--green); }
 .dl-icon { color: var(--red); }
 .time { color: var(--text-muted); font-size: 9px; }
+.dl-reason { margin-top: 4px; color: var(--red); font-size: 10px; font-family: 'Cascadia Code', 'Fira Code', monospace; }
 .tags { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
 .tag { background: var(--bg-crust); color: var(--green); padding: 1px 6px; border-radius: 4px; font-size: 9px; font-family: 'Cascadia Code', 'Fira Code', monospace; }
 .tag:nth-child(even) { color: var(--yellow); }

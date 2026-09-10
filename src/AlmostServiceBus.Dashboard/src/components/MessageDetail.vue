@@ -13,6 +13,12 @@ const activeTab = ref<'body' | 'appProps' | 'sysProps'>('body')
       <span class="msg-id">{{ message.messageId }}</span>
     </div>
 
+    <div v-if="message.deadLetterReason || message.deadLetterErrorDescription" class="dead-letter">
+      <div class="dl-title">Dead-lettered<span v-if="message.deadLetterSource"> from {{ message.deadLetterSource }}</span></div>
+      <div class="dl-reason">{{ message.deadLetterReason ?? 'No reason given' }}</div>
+      <div v-if="message.deadLetterErrorDescription" class="dl-desc">{{ message.deadLetterErrorDescription }}</div>
+    </div>
+
     <div class="metadata">
       <div class="meta-row">
         <span class="label">Message ID</span>
@@ -93,6 +99,10 @@ const activeTab = ref<'body' | 'appProps' | 'sysProps'>('body')
 .detail { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .detail-header { padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-crust); }
 .msg-id { color: var(--blue); font-weight: 600; font-size: 12px; font-family: 'Cascadia Code', 'Fira Code', monospace; }
+.dead-letter { padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-mantle); border-left: 3px solid var(--red); font-size: 11px; }
+.dl-title { color: var(--red); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; font-size: 10px; }
+.dl-reason { color: var(--text); font-weight: 600; margin-top: 3px; font-family: 'Cascadia Code', 'Fira Code', monospace; }
+.dl-desc { color: var(--text-muted); margin-top: 2px; }
 .metadata { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 11px; background: var(--bg-mantle); }
 .meta-row { display: grid; grid-template-columns: 120px 1fr; gap: 4px 12px; padding: 3px 0; }
 .label { color: var(--text-muted); font-weight: 500; }

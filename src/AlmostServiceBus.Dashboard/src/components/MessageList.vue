@@ -17,10 +17,50 @@ const selectedMessage = defineModel<MessageInfo | null>('selectedMessage')
 
 const sse = inject(sseKey)!
 
-const { messages, deadLetterMessages, connected, refresh, refreshDeadLetter, startListening, stopListening } =
-  useMessages(() => props.namespace, () => props.entity, () => props.entityType, sse)
+const {
+  messages, deadLetterMessages, deadLetterViewActive, properties, connected,
+  refresh, refreshDeadLetter, refreshProperties, startListening, stopListening,
+} = useMessages(() => props.namespace, () => props.entity, () => props.entityType, sse)
 
 const activeTab = ref<'messages' | 'deadletter' | 'properties'>('messages')
+
+/** ISO 8601 duration → something a human reads at a glance ("PT5M" → "5m", "P14D" → "14d"). */
+function duration(iso: string | null): string {
+  if (iso === null) return 'Never (unbounded)'
+  const m = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?)?$/.exec(iso)
+  if (!m) return iso
+  const parts: string[] = []
+  if (m[1]) parts.push(`${m[1]}d`)
+  if (m[2]) parts.push(`${m[2]}h`)
+  if (m[3]) parts.push(`${m[3]}m`)
+  if (m[4]) parts.push(`${m[4]}s`)
+  return parts.length ? `${parts.join(' ')}  (${iso})` : iso
+}
+
+const propertyRows = computed<{ label: string; value: string }[]>(() => {
+  const p = properties.value
+  if (!p) return []
+  const yesNo = (b: boolean) => (b ? 'Yes' : 'No')
+  return [
+    { label: 'Lock duration', value: duration(p.lockDuration) },
+    { label: 'Max delivery count', value: String(p.maxDeliveryCount) },
+    { label: 'Requires session', value: yesNo(p.requiresSession) },
+    { label: 'Default message TTL', value: duration(p.defaultMessageTimeToLive) },
+    { label: 'Dead-letter on expiration', value: yesNo(p.deadLetteringOnMessageExpiration) },
+    { label: 'Duplicate detection', value: p.requiresDuplicateDetection ? `Yes, window ${duration(p.duplicateDetectionHistoryTimeWindow)}` : 'No' },
+    { label: 'Batched operations', value: yesNo(p.enableBatchedOperations) },
+    { label: 'Max size', value: `${p.maxSizeInMegabytes} MB` },
+    { label: 'Auto-delete on idle', value: p.autoDeleteOnIdle ? duration(p.autoDeleteOnIdle) : 'Never' },
+    { label: 'Forward to', value: p.forwardTo ?? '—' },
+    { label: 'Forward dead-letters to', value: p.forwardDeadLetteredMessagesTo ?? '—' },
+    { label: 'User metadata', value: p.userMetadata ?? '—' },
+    { label: 'Active messages', value: String(p.messageCount) },
+    { label: 'Dead-lettered', value: String(p.deadLetterCount) },
+    { label: 'Total received', value: String(p.totalMessageCount) },
+    { label: 'Completed', value: String(p.consumedCount) },
+    ...(p.requiresSession ? [{ label: 'Sessions seen', value: String(p.sessionCount) }] : []),
+  ]
+})
 const hideConsumed = ref(false)
 const visibleMessages = computed(() =>
   hideConsumed.value ? messages.value.filter(m => m.state !== 'Consumed' && m.state !== 'DeadLettered') : messages.value
@@ -41,14 +81,18 @@ async function refreshSubscriptions() {
 function switchTab(tab: 'messages' | 'deadletter' | 'properties') {
   activeTab.value = tab
   selectedMessage.value = null
+  deadLetterViewActive.value = tab === 'deadletter'
   if (tab === 'deadletter') refreshDeadLetter()
+  if (tab === 'properties') refreshProperties()
 }
 
 watch(() => [props.namespace, props.entity, props.entityType], () => {
   selectedMessage.value = null
   activeTab.value = 'messages'
+  deadLetterViewActive.value = false
   messages.value = []
   deadLetterMessages.value = []
+  properties.value = null
   if (props.entityType === 'queue') {
     refresh()
     startListening()
@@ -130,9 +174,15 @@ function parentPath(name: string) {
         </div>
       </template>
 
-      <!-- Properties tab (placeholder) -->
+      <!-- Properties tab -->
       <template v-if="activeTab === 'properties'">
-        <div class="empty">Queue properties not yet implemented</div>
+        <div class="rows">
+          <div v-if="propertyRows.length === 0" class="empty">Loading properties…</div>
+          <div v-for="row in propertyRows" :key="row.label" class="prop-row">
+            <span class="prop-key">{{ row.label }}</span>
+            <span class="prop-val">{{ row.value }}</span>
+          </div>
+        </div>
       </template>
     </template>
 
@@ -189,6 +239,9 @@ function parentPath(name: string) {
 .rows::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 .rows::-webkit-scrollbar-track { background: transparent; }
 .empty { padding: 20px; text-align: center; color: var(--text-muted); }
+.prop-row { display: grid; grid-template-columns: 180px 1fr; gap: 4px 12px; padding: 7px 12px; border-bottom: 1px solid var(--border-subtle); font-size: 11px; }
+.prop-key { color: var(--text-muted); font-weight: 500; }
+.prop-val { color: var(--text); font-family: 'Cascadia Code', 'Fira Code', monospace; word-break: break-all; }
 
 .sub-item { padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); transition: background 0.1s; }
 .sub-item.clickable { cursor: pointer; }
