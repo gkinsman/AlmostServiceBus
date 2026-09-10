@@ -77,16 +77,14 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
                     continue;
                 }
 
-                if (!_session.TryDequeue(out var brokered))
+                // Dequeue through the queue so the delivery is locked, tracked as pending and
+                // counted the same way as a non-session dequeue (MessageCount goes down).
+                if (!_queue.TryDequeueFromSession(_session, out var brokered))
                 {
                     // Block until a session message is available rather than busy-polling.
                     await _session.WaitToReadAsync(ct);
                     continue;
                 }
-
-                brokered!.IncrementDeliveryCount();
-                brokered.LockedUntil = DateTimeOffset.UtcNow.Add(_queue.LockDuration);
-                _queue.TrackPending(brokered);
 
                 var amqpMessage = ReceiverLinkEndpoint.ConvertToAmqpMessage(brokered);
 
@@ -126,6 +124,17 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
     public override void OnDisposition(DispositionContext dispositionContext)
     {
         var lockToken = ReceiverLinkEndpoint.GetLockTokenStatic(dispositionContext.Message);
+
+        // See ReceiverLinkEndpoint.IsTeardownOutcome: outcomes AMQPNetLite manufactures while
+        // aborting the link are not client settlements. The session lock is released in
+        // OnLinkClosed; the messages stay pending and are reclaimed when a receiver next accepts
+        // the session, as on real Service Bus.
+        if (ReceiverLinkEndpoint.IsTeardownOutcome(dispositionContext))
+        {
+            Log.LogDebug("DISP lock={LockToken} ignored: link closed, outcome synthesised by teardown session='{SessionId}'",
+                lockToken, _session.SessionId);
+            return;
+        }
 
         // Transactional settlement: buffer the real outcome under the transaction and echo a
         // transactional disposition. The message stays locked until the client commits; on

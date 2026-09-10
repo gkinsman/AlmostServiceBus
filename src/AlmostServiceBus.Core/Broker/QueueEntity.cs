@@ -18,7 +18,18 @@ public sealed class QueueEntity : IDisposable
     /// </summary>
     private readonly Channel<BrokeredMessage> _redeliveryChannel;
     private readonly ConcurrentDictionary<string, BrokeredMessage> _pending = new();
+    /// <summary>
+    /// Messages currently in the queue or locked by a receiver, by lock token. Settled messages
+    /// leave this map (see <see cref="RecordSettled"/>) so memory is bounded by the live backlog
+    /// rather than by everything the queue has ever seen.
+    /// </summary>
     private readonly ConcurrentDictionary<string, BrokeredMessage> _allMessages = new();
+    /// <summary>
+    /// The most recently completed / dead-lettered messages, oldest first, for the dashboard's
+    /// history view. Capped at <see cref="RecentSettledCapacity"/>.
+    /// </summary>
+    private readonly ConcurrentQueue<BrokeredMessage> _recentSettled = new();
+    private const int RecentSettledCapacity = 200;
     private readonly ConcurrentDictionary<long, BrokeredMessage> _deferredBySequence = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _recentMessageIds = new();
     /// <summary>
@@ -31,6 +42,8 @@ public sealed class QueueEntity : IDisposable
     private QueueEntity? _deadLetterQueue;
     private SessionManager? _sessionManager;
     private int _messageCount;
+    private int _totalMessageCount;
+    private int _consumedCount;
     private long _sequenceNumber;
     private MessageEventBus? _eventBus;
     private string? _namespaceName;
@@ -121,9 +134,12 @@ public sealed class QueueEntity : IDisposable
     /// Total messages that have passed through this queue (active + consumed + dead-lettered).
     /// Used by the dashboard to show queues that have had any activity.
     /// </summary>
-    public int TotalMessageCount => _allMessages.Count;
+    public int TotalMessageCount => _totalMessageCount;
 
-    public int ConsumedCount => _allMessages.Values.Count(m => m.State == MessageState.Consumed);
+    /// <summary>
+    /// Number of messages completed on this queue.
+    /// </summary>
+    public int ConsumedCount => _consumedCount;
 
     public void SetEventBus(MessageEventBus bus, string namespaceName, string entityName)
     {
@@ -174,9 +190,6 @@ public sealed class QueueEntity : IDisposable
                 throw new InvalidOperationException(
                     $"Cannot send a message without a SessionId to session-required queue '{Name}'.");
             }
-            System.Diagnostics.Debug.WriteLine($"[QUEUE] Enqueue to session queue '{Name}', SessionId={message.SessionId}, MessageId={message.MessageId}, Subject={message.Subject}");
-            Console.Error.WriteLine($"[QUEUE] Enqueue to session queue '{Name}', SessionId={message.SessionId}, MessageId={message.MessageId}, Subject={message.Subject}, CorrelationId={message.CorrelationId}");
-
             // Assign sequence number and lock token BEFORE enqueuing to the
             // SessionManager so the PriorityQueue can order by SequenceNumber.
             // Clone() resets SequenceNumber to 0, so messages arriving via
@@ -189,6 +202,7 @@ public sealed class QueueEntity : IDisposable
             // Also track in _allMessages for dashboard peek
             _allMessages[message.LockToken!] = message;
             Interlocked.Increment(ref _messageCount);
+            Interlocked.Increment(ref _totalMessageCount);
             _eventBus?.Publish(new MessageEvent(
                 MessageEventType.Enqueued, _namespaceName ?? "", _entityName ?? "",
                 message.MessageId, message.SequenceNumber, message.ContentType,
@@ -219,6 +233,7 @@ public sealed class QueueEntity : IDisposable
         _channel.Writer.TryWrite(message);
         _allMessages[message.LockToken!] = message;
         Interlocked.Increment(ref _messageCount);
+        Interlocked.Increment(ref _totalMessageCount);
         _eventBus?.Publish(new MessageEvent(
             MessageEventType.Enqueued, _namespaceName ?? "", _entityName ?? "",
             message.MessageId, message.SequenceNumber, message.ContentType,
@@ -290,11 +305,34 @@ public sealed class QueueEntity : IDisposable
             if (!_redeliveryChannel.Reader.TryRead(out message))
                 message = await _channel.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
         }
+        BeginDelivery(message);
+        return message;
+    }
+
+    /// <summary>
+    /// Non-blocking attempt to dequeue the next message of <paramref name="session"/> on this
+    /// session-enabled queue. The message is locked, tracked as pending and counted exactly like
+    /// a non-session dequeue. Returns <see langword="false"/> if the session has no messages.
+    /// </summary>
+    public bool TryDequeueFromSession(SessionState session, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out BrokeredMessage? message)
+    {
+        if (!session.TryDequeue(out message) || message is null)
+            return false;
+
+        BeginDelivery(message);
+        return true;
+    }
+
+    /// <summary>
+    /// Marks a message that has just left the queue as delivered: starts its lock, bumps its
+    /// delivery count, moves it to pending and takes it out of <see cref="MessageCount"/>.
+    /// </summary>
+    private void BeginDelivery(BrokeredMessage message)
+    {
         Interlocked.Decrement(ref _messageCount);
         message.IncrementDeliveryCount();
         message.LockedUntil = DateTimeOffset.UtcNow.Add(LockDuration);
         TrackPending(message);
-        return message;
     }
 
     /// <summary>
@@ -306,10 +344,7 @@ public sealed class QueueEntity : IDisposable
     {
         if (_redeliveryChannel.Reader.TryRead(out var message) || _channel.Reader.TryRead(out message))
         {
-            Interlocked.Decrement(ref _messageCount);
-            message.IncrementDeliveryCount();
-            message.LockedUntil = DateTimeOffset.UtcNow.Add(LockDuration);
-            TrackPending(message);
+            BeginDelivery(message);
             return message;
         }
 
@@ -380,9 +415,8 @@ public sealed class QueueEntity : IDisposable
             throw new MessageLockLostException(lockToken);
         }
 
-        // Mark as consumed but keep in _allMessages for dashboard visibility
-        if (_allMessages.TryGetValue(lockToken, out var tracked))
-            tracked.State = MessageState.Consumed;
+        RecordSettled(lockToken, message, MessageState.Consumed);
+        Interlocked.Increment(ref _consumedCount);
 
         _eventBus?.Publish(new MessageEvent(
             MessageEventType.Completed, _namespaceName ?? "", _entityName ?? "",
@@ -474,9 +508,25 @@ public sealed class QueueEntity : IDisposable
             }
         }
 
-        if (_allMessages.TryGetValue(lockToken, out var tracked))
-            tracked.State = MessageState.DeadLettered;
+        RecordSettled(lockToken, message, MessageState.DeadLettered);
         DeadLetter(message, reason, description);
+    }
+
+    /// <summary>
+    /// Takes a settled message out of the live map and keeps it in the bounded recent-history
+    /// ring so the dashboard can still show it. Previously settled messages stayed in
+    /// <see cref="_allMessages"/> forever, so a busy queue grew without limit and every
+    /// dashboard poll walked the whole history.
+    /// </summary>
+    private void RecordSettled(string lockToken, BrokeredMessage message, MessageState state)
+    {
+        message.State = state;
+        _allMessages.TryRemove(lockToken, out _);
+
+        _recentSettled.Enqueue(message);
+        while (_recentSettled.Count > RecentSettledCapacity && _recentSettled.TryDequeue(out _))
+        {
+        }
     }
 
     /// <summary>
@@ -739,18 +789,16 @@ public sealed class QueueEntity : IDisposable
     {
         // Show active messages first (by sequence number), then recent non-active ones.
         var active = new List<BrokeredMessage>();
-        var settled = new List<BrokeredMessage>();
-
         foreach (var m in _allMessages.Values)
         {
             if (m.State == MessageState.Active)
                 active.Add(m);
-            else
-                settled.Add(m);
         }
 
+        var settled = _recentSettled.ToList();
+
         active.Sort((a, b) => a.SequenceNumber.CompareTo(b.SequenceNumber));
-        settled.Sort((a, b) => b.SequenceNumber.CompareTo(a.SequenceNumber)); // newest first
+        settled.Reverse(); // newest first
 
         var result = new List<BrokeredMessage>(Math.Min(maxCount, active.Count + settled.Count));
         result.AddRange(active.Take(maxCount));

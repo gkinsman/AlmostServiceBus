@@ -190,6 +190,14 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         }
     }
 
+    /// <summary>
+    /// Upper bound on how long a next-available-session attach is held pending when the client
+    /// does not say how long it is prepared to wait. Matches the cap real Service Bus applies.
+    /// </summary>
+    internal static readonly TimeSpan MaxSessionAcceptWait = TimeSpan.FromSeconds(65);
+
+    private static readonly Symbol ClientTimeoutProperty = new("com.microsoft:timeout");
+
     private void HandleSessionReceiver(AttachContext attachContext, NamespaceContext ns, string address, string? requestedSessionId)
     {
         var queue = ns.ResolveQueue(address);
@@ -232,82 +240,202 @@ public class ServiceBusLinkProcessor : ILinkProcessor
             return;
         }
 
-        // No session available yet.  Emulate the real Azure Service Bus behavior: hold the
-        // AMQP link attach pending and poll until a session becomes available or 65 seconds
-        // elapse (at which point a timeout error is sent back to the client).
-        // This allows ServiceBusSessionProcessor's concurrent "session pump" tasks to stay
-        // alive and pick up sessions as soon as messages arrive.
-        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(65));
+        // No session available yet. Emulate real Service Bus: hold the attach pending and poll
+        // until a session becomes available or the wait expires, then answer with a timeout error.
+        // This is what keeps ServiceBusSessionProcessor's concurrent "accept next session" tasks
+        // alive so they pick up sessions as soon as messages arrive.
+        var wait = ResolveSessionAcceptWait(attachContext.Attach);
+        _ = new PendingSessionAttach(attachContext, queue, receiverId, requestedSessionId, wait, CompleteSessionAttach).RunAsync();
+    }
 
-        // Cancel if the client disconnects while we are waiting
-        attachContext.Link.Closed += (_, _) => cts.Cancel();
-
-        Task.Run(async () =>
+    /// <summary>
+    /// How long to hold a pending session attach before answering with <c>com.microsoft:timeout</c>.
+    /// </summary>
+    /// <remarks>
+    /// For next-available-session the Azure SDK puts its operation timeout (minus a small buffer) in
+    /// the Attach's <c>com.microsoft:timeout</c> property precisely so the <em>service</em> gives up
+    /// first. The client itself abandons the attach at its full timeout, closes the link and ends
+    /// the AMQP session. If we wait longer than the client — the old fixed 65s against the SDK's
+    /// 60s default did exactly that — our eventual Attach lands on a session channel the client has
+    /// already removed, and Microsoft.Azure.Amqp tears down the whole connection with
+    /// "The session channel 'N' cannot be found". Every link on that connection dies with it, which
+    /// is what showed up as duplicate deliveries and transport faults across unrelated queues
+    /// under load. Real Service Bus caps the wait at 65 seconds; so do we.
+    /// </remarks>
+    internal static TimeSpan ResolveSessionAcceptWait(Attach attach)
+    {
+        if (attach.Properties is { } props && props.TryGetValue(ClientTimeoutProperty, out var raw))
         {
+            double? millis = raw switch
+            {
+                uint u => u,
+                int i => i,
+                long l => l,
+                ulong ul => ul,
+                _ => null,
+            };
+
+            if (millis is > 0)
+            {
+                var requested = TimeSpan.FromMilliseconds(millis.Value);
+                return requested < MaxSessionAcceptWait ? requested : MaxSessionAcceptWait;
+            }
+        }
+
+        return MaxSessionAcceptWait;
+    }
+
+    /// <summary>
+    /// A next-available-session (or not-yet-populated specific session) attach that is being held
+    /// open until a session can be locked for it. Every frame we might send on the pending link —
+    /// the accepting Attach or the timeout error — is gated on the link still being open, and the
+    /// gate is taken under a lock so a client Detach/End racing the accept cannot slip through.
+    /// </summary>
+    private sealed class PendingSessionAttach
+    {
+        private readonly AttachContext _attachContext;
+        private readonly QueueEntity _queue;
+        private readonly string _receiverId;
+        private readonly string? _requestedSessionId;
+        private readonly TimeSpan _wait;
+        private readonly Action<AttachContext, QueueEntity, BrokerSessionState> _complete;
+        private readonly CancellationTokenSource _cts = new();
+        private readonly Lock _gate = new();
+        private bool _linkClosed;
+        private bool _completed;
+
+        public PendingSessionAttach(
+            AttachContext attachContext,
+            QueueEntity queue,
+            string receiverId,
+            string? requestedSessionId,
+            TimeSpan wait,
+            Action<AttachContext, QueueEntity, BrokerSessionState> complete)
+        {
+            _attachContext = attachContext;
+            _queue = queue;
+            _receiverId = receiverId;
+            _requestedSessionId = requestedSessionId;
+            _wait = wait;
+            _complete = complete;
+        }
+
+        public async Task RunAsync()
+        {
+            // AddClosedCallback (rather than the Closed event) fires immediately if the link is
+            // already closed, so a client that gave up before we got here is caught too. The link
+            // is closed for a plain Detach, for the client ending the AMQP session, and for the
+            // connection going away — AMQPNetLite aborts every link in all three cases.
+            _attachContext.Link.AddClosedCallback((_, _) =>
+            {
+                lock (_gate)
+                {
+                    _linkClosed = true;
+                }
+                _cts.Cancel();
+            });
+
+            var timedOut = false;
             try
             {
-                while (!cts.IsCancellationRequested)
+                using var timeout = new CancellationTokenSource(_wait);
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, timeout.Token);
+
+                try
                 {
-                    await Task.Delay(100, cts.Token);
-
-                    var accepted = queue.Sessions.TryAcceptSession(requestedSessionId, receiverId);
-                    if (accepted is not null)
+                    while (true)
                     {
-                        // Guard against race: the client may have disconnected between
-                        // TryAcceptSession and CompleteSessionAttach. If the CTS was
-                        // cancelled, release the session lock so another receiver can
-                        // pick it up immediately.
-                        if (cts.IsCancellationRequested)
-                        {
-                            queue.Sessions.ReleaseSession(accepted.SessionId);
-                            Log.LogDebug("HandleSessionReceiver: client disconnected after accepting session={SessionId}, released lock",
-                                accepted.SessionId);
+                        await Task.Delay(100, linked.Token);
+
+                        var accepted = _queue.Sessions!.TryAcceptSession(_requestedSessionId, _receiverId);
+                        if (accepted is null)
+                            continue;
+
+                        if (TryCompleteWithSession(accepted))
                             return;
-                        }
 
-                        Log.LogDebug("HandleSessionReceiver: POLL ACCEPTED session={SessionId} for receiver={ReceiverId}",
-                            accepted.SessionId, receiverId);
-
-                        try
-                        {
-                            CompleteSessionAttach(attachContext, queue, accepted);
-                        }
-                        catch (Exception ex)
-                        {
-                            // CompleteAttach failed — link may already be closing.
-                            // Release the session lock so it's not stuck for LockDuration.
-                            queue.Sessions.ReleaseSession(accepted.SessionId);
-                            Log.LogWarning(ex,
-                                "HandleSessionReceiver: CompleteSessionAttach failed for session={SessionId}, released lock",
-                                accepted.SessionId);
-                        }
+                        // The link closed between the poll and the accept: give the lock straight
+                        // back so another receiver can take the session immediately.
+                        _queue.Sessions.ReleaseSession(accepted.SessionId);
+                        Log.LogDebug("HandleSessionReceiver: client went away after accepting session={SessionId}, released lock",
+                            accepted.SessionId);
                         return;
                     }
                 }
+                catch (OperationCanceledException)
+                {
+                    timedOut = timeout.IsCancellationRequested && !_cts.IsCancellationRequested;
+                }
             }
-            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
                 Log.LogWarning(ex, "HandleSessionReceiver: polling loop failed for queue={Queue}, receiverId={ReceiverId}",
-                    address, receiverId);
+                    _queue.Name, _receiverId);
             }
 
-            // Timeout (or client disconnected) — reject with the standard timeout error.
-            // Wrap in try-catch because the link may already be closed/detached.
-            try
+            if (!timedOut)
             {
-                attachContext.Complete(new Error(new Symbol("com.microsoft:timeout"))
+                // The client detached, ended the session or dropped the connection while we were
+                // waiting. Say nothing: any frame we sent now would target a channel it no longer has.
+                Log.LogDebug("HandleSessionReceiver: link closed while waiting for a session on queue={Queue}, receiverId={ReceiverId}",
+                    _queue.Name, _receiverId);
+                return;
+            }
+
+            TryCompleteWithTimeout();
+        }
+
+        private bool TryCompleteWithSession(BrokerSessionState session)
+        {
+            lock (_gate)
+            {
+                if (_linkClosed || _completed)
+                    return false;
+
+                try
                 {
-                    Description = requestedSessionId is not null
-                        ? $"Session '{requestedSessionId}' is not available."
-                        : "No sessions are available."
-                });
+                    Log.LogDebug("HandleSessionReceiver: POLL ACCEPTED session={SessionId} for receiver={ReceiverId}",
+                        session.SessionId, _receiverId);
+                    _complete(_attachContext, _queue, session);
+                    _completed = true;
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    // CompleteAttach failed — the link is unusable. Report "not completed" so the
+                    // caller releases the session lock instead of leaving it held for LockDuration.
+                    Log.LogWarning(ex,
+                        "HandleSessionReceiver: CompleteSessionAttach failed for session={SessionId}",
+                        session.SessionId);
+                    _completed = true;
+                    return false;
+                }
             }
-            catch (Exception ex)
+        }
+
+        private void TryCompleteWithTimeout()
+        {
+            lock (_gate)
             {
-                Log.LogDebug(ex, "HandleSessionReceiver: failed to send timeout error (link likely already closed)");
+                if (_linkClosed || _completed)
+                    return;
+                _completed = true;
+
+                try
+                {
+                    _attachContext.Complete(new Error(new Symbol("com.microsoft:timeout"))
+                    {
+                        Description = _requestedSessionId is not null
+                            ? $"Session '{_requestedSessionId}' is not available."
+                            : "No sessions are available."
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Log.LogDebug(ex, "HandleSessionReceiver: failed to send timeout error (link likely already closed)");
+                }
             }
-        });
+        }
     }
 
     private void CompleteSessionAttach(AttachContext attachContext, QueueEntity queue, BrokerSessionState session)
