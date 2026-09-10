@@ -35,7 +35,11 @@ public class DashboardEventBus
 
     public ChannelReader<DashboardEvent> Subscribe()
     {
-        var channel = Channel.CreateBounded<DashboardEvent>(new BoundedChannelOptions(256)
+        // Sized for a few seconds of Black Friday output (~450 events/s) so a briefly slow
+        // subscriber doesn't lose events. Beyond that we still drop rather than block the
+        // saga's consume pipeline; the dashboard's counters are polled, not event-sourced, so a
+        // drop only costs feed lines.
+        var channel = Channel.CreateBounded<DashboardEvent>(new BoundedChannelOptions(4096)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
         });
