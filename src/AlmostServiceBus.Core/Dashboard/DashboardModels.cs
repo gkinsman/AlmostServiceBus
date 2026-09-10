@@ -40,6 +40,8 @@ public record QueueProperties(
     bool RequiresDuplicateDetection,
     string? DuplicateDetectionHistoryTimeWindow,
     bool EnableBatchedOperations,
+    bool EnablePartitioning,
+    bool EnableExpress,
     long MaxSizeInMegabytes,
     string? AutoDeleteOnIdle,
     string? ForwardTo,

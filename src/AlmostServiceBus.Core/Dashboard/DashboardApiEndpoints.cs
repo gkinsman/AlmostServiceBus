@@ -198,6 +198,8 @@ public static class DashboardApiEndpoints
         q.RequiresDuplicateDetection,
         q.RequiresDuplicateDetection ? Duration(q.DuplicateDetectionHistoryTimeWindow) : null,
         q.EnableBatchedOperations,
+        q.EnablePartitioning,
+        q.EnableExpress,
         q.MaxSizeInMegabytes,
         q.AutoDeleteOnIdle is { } idle ? Duration(idle) : null,
         q.ForwardTo,

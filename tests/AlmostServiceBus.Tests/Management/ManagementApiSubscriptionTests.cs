@@ -86,7 +86,7 @@ public class ManagementApiSubscriptionTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("MessagingEntityNotFound", body);
+        Assert.Contains("could not be found", body);
     }
 
     [Fact]
