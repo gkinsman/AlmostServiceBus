@@ -33,7 +33,7 @@ public sealed class TopicEntity
 
     public bool EnableSubscriptionPartitioning { get; set; } = false;
 
-    public bool SupportOrdering { get; set; } = true;
+    public bool SupportOrdering { get; set; } = false;
 
     public TimeSpan? AutoDeleteOnIdle { get; set; }
 
