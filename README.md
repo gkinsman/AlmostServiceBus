@@ -3,7 +3,7 @@
 
 # AlmostServiceBus
 
-A local Azure Service Bus emulator compatible with the official Azure SDK (`Azure.Messaging.ServiceBus`), MassTransit, Wolverine, and NServiceBus.
+A local Azure Service Bus emulator compatible with the official Azure SDKs for .NET (`Azure.Messaging.ServiceBus`), Python, Node.js and Java, and with MassTransit, Wolverine, and NServiceBus. Every SDK and framework listed is exercised against the emulator in CI — see [Compatibility](#compatibility).
 
 AlmostServiceBus is flexible in how you run it:
 
@@ -131,11 +131,25 @@ AMQP for data and plain HTTP for admin.
 
 The emulator uses AMQPNetLite as the AMQP server (Microsoft.Azure.Amqp's server API is internal). A custom `EmulatorContainer` (replacing AMQPNetLite's `ContainerHost`) handles delivery tag rewriting, batch message decoding, and transaction coordinator links (a server-side coordinator buffers transactional work and applies it on commit). Message delivery uses channel-based waiting for instant wake-up on enqueue.
 
-## Framework Compatibility
+## Compatibility
+
+Everything in these tables runs against the emulator in CI on every commit, so the claims below are only as strong as the linked suites.
+
+### Client SDKs
+
+| SDK | Data plane | Management plane | Verified by |
+|-----|------------|------------------|-------------|
+| .NET `Azure.Messaging.ServiceBus` | **Full** — PeekLock, sessions, scheduled messages, processors, batch sends, transactions | **Full** — `ServiceBusAdministrationClient` honours `UseDevelopmentEmulator=true` (plain HTTP on 5300) | Internal suites + the framework suites below |
+| Python `azure-servicebus` (pyamqp) | **Smoke-tested** — send/receive, properties, peek, lock renewal, abandon, dead-letter, sessions + state, topics, scheduled | REST only¹ | [`tests/client-sdk-smoke/python`](tests/client-sdk-smoke) |
+| Node.js `@azure/service-bus` (rhea) | **Smoke-tested** — same scenario | REST only¹ | [`tests/client-sdk-smoke/node`](tests/client-sdk-smoke) |
+| Java `azure-messaging-servicebus` (proton-j) | **Smoke-tested** — same scenario | REST only¹ | [`tests/client-sdk-smoke/java`](tests/client-sdk-smoke) |
+
+¹ The Python, Node.js and Java admin clients only speak HTTPS, and the emulator (like Microsoft's) is plaintext-only. Create entities from those languages through the Atom XML REST API on port 5300 directly — the smoke tests show how — or from .NET, or put a TLS-terminating proxy in front. The Atom XML the emulator emits is verified to parse in the Java and Node.js SDKs.
+
+### Frameworks
 
 | Framework | Status | Notes |
 |-----------|--------|-------|
-| Azure SDK (`Azure.Messaging.ServiceBus`) | **Full** | PeekLock, sessions, scheduled messages, processors, batch sends |
 | MassTransit | **Full** | Tested against MassTransit's own ASB test suite |
 | Wolverine | **High** | 149/155 tests pass; tracking correlation edge cases excluded |
 | NServiceBus | **Partial** | AMQP transactions now supported (no longer requires `ReceiveOnly` transport mode) |

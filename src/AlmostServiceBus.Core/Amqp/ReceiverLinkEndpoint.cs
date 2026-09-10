@@ -22,6 +22,7 @@ public class ReceiverLinkEndpoint : LinkEndpoint
     private readonly Lock _pumpLock = new();
     private readonly bool _preSettled;
     private readonly Broker.Transactions.TransactionManager? _transactions;
+    private readonly CreditShadow _credit = new();
     private CancellationTokenSource? _pumpCts;
     private Task? _pumpTask;
 
@@ -48,9 +49,12 @@ public class ReceiverLinkEndpoint : LinkEndpoint
                 // the pump to stop), the link may start detaching and CompleteDrain's
                 // internal SendFlow becomes a no-op (it checks !IsDetaching).
                 flowContext.Link.CompleteDrain();
+                _credit.Reset();
                 _pumpCts?.Cancel();
                 return;
             }
+
+            _credit.OnFlow(flowContext);
 
             lock (_pumpLock)
             {
@@ -110,6 +114,7 @@ public class ReceiverLinkEndpoint : LinkEndpoint
                     Log.LogDebug("PUMP {MessageId} → '{Queue}'", brokered.MessageId, _queue.Name);
                     var amqpMessage = ConvertToAmqpMessage(brokered);
                     link.SendMessage(amqpMessage);
+                    _credit.OnSent();
 
                     // ReceiveAndDelete (pre-settled) mode: auto-complete the message on
                     // the broker side since the client never sends a disposition. Without
@@ -175,7 +180,7 @@ public class ReceiverLinkEndpoint : LinkEndpoint
             if (lockToken is not null && dispositionContext.DeliveryState is not null)
                 SettleMessage(lockToken, dispositionContext.DeliveryState);
 
-            dispositionContext.Complete();
+            SettleWithClientOutcome(dispositionContext);
         }
         catch (MessageLockLostException)
         {
@@ -259,6 +264,82 @@ public class ReceiverLinkEndpoint : LinkEndpoint
     }
 
     /// <summary>
+    /// Settles the client's disposition with the outcome the real service would reply with.
+    /// </summary>
+    /// <remarks>
+    /// <c>DispositionContext.Complete()</c> always settles with <see cref="Accepted"/>. The Java
+    /// SDK checks that the broker's reply has the same outcome type as its request and fails an
+    /// abandon, defer or dead-letter (<see cref="Modified"/>/<see cref="Released"/>/
+    /// <see cref="Rejected"/>) that comes back as <c>Accepted{}</c>; the .NET SDK happens not to
+    /// check the type. The dead-letter reply must be a <em>bare</em> Rejected: the .NET SDK throws
+    /// when the broker's Rejected carries an <c>Error</c> (that is how the service reports a
+    /// refused settlement), so the client's error map (dead-letter reason/description) must not
+    /// be echoed back.
+    /// </remarks>
+    internal static void SettleWithClientOutcome(DispositionContext dispositionContext)
+    {
+        Outcome reply = dispositionContext.DeliveryState switch
+        {
+            Modified m => new Modified { DeliveryFailed = m.DeliveryFailed, UndeliverableHere = m.UndeliverableHere },
+            Released r => r,
+            Rejected => new Rejected(),
+            _ => new Accepted(),
+        };
+        dispositionContext.Link.DisposeMessage(dispositionContext.Message, reply, true);
+    }
+
+    /// <summary>
+    /// Shadow of AMQPNetLite's link credit, used to undo a quirk in its flow handling.
+    /// </summary>
+    /// <remarks>
+    /// <c>ListenerLink.OnFlow</c> computes <c>delta = peerLimit - ourLimit</c> and treats
+    /// <c>delta &lt;= 0</c> as "peer reduced credit", setting credit to zero. A client that
+    /// re-sends an identical Flow (same delivery-count and link-credit) produces <c>delta == 0</c>
+    /// and loses all its credit. The Python SDK (pyamqp) does exactly that on every
+    /// <c>receive_messages</c> call, so a receiver that had one credit outstanding never got its
+    /// message. We track the credit we believe the peer granted and, on a zero-delta flow, put
+    /// it back.
+    /// </remarks>
+    internal sealed class CreditShadow
+    {
+        private long _credit;
+
+        /// <summary>Call from <see cref="LinkEndpoint.OnFlow"/> for non-drain flows.</summary>
+        public void OnFlow(FlowContext flowContext)
+        {
+            var delta = flowContext.Messages;
+            if (delta > 0)
+            {
+                _credit += delta;
+            }
+            else if (delta < 0)
+            {
+                _credit = 0;
+            }
+            else if (_credit > 0 && GetLinkCredit(flowContext.Link) == 0)
+            {
+                // Same limit restated by the peer: AMQPNetLite zeroed the credit, we did not lose any.
+                Log.LogDebug("FLOW restated identical limit; restoring credit={Credit}", _credit);
+                SetLinkCredit(flowContext.Link, (uint)_credit);
+            }
+        }
+
+        /// <summary>Call after each successful <see cref="ListenerLink.SendMessage(Message)"/>.</summary>
+        public void OnSent()
+        {
+            if (_credit > 0) _credit--;
+        }
+
+        public void Reset() => _credit = 0;
+    }
+
+    private static void SetLinkCredit(ListenerLink link, uint credit)
+    {
+        try { CreditField?.SetValue(link, credit); }
+        catch (Exception ex) { Log.LogDebug(ex, "Failed to restore link credit via reflection"); }
+    }
+
+    /// <summary>
     /// Whether a disposition was manufactured by AMQPNetLite tearing the link down rather than
     /// sent by the client.
     /// </summary>
@@ -335,16 +416,35 @@ public class ReceiverLinkEndpoint : LinkEndpoint
         string? dlDescription = rejected.Error?.Description;
         if (rejected.Error?.Info is { } info)
         {
-            foreach (var key in info.Keys)
+            foreach (var (keyStr, value) in Entries(info))
             {
-                var keyStr = key?.ToString();
-                if (keyStr == "DeadLetterReason" && info[key] is string reason)
+                if (keyStr == "DeadLetterReason" && value is string reason)
                     dlReason = reason;
-                if (keyStr == "DeadLetterErrorDescription" && info[key] is string desc)
+                if (keyStr == "DeadLetterErrorDescription" && value is string desc)
                     dlDescription = desc;
             }
         }
         return (dlReason, dlDescription);
+    }
+
+    /// <summary>
+    /// Enumerates an AMQP map's entries without going through its indexer.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Fields"/> (used for <c>Error.Info</c> and message annotations) enforces
+    /// <see cref="Symbol"/> keys in its indexer, but peers are free to send string keys — the
+    /// Node.js SDK (rhea) does for dead-letter reason/description. Indexing then throws inside
+    /// <see cref="OnDisposition"/>, the settlement is never sent, and the client's dead-letter
+    /// call times out. Enumerating the pairs sidesteps the key-type check.
+    /// </remarks>
+    private static IEnumerable<(string Key, object? Value)> Entries(Map map)
+    {
+        foreach (var kvp in (IEnumerable<KeyValuePair<object, object>>)map)
+        {
+            var key = kvp.Key?.ToString();
+            if (!string.IsNullOrEmpty(key))
+                yield return (key, kvp.Value);
+        }
     }
 
     /// <summary>
@@ -357,11 +457,10 @@ public class ReceiverLinkEndpoint : LinkEndpoint
         var fields = modified.MessageAnnotations;
         if (fields is null) return null;
         var dict = new Dictionary<string, object>();
-        foreach (var key in fields.Keys)
+        foreach (var (key, value) in Entries(fields))
         {
-            var keyStr = key?.ToString();
-            if (string.IsNullOrEmpty(keyStr)) continue;
-            dict[keyStr] = fields[key]!;
+            if (value is not null)
+                dict[key] = value;
         }
         return dict.Count > 0 ? dict : null;
     }
@@ -374,12 +473,11 @@ public class ReceiverLinkEndpoint : LinkEndpoint
     {
         if (rejected.Error?.Info is not { } info) return null;
         var dict = new Dictionary<string, object>();
-        foreach (var key in info.Keys)
+        foreach (var (key, value) in Entries(info))
         {
-            var keyStr = key?.ToString();
-            if (string.IsNullOrEmpty(keyStr)) continue;
-            if (keyStr == "DeadLetterReason" || keyStr == "DeadLetterErrorDescription") continue;
-            dict[keyStr] = info[key]!;
+            if (key == "DeadLetterReason" || key == "DeadLetterErrorDescription") continue;
+            if (value is not null)
+                dict[key] = value;
         }
         return dict.Count > 0 ? dict : null;
     }

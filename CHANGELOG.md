@@ -17,8 +17,42 @@ All notable changes to this project are documented here. The format is based on
 - `Enqueued` dashboard events now carry the message's application properties,
   subject and correlation id, so rows that appear live show them without a
   refresh.
+- **Node.js and Java SDK management-plane compatibility.** Atom XML entity
+  descriptions now always carry `EnablePartitioning`, `EnableExpress`,
+  `RequiresDuplicateDetection`, `EnableSubscriptionPartitioning` and
+  `SupportOrdering`, entries include an Atom `<id>` and self `<link>`, and error
+  payloads use a numeric `<Code>` — all of which those SDKs require when
+  parsing. Contributed by @alt-Rational (#101).
+- **Client SDK smoke tests in CI** (`tests/client-sdk-smoke`). The official
+  Python (`azure-servicebus`), Node.js (`@azure/service-bus`) and Java
+  (`azure-messaging-servicebus`) SDKs now run an end-to-end scenario against
+  the emulator on every build: send/receive with application properties, peek,
+  lock renewal, abandon, dead-letter and DLQ receive, sessions with session
+  state, topic → subscription, scheduled messages. Entities are created over
+  the plain-HTTP Atom API because only the .NET SDK's admin client supports a
+  plaintext endpoint. Writing them surfaced the five protocol fixes below.
 
 ### Fixed
+- **Settlement replies now echo the client's outcome type** (`Modified` for
+  abandon/defer, bare `Rejected` for dead-letter, `Accepted` for complete)
+  instead of always `Accepted`. The Java SDK fails an abandon or dead-letter
+  whose reply type differs from its request; the .NET SDK does not check the
+  type but treats a `Rejected` reply *with an error* as a refused settlement,
+  so the dead-letter reply must not echo the client's error map.
+- **Dead-letter maps with string keys** (as sent by the Node.js SDK's rhea
+  transport) no longer throw inside the disposition handler; previously the
+  settlement was never sent and `deadLetterMessage` timed out.
+- **A restated Flow no longer zeroes link credit.** The Python SDK re-sends an
+  identical Flow on each `receive_messages` call; AMQPNetLite treats the zero
+  delta as a credit reduction, so the receiver waited forever for a message
+  that was in the queue.
+- **Sender links are registered by entity path.** The Python SDK attaches its
+  sender to `amqps://host:port/queue`; a scheduled message resolved through
+  the sender-link registry was routed to an entity literally named that.
+- **Request-processor reply links are keyed per connection.** The Java SDK uses
+  the same reply-to (`cbs-client-reply-to`) on every connection; closing one
+  connection removed the reply link another connection still needed and its
+  next CBS token refresh — and the `scheduleMessage` waiting on it — hung.
 - **Explicitly dead-lettered messages were invisible.** `DeadLetterMessageAsync`
   stamped the shared message object as dead-lettered before enqueuing it in the
   DLQ, so the dashboard's Dead Letter tab and the SDK's peek of the dead-letter

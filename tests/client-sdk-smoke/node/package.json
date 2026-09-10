@@ -1,0 +1,13 @@
+{
+  "name": "almostservicebus-node-smoke",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Smoke test of @azure/service-bus against a running AlmostServiceBus emulator",
+  "scripts": {
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "@azure/service-bus": "^7.9.5"
+  }
+}
