@@ -13,7 +13,7 @@
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <azure-messaging-servicebus.version>7.17.13</azure-messaging-servicebus.version>
+    <azure-messaging-servicebus.version>7.17.20</azure-messaging-servicebus.version>
   </properties>
 
   <dependencies>
