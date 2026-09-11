@@ -125,6 +125,21 @@ async function main() {
     for (let i = 0; i < 2; i++) await receiver.completeMessage(await receiveOne(receiver));
     check((await receiver.peekMessages(5)).length === 0, "queue empty after completing both");
 
+    step("batch send where the first message has a subject");
+    // sendMessages(array) builds one AMQP batch transfer. The Node SDK copies the first
+    // message's properties (subject included) onto the batch envelope, which used to make the
+    // emulator treat the whole batch as a single message.
+    await sender.sendMessages([
+      { body: "b1", subject: "OrderPlaced", applicationProperties: { n: 1 } },
+      { body: "b2", subject: "OrderPlaced", applicationProperties: { n: 2 } },
+      { body: "b3", subject: "OrderShipped", applicationProperties: { n: 3 } },
+    ]);
+    const batch = await receiver.receiveMessages(5, { maxWaitTimeInMs: WAIT_MS });
+    check(batch.length === 3, `all three batched messages arrive as separate messages (${batch.length})`);
+    check(batch.map((m) => m.body).join() === "b1,b2,b3", `bodies intact (${batch.map((m) => m.body)})`);
+    check(batch[2].subject === "OrderShipped" && batch[2].applicationProperties?.n === 3, "each message keeps its own subject and properties");
+    for (const m of batch) await receiver.completeMessage(m);
+
     step("abandon -> redelivery bumps deliveryCount");
     await sender.sendMessages({ body: "retry-me" });
     const first = await receiveOne(receiver);

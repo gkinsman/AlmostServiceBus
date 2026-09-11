@@ -181,6 +181,20 @@ def main():
                 receiver.complete_message(receive_one(receiver))
             check(len(receiver.peek_messages(max_message_count=5)) == 0, "queue empty after completing both")
 
+            step("batch send where the first message has a subject")
+            with client.get_queue_sender(QUEUE) as sender:
+                sender.send_messages([
+                    ServiceBusMessage("b1", subject="OrderPlaced", application_properties={"n": 1}),
+                    ServiceBusMessage("b2", subject="OrderPlaced", application_properties={"n": 2}),
+                    ServiceBusMessage("b3", subject="OrderShipped", application_properties={"n": 3}),
+                ])
+            batch = receiver.receive_messages(max_message_count=5, max_wait_time=WAIT)
+            check(len(batch) == 3, f"all three batched messages arrive as separate messages ({len(batch)})")
+            check([str(m) for m in batch] == ["b1", "b2", "b3"], f"bodies intact ({[str(m) for m in batch]})")
+            check(batch[2].subject == "OrderShipped" and batch[2].application_properties[b"n"] == 3, "each message keeps its own subject and properties")
+            for m in batch:
+                receiver.complete_message(m)
+
             step("abandon -> redelivery bumps delivery_count")
             with client.get_queue_sender(QUEUE) as sender:
                 sender.send_messages(ServiceBusMessage("retry-me"))

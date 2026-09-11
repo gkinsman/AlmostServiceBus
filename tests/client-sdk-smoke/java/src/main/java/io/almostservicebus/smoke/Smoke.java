@@ -169,6 +169,19 @@ public final class Smoke {
             receiver.peekMessages(5).forEach(empty::add);
             check(empty.isEmpty(), "queue empty after completing both");
 
+            step("batch send where the first message has a subject");
+            sender.sendMessages(List.of(
+                new ServiceBusMessage("b1").setSubject("OrderPlaced"),
+                new ServiceBusMessage("b2").setSubject("OrderPlaced"),
+                new ServiceBusMessage("b3").setSubject("OrderShipped")));
+            List<ServiceBusReceivedMessage> batch = new ArrayList<>();
+            receiver.receiveMessages(5, WAIT).forEach(batch::add);
+            check(batch.size() == 3, "all three batched messages arrive as separate messages (" + batch.size() + ")");
+            List<String> bodies = batch.stream().map(x -> x.getBody().toString()).toList();
+            check(List.of("b1", "b2", "b3").equals(bodies), "bodies intact (" + bodies + ")");
+            check("OrderShipped".equals(batch.get(2).getSubject()), "each message keeps its own subject");
+            for (ServiceBusReceivedMessage x : batch) receiver.complete(x);
+
             step("abandon -> redelivery bumps deliveryCount");
             sender.sendMessage(new ServiceBusMessage("retry-me"));
             ServiceBusReceivedMessage first = receiveOne(receiver);
