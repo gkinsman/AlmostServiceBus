@@ -8,8 +8,11 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="AMQPNetLite" Version="2.5.4" />
+  <ItemGroup Condition="'$(UseAmqpNetLiteSource)' != 'true'">
+    <PackageReference Include="AMQPNetLite" Version="$(AmqpNetLitePackageVersion)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseAmqpNetLiteSource)' == 'true'">
+    <ProjectReference Include="$(AmqpNetLiteSourceProject)" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="AlmostServiceBus.Tests" />

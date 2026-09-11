@@ -9,6 +9,17 @@
     <MinVerMinimumMajorMinor>0.1</MinVerMinimumMajorMinor>
   </PropertyGroup>
 
+  <!-- Build against the vendored, patched AMQPNetLite source when the submodule is checked
+       out (see patches/amqpnetlite and https://github.com/Azure/amqpnetlite/pull/651).
+       Otherwise projects fall back to the published AMQPNetLite NuGet package. Set
+       UseAmqpNetLiteSource=false to force the package even when the submodule is present. -->
+  <PropertyGroup>
+    <AmqpNetLiteSourceProject>$(MSBuildThisFileDirectory)external/amqpnetlite/src/Amqp.csproj</AmqpNetLiteSourceProject>
+    <AmqpNetLitePackageVersion>2.5.4</AmqpNetLitePackageVersion>
+    <UseAmqpNetLiteSource Condition="'$(UseAmqpNetLiteSource)' == '' and Exists('$(AmqpNetLiteSourceProject)')">true</UseAmqpNetLiteSource>
+    <UseAmqpNetLiteSource Condition="'$(UseAmqpNetLiteSource)' == ''">false</UseAmqpNetLiteSource>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="MinVer" Version="8.0.0" PrivateAssets="All" />
   </ItemGroup>
