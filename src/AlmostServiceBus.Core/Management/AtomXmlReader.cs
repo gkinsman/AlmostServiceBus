@@ -44,6 +44,8 @@ public record SubscriptionProperties(
     bool EnableBatchedOperations,
     string? ForwardTo,
     string? UserMetadata,
+    bool DeadLetteringOnFilterEvaluationExceptions = true,
+    TimeSpan? AutoDeleteOnIdle = null,
     RuleProperties? DefaultRule = null);
 
 public record RuleProperties(
@@ -130,6 +132,8 @@ public static class AtomXmlReader
             EnableBatchedOperations: ParseOptionalBool(desc, "EnableBatchedOperations") ?? true,
             ForwardTo: NormalizeForwardTo(ParseOptionalString(desc, "ForwardTo")),
             UserMetadata: ParseOptionalString(desc, "UserMetadata"),
+            DeadLetteringOnFilterEvaluationExceptions: ParseOptionalBool(desc, "DeadLetteringOnFilterEvaluationExceptions") ?? true,
+            AutoDeleteOnIdle: ParseOptionalTimeSpan(desc, "AutoDeleteOnIdle"),
             DefaultRule: defaultRule);
     }
 

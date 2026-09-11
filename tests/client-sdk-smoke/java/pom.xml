@@ -14,6 +14,7 @@
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <azure-messaging-servicebus.version>7.17.20</azure-messaging-servicebus.version>
+    <exec.mainClass>io.almostservicebus.smoke.Smoke</exec.mainClass>
   </properties>
 
   <dependencies>
@@ -37,7 +38,7 @@
         <artifactId>exec-maven-plugin</artifactId>
         <version>3.6.3</version>
         <configuration>
-          <mainClass>io.almostservicebus.smoke.Smoke</mainClass>
+          <mainClass>${exec.mainClass}</mainClass>
           <systemProperties>
             <systemProperty>
               <key>org.slf4j.simpleLogger.defaultLogLevel</key>
