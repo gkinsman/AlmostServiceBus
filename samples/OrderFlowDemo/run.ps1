@@ -23,6 +23,16 @@ Write-Host "Building Vue dashboard..." -ForegroundColor Cyan
 npm ci --prefix "$scriptDir\OrderFlowDemo.OrderApi\ClientApp"
 npm run build --prefix "$scriptDir\OrderFlowDemo.OrderApi\ClientApp"
 
+# Build the emulator's own Vue dashboard too. `dotnet run` only rebuilds it when wwwroot is
+# missing, so without this step dashboard changes silently don't show up at :15672.
+Write-Host "Building emulator dashboard..." -ForegroundColor Cyan
+$emulatorDashboard = "$repoRoot\src\AlmostServiceBus.Dashboard"
+if (-not (Test-Path "$emulatorDashboard\node_modules")) { npm ci --prefix $emulatorDashboard --no-audit --no-fund }
+npm run build --prefix $emulatorDashboard
+if ($LASTEXITCODE -ne 0) { throw "Emulator dashboard build failed" }
+# vue-tsc -b rewrites these tracked files on every build; they are build output.
+git -C $repoRoot checkout -- "src/AlmostServiceBus.Dashboard/tsconfig.app.tsbuildinfo" "src/AlmostServiceBus.Dashboard/tsconfig.node.tsbuildinfo" 2>$null
+
 # Build all projects upfront to avoid concurrent build conflicts
 Write-Host "Building projects..." -ForegroundColor Cyan
 dotnet build "$repoRoot\src\AlmostServiceBus.Host" --nologo -v quiet
