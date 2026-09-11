@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Batch sends from the Node.js SDK lost all but a garbled first message.** A
+  batch is one AMQP transfer whose body is a list of encoded messages. The
+  emulator recognised it only when the envelope had no `Subject`, which holds
+  for the .NET SDK but not for `@azure/service-bus`, whose `sendMessages(array)`
+  copies the first message's properties onto the envelope. Batches are now
+  detected by the transfer's message-format (`0x80013700`), which every SDK
+  sets. The Node.js, Python and Java smoke tests each gained a subject-bearing
+  batch step.
+
 ## [0.5.0] - 2026-09-10
 
 ### Added
