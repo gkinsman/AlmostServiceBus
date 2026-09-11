@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Smoke test of @azure/service-bus against a running AlmostServiceBus emulator",
   "scripts": {
-    "smoke": "node smoke.mjs"
+    "smoke": "node smoke.mjs",
+    "concurrent": "node concurrent-connections.mjs"
   },
   "dependencies": {
     "@azure/service-bus": "^7.9.5"

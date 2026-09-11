@@ -93,7 +93,7 @@ public class TcpMultiplexer
                 backend = await ConnectToBackend(_amqpPort, ct);
                 var backendStream = backend.GetStream();
                 await backendStream.WriteAsync(firstByte.AsMemory(0, 1), ct);
-                await ProxyBidirectional(stream, backendStream, client, backend, ct);
+                await ProxyAmqpBidirectional(stream, backendStream, client, backend, ct);
             }
             else if (IsHttpByte(firstByte[0]))
             {
@@ -145,6 +145,182 @@ public class TcpMultiplexer
         _ => false,
     };
 
+    /// <summary>
+    /// The AMQP 1.0 protocol header (<c>AMQP</c>, protocol id 0, version 1.0.0). The SASL
+    /// header that precedes it on authenticated connections has protocol id 3 instead.
+    /// </summary>
+    private static readonly byte[] AmqpProtocolHeader = [0x41, 0x4D, 0x51, 0x50, 0x00, 0x01, 0x00, 0x00];
+
+    /// <summary>
+    /// Proxies an AMQP connection, holding the server's AMQP protocol header (and everything
+    /// after it) until the client's own AMQP protocol header has been forwarded.
+    /// </summary>
+    /// <remarks>
+    /// AMQPNetLite's listener pipelines its AMQP header and <c>open</c> straight after the
+    /// <c>sasl-outcome</c>, without waiting for the client's header. That is legal AMQP, but the
+    /// Node.js SDK's transport (rhea) stops parsing at the <c>sasl-outcome</c> frame and parks the
+    /// rest of the TCP chunk until the <em>next</em> socket data event. When the three land in one
+    /// segment — which happens readily when several connections open at once — that event never
+    /// comes: the server has said everything it has to say and is waiting for <c>begin</c>, the
+    /// client is waiting for a header it already holds, and the connection hangs until rhea's
+    /// ~60 s idle timeout. Releasing the server's header only once the client's header has passed
+    /// guarantees it arrives in a later chunk, exactly as it would from a server that waits for the
+    /// client's header (as Azure does). The equivalent listener-side change is proposed upstream in
+    /// Azure/amqpnetlite#651; doing it here means every distribution of the emulator gets it.
+    /// </remarks>
+    private static async Task ProxyAmqpBidirectional(
+        Stream clientStream, NetworkStream backendStream,
+        TcpClient client, TcpClient backend, CancellationToken ct)
+    {
+        var clientHeaderForwarded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // The first byte of the client's first header was already consumed and forwarded by the
+        // caller, so the client-side matcher starts one byte in.
+        var clientToBackend = PumpAsync(
+            clientStream, backendStream, backend,
+            new HeaderMatcher(AmqpProtocolHeader, initiallyMatched: 1),
+            onHeaderComplete: () => clientHeaderForwarded.TrySetResult(),
+            releaseAfterHeader: null,
+            ct);
+        // If the client goes away before ever sending its header, let the other direction drain.
+        _ = clientToBackend.ContinueWith(_ => clientHeaderForwarded.TrySetResult(), TaskScheduler.Default);
+
+        var backendToClient = PumpAsync(
+            backendStream, clientStream, client,
+            new HeaderMatcher(AmqpProtocolHeader, initiallyMatched: 0),
+            onHeaderComplete: null,
+            releaseAfterHeader: clientHeaderForwarded.Task,
+            ct);
+
+        await FinishBidirectional(clientToBackend, backendToClient, client, backend);
+    }
+
+    /// <summary>
+    /// Copies <paramref name="source"/> to <paramref name="destination"/> while watching for the
+    /// AMQP protocol header. In the client→server direction <paramref name="onHeaderComplete"/>
+    /// fires once the header has been written through. In the server→client direction the bytes
+    /// from the header onward are withheld until <paramref name="releaseAfterHeader"/> completes.
+    /// Once the header has been dealt with, the remainder is a plain copy.
+    /// </summary>
+    private static async Task PumpAsync(
+        Stream source, Stream destination, TcpClient destinationClient,
+        HeaderMatcher matcher, Action? onHeaderComplete, Task? releaseAfterHeader, CancellationToken ct)
+    {
+        try
+        {
+            var buffer = new byte[16 * 1024];
+            var headerDone = false;
+            // Server→client only: bytes at the end of a chunk that may be the start of the
+            // header are withheld until the next chunk decides. Never more than 7 bytes.
+            var carry = new List<byte>();
+
+            while (!headerDone)
+            {
+                var n = await source.ReadAsync(buffer, ct);
+                if (n == 0)
+                {
+                    // EOF before any AMQP header: flush whatever was being held and stop.
+                    if (carry.Count > 0)
+                        await destination.WriteAsync(carry.ToArray(), ct);
+                    return;
+                }
+
+                var headerEnd = matcher.Feed(buffer.AsSpan(0, n)); // index just past the header, or -1
+
+                if (releaseAfterHeader is null)
+                {
+                    // Client→server: forward everything; just note when the header has passed.
+                    await destination.WriteAsync(buffer.AsMemory(0, n), ct);
+                    if (headerEnd >= 0)
+                    {
+                        await destination.FlushAsync(ct);
+                        headerDone = true;
+                        onHeaderComplete?.Invoke();
+                    }
+                    continue;
+                }
+
+                // Server→client: work on carry + chunk so a header straddling chunks is handled.
+                var total = new byte[carry.Count + n];
+                carry.CopyTo(total, 0);
+                buffer.AsSpan(0, n).CopyTo(total.AsSpan(carry.Count));
+
+                if (headerEnd < 0)
+                {
+                    // Forward all but the trailing partial match, which stays in carry.
+                    var keep = matcher.Matched;
+                    var forward = total.Length - keep;
+                    if (forward > 0)
+                    {
+                        await destination.WriteAsync(total.AsMemory(0, forward), ct);
+                        await destination.FlushAsync(ct);
+                    }
+                    carry.Clear();
+                    carry.AddRange(total.AsSpan(forward));
+                    continue;
+                }
+
+                headerDone = true;
+                var headerStart = carry.Count + headerEnd - AmqpProtocolHeader.Length;
+
+                // Everything before the header (the sasl-outcome) goes now; the header and
+                // what follows wait for the client's header to have gone the other way.
+                if (headerStart > 0)
+                {
+                    await destination.WriteAsync(total.AsMemory(0, headerStart), ct);
+                    await destination.FlushAsync(ct);
+                }
+                await releaseAfterHeader.WaitAsync(ct);
+                await destination.WriteAsync(total.AsMemory(headerStart), ct);
+                await destination.FlushAsync(ct);
+            }
+
+            await source.CopyToAsync(destination, ct);
+            await destination.FlushAsync(ct);
+        }
+        catch { }
+
+        try { destinationClient.Client.Shutdown(SocketShutdown.Send); } catch { }
+    }
+
+    /// <summary>
+    /// Streaming matcher for a fixed byte sequence that may straddle chunk boundaries. The AMQP
+    /// header has no repeated prefix, so on a mismatch the only possible restart is at a fresh
+    /// first byte.
+    /// </summary>
+    private sealed class HeaderMatcher
+    {
+        private readonly byte[] _pattern;
+        private int _matched;
+
+        public HeaderMatcher(byte[] pattern, int initiallyMatched)
+        {
+            _pattern = pattern;
+            _matched = initiallyMatched;
+        }
+
+        /// <summary>Length of the partial match at the end of the last chunk fed (0 when none).</summary>
+        public int Matched => _matched;
+
+        /// <summary>Returns the index just past the completed pattern within <paramref name="chunk"/>, or -1.</summary>
+        public int Feed(ReadOnlySpan<byte> chunk)
+        {
+            for (var i = 0; i < chunk.Length; i++)
+            {
+                if (chunk[i] == _pattern[_matched])
+                {
+                    if (++_matched == _pattern.Length)
+                        return i + 1;
+                }
+                else
+                {
+                    _matched = chunk[i] == _pattern[0] ? 1 : 0;
+                }
+            }
+            return -1;
+        }
+    }
+
     private static async Task ProxyBidirectional(
         Stream clientStream, NetworkStream backendStream,
         TcpClient client, TcpClient backend, CancellationToken ct)
@@ -156,6 +332,11 @@ public class TcpMultiplexer
         var clientToBackend = CopyAndSignalAsync(clientStream, backendStream, backend, ct);
         var backendToClient = CopyAndSignalAsync(backendStream, clientStream, client, ct);
 
+        await FinishBidirectional(clientToBackend, backendToClient, client, backend);
+    }
+
+    private static async Task FinishBidirectional(Task clientToBackend, Task backendToClient, TcpClient client, TcpClient backend)
+    {
         await Task.WhenAny(clientToBackend, backendToClient);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));

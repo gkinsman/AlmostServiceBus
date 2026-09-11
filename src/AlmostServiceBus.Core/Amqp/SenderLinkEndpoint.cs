@@ -42,11 +42,10 @@ public class SenderLinkEndpoint : LinkEndpoint
             var rawMsg = messageContext.Message;
 
             // Decode the incoming transfer into one or more brokered messages. The Azure
-            // SDK's ServiceBusMessageBatch arrives as a single transfer whose body is a
-            // Data[] of complete AMQP-encoded inner messages (wrapper has no Subject).
+            // SDKs' message batch arrives as a single transfer whose body is a Data[] of
+            // complete AMQP-encoded inner messages.
             var brokeredMessages = new List<BrokeredMessage>();
-            if (rawMsg.Body is Data[] dataArray && dataArray.Length > 0
-                && rawMsg.Properties?.Subject is null)
+            if (IsBatchTransfer(rawMsg, out var dataArray))
             {
                 Log.LogDebug("RECV BATCH ({Count} messages) → '{Address}'", dataArray.Length, _address);
                 foreach (var data in dataArray)
@@ -167,6 +166,33 @@ public class SenderLinkEndpoint : LinkEndpoint
     /// Converts an AMQP message to a <see cref="BrokeredMessage"/>.
     /// Exposed as public for testing.
     /// </summary>
+    /// <summary>
+    /// AMQP message-format for a Service Bus batch (a transfer carrying several complete
+    /// messages as Data sections). Every Azure SDK stamps it on the transfer.
+    /// </summary>
+    internal const uint BatchMessageFormat = 0x80013700;
+
+    /// <summary>
+    /// Decides whether a transfer is a batch envelope rather than one message.
+    /// The transfer's message-format is authoritative. The body-shape check is kept as a
+    /// fallback for clients that hand-roll batches without setting the format. It must
+    /// not look at the envelope's Properties: the .NET SDK sends a bare envelope, but the
+    /// Node.js SDK copies the first message's properties (Subject included) onto it, and
+    /// an envelope with a Subject was previously mistaken for a single message whose
+    /// body was the raw encoded batch.
+    /// </summary>
+    internal static bool IsBatchTransfer(Message message, out Data[] sections)
+    {
+        if (message.Body is Data[] { Length: > 0 } dataArray)
+        {
+            sections = dataArray;
+            return message.Format == BatchMessageFormat || message.Properties?.Subject is null;
+        }
+
+        sections = [];
+        return false;
+    }
+
     public static BrokeredMessage ConvertToBrokeredMessage(Message amqpMessage)
     {
         var brokered = new BrokeredMessage();

@@ -1,12 +1,12 @@
 import { ref, onUnmounted } from 'vue'
-import type { MessageInfo, MessageEvent, QueueProperties } from '../types'
+import type { MessageInfo, MessageEvent, QueueProperties, EntityType } from '../types'
 import type { NamespaceSse } from './useNamespaceSse'
 import { api } from '../api/client'
 
 export function useMessages(
   ns: () => string,
   entity: () => string | null,
-  entityType: () => 'queue' | 'topic' | null,
+  entityType: () => EntityType | null,
   sse: NamespaceSse,
 ) {
   const messages = ref<MessageInfo[]>([])
@@ -17,9 +17,9 @@ export function useMessages(
     const t = entityType()
     if (!e) { messages.value = []; return }
     try {
-      messages.value = t === 'topic'
-        ? await api.getTopicMessages(ns(), e)
-        : await api.getQueueMessages(ns(), e)
+      if (t === 'topic') messages.value = await api.getTopicMessages(ns(), e)
+      else if (t === 'subscription') messages.value = await api.getSubscriptionMessages(ns(), e)
+      else messages.value = await api.getQueueMessages(ns(), e)
     } catch { /* ignore */ }
   }
 
@@ -71,9 +71,12 @@ export function useMessages(
 
   async function refreshDeadLetter() {
     const e = entity()
-    if (!e || entityType() !== 'queue') { deadLetterMessages.value = []; return }
+    const t = entityType()
+    if (!e || (t !== 'queue' && t !== 'subscription')) { deadLetterMessages.value = []; return }
     try {
-      deadLetterMessages.value = await api.getDeadLetterMessages(ns(), e)
+      deadLetterMessages.value = t === 'subscription'
+        ? await api.getSubscriptionDeadLetterMessages(ns(), e)
+        : await api.getDeadLetterMessages(ns(), e)
     } catch { /* ignore */ }
   }
 

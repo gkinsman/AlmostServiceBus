@@ -61,6 +61,7 @@ public record SubscriptionInfo(
     string Name,
     string? ForwardTo,
     int MessageCount,
+    int DeadLetterCount,
     int RuleCount);
 
 public record MessageInfo(
