@@ -39,6 +39,7 @@ python smoke.py
 cd tests/client-sdk-smoke/node
 npm ci
 node smoke.mjs
+node concurrent-connections.mjs   # concurrency regression guard, see below
 
 # Java (17+, Maven)
 cd tests/client-sdk-smoke/java
@@ -48,6 +49,22 @@ mvn -q compile exec:java
 `ASB_CONNECTION_STRING` overrides the connection string (default is the emulator's
 `RootManageSharedAccessKey` string with `UseDevelopmentEmulator=true`); `ASB_ADMIN_ENDPOINT`
 overrides the admin API base URL (default `http://localhost:5300`).
+
+## Node.js concurrent-connection regression test
+
+`node/concurrent-connections.mjs` opens **6 clients** (6 AMQP connections) at once, each with
+**4 senders + 4 receivers** sending **10 messages** per sender (240 messages total), and asserts
+they all complete within a wall-clock deadline. It is a regression guard for
+[amqpnetlite PR #651](https://github.com/Azure/amqpnetlite/pull/651): unpatched, the listener
+writes its AMQP `Open` frame before reading the peer's protocol header, and because rhea (the
+Node transport) often coalesces its header and `Open` into one TCP segment, concurrent connects
+deadlock until a ~60s idle timeout — the test fails fast at its 30s deadline. The patched source
+(built via the `external/amqpnetlite` submodule) defers the listener `Open`, so the test passes
+in about a second. Verified both ways: patched → pass, stock NuGet 2.5.4 → deadline failure with
+only 2 of the 6 connections established.
+
+Knobs (all optional): `ASB_CONC_CLIENTS`, `ASB_CONC_LINKS`, `ASB_CONC_MESSAGES`,
+`ASB_CONC_DEADLINE_MS`.
 
 ## Why management goes over plain HTTP, not the SDK admin clients
 

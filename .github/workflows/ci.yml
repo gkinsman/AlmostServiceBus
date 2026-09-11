@@ -121,6 +121,16 @@ jobs:
         with:
           dotnet-version: "10.x"
 
+      # The Node SDK opens several connections concurrently; the emulator relies on the
+      # AMQPNetLite listener deferring its Open frame (patches/amqpnetlite,
+      # https://github.com/Azure/amqpnetlite/pull/651). Build the host against the patched
+      # source so the smoke tests exercise that fix.
+      - name: Checkout AMQPNetLite submodule
+        run: git submodule update --init --depth 1 external/amqpnetlite
+
+      - name: Apply submodule patches
+        run: pwsh apply-patches.ps1
+
       - name: Build emulator host
         run: dotnet build src/AlmostServiceBus.Host
 
@@ -169,6 +179,14 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           node smoke.mjs
+
+      # Concurrent-connection regression guard for amqpnetlite PR #651: hangs against an
+      # unpatched listener, passes against the patched source the smoke job builds.
+      - name: Run Node.js concurrent-connection test
+        if: matrix.sdk == 'node'
+        timeout-minutes: 5
+        working-directory: tests/client-sdk-smoke/node
+        run: node concurrent-connections.mjs
 
       # ── Java ──
       - name: Setup Java
