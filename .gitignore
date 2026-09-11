@@ -6,6 +6,9 @@
 # dotenv files
 .env
 
+# Docker build output (build-docker.sh)
+artifacts/
+
 # User-specific files
 *.rsuser
 *.suo

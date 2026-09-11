@@ -3,6 +3,7 @@ using global::Amqp.Framing;
 using global::Amqp.Listener;
 using global::Amqp.Types;
 using AlmostServiceBus.Core.Broker;
+using AlmostServiceBus.Core.Hosting;
 using Microsoft.Extensions.Logging;
 using BrokerSessionState = AlmostServiceBus.Core.Broker.SessionState;
 
@@ -508,9 +509,8 @@ public class ServiceBusLinkProcessor : ILinkProcessor
             if (openProp?.GetValue(connection) is Open open && !string.IsNullOrEmpty(open.HostName))
             {
                 var host = open.HostName;
-                var namespaceName = host.Split('.')[0];
-                if (!namespaceName.Equals("localhost", StringComparison.OrdinalIgnoreCase))
-                    return _registry.GetOrCreate(namespaceName);
+                if (!EmulatorNetwork.IsDefaultNamespaceHost(host))
+                    return _registry.GetOrCreate(host.Split('.')[0]);
             }
         }
         catch { }
