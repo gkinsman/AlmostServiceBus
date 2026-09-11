@@ -4,7 +4,31 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] - 2026-09-11
+
+### Added
+- **Docker image.** `docker/build-docker.sh` publishes the host (dashboard
+  included) and packages it into a minimal runtime image; `docker/README.md`
+  covers `docker run` and a Compose example. Inside a container the emulator
+  binds `0.0.0.0`, advertises its container hostname in the printed connection
+  string, and treats that hostname (or `ASB_HOST`, which also accepts
+  comma-separated aliases) as the `default` namespace, so
+  `RootManageSharedAccessKey` keeps working when other containers reach it by
+  service name. `ASB_BIND_HOST` overrides the bind interface. Contributed by
+  @alt-Rational (#108).
+- **Subscription dead-letter queues in the dashboard.** Subscriptions have
+  their own dead-letter queue in the broker, but the dashboard could not reach
+  it: subscription rows carried no dead-letter count and had no click target,
+  and topics whose only messages were dead-lettered were hidden from the
+  sidebar. Subscriptions now open their own Messages and Dead Letter views,
+  backed by subscription-scoped API routes, and their queues are attached to
+  the live event stream so the views and sidebar badges update without a
+  refresh. Contributed by @johnkors (#112).
+- **Dashboard icons.** The sidebar, entity header, tabs and message rows use
+  [lucide](https://lucide.dev) icons (`lucide-vue-next`) for queues, topics,
+  subscriptions, dead-letter queues and message state instead of hand-picked
+  text glyphs, and the count badges have tooltips. One `EntityIcon` component
+  decides which icon stands for which kind of entity. (#114)
 
 ### Changed
 - **Dashboard API routes are one route per operation.** The dashboard's JSON
@@ -16,23 +40,29 @@ All notable changes to this project are documented here. The format is based on
   (`orders%2Feu` rather than `orders/eu`). The dashboard was updated to match;
   scripts that call the API directly need the same encoding.
 
-### Fixed- **Batch sends from the Node.js SDK lost all but a garbled first message.** A
+### Fixed
+- **Node.js connections hung for ~60 s when several were opened at once.**
+  AMQPNetLite's listener pipelines its AMQP header and `open` straight after
+  the `sasl-outcome`; rhea (the Node transport) stops parsing at the
+  `sasl-outcome` and parks the rest of that TCP chunk until the next socket
+  data event, which never comes. The emulator's proxy now withholds the
+  server's AMQP header until the client's header has been forwarded, so it
+  always lands in a later chunk. Diagnosed, with a regression test, by
+  @alt-Rational (#109); moved from a patched AMQPNetLite into the proxy in
+  #113, and the equivalent listener-side change is proposed upstream in
+  Azure/amqpnetlite#651.
+- **Batch sends from the Node.js SDK lost all but a garbled first message.** A
   batch is one AMQP transfer whose body is a list of encoded messages. The
   emulator recognised it only when the envelope had no `Subject`, which holds
   for the .NET SDK but not for `@azure/service-bus`, whose `sendMessages(array)`
   copies the first message's properties onto the envelope. Batches are now
   detected by the transfer's message-format (`0x80013700`), which every SDK
   sets. The Node.js, Python and Java smoke tests each gained a subject-bearing
-  batch step.
+  batch step. (#115)
 
 ## [0.5.0] - 2026-09-10
 
 ### Added
-- **Dashboard icons.** The sidebar, entity header, tabs and message rows use
-  [lucide](https://lucide.dev) icons (`lucide-vue-next`) for queues, topics,
-  subscriptions, dead-letter queues and message state instead of hand-picked
-  text glyphs, and the count badges have tooltips. One `EntityIcon` component
-  decides which icon stands for which kind of entity.
 - **Queue Properties tab** in the dashboard, backed by a new
   `GET /api/dashboard/namespaces/{ns}/queues/{name}/properties` endpoint:
   lock duration, max delivery count, session and duplicate-detection settings,
@@ -62,15 +92,6 @@ All notable changes to this project are documented here. The format is based on
 - **Dashboard purge endpoints now actually remove messages.** `DELETE .../messages`
   and `DELETE .../deadletter` only locked the messages, so they reappeared with a
   higher delivery count once the lock expired. They are now completed.
-- **Node.js connections hung for ~60 s when several were opened at once.**
-  AMQPNetLite's listener pipelines its AMQP header and `open` straight after
-  the `sasl-outcome`; rhea (the Node transport) stops parsing at the
-  `sasl-outcome` and parks the rest of that TCP chunk until the next socket
-  data event, which never comes. The emulator's proxy now withholds the
-  server's AMQP header until the client's header has been forwarded, so it
-  always lands in a later chunk. Diagnosed, with a regression test, by
-  @alt-Rational (#109); the equivalent listener-side change is proposed
-  upstream in Azure/amqpnetlite#651.
 - **Settlement replies now echo the client's outcome type** (`Modified` for
   abandon/defer, bare `Rejected` for dead-letter, `Accepted` for complete)
   instead of always `Accepted`. The Java SDK fails an abandon or dead-letter
