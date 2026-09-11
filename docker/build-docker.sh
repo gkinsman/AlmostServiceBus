@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Docker build for the emulator. Builds and publishes the app on the host (so the patched
-# AMQPNetLite submodule source and the Vue dashboard are built with the local toolchain), then
+# Docker build for the emulator. Builds and publishes the app on the host (so the Vue dashboard
+# is built with the local toolchain), then
 # packages the published output into a runtime image. The Docker build context is only
 # artifacts/publish, so there is no .dockerignore to maintain and the daemon never receives the
 # whole repo. On Windows use Git Bash or WSL.

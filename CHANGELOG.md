@@ -33,6 +33,15 @@ All notable changes to this project are documented here. The format is based on
   plaintext endpoint. Writing them surfaced the five protocol fixes below.
 
 ### Fixed
+- **Node.js connections hung for ~60 s when several were opened at once.**
+  AMQPNetLite's listener pipelines its AMQP header and `open` straight after
+  the `sasl-outcome`; rhea (the Node transport) stops parsing at the
+  `sasl-outcome` and parks the rest of that TCP chunk until the next socket
+  data event, which never comes. The emulator's proxy now withholds the
+  server's AMQP header until the client's header has been forwarded, so it
+  always lands in a later chunk. Diagnosed, with a regression test, by
+  @alt-Rational (#109); the equivalent listener-side change is proposed
+  upstream in Azure/amqpnetlite#651.
 - **Settlement replies now echo the client's outcome type** (`Modified` for
   abandon/defer, bare `Rejected` for dead-letter, `Accepted` for complete)
   instead of always `Accepted`. The Java SDK fails an abandon or dead-letter

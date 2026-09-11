@@ -1,17 +1,18 @@
-// Concurrency stress test: the Node.js Azure Service Bus SDK (@azure/service-bus, rhea transport)
-// opening many AMQP connections at once against a running AlmostServiceBus emulator.
+// Concurrency regression test: the Node.js Azure Service Bus SDK (@azure/service-bus, rhea
+// transport) opening many AMQP connections at once against a running AlmostServiceBus emulator.
 //
-// This is a regression guard for https://github.com/Azure/amqpnetlite/pull/651. Unpatched,
-// AMQPNetLite's listener writes its AMQP Open frame as soon as the socket is accepted, before it
-// has read the peer's protocol header. rhea frequently coalesces its protocol header and Open into
-// a single TCP segment; when several connections are established concurrently the listener and the
-// client both wait for the other's header, so every connection stalls until a ~60s idle timeout.
-// The patch defers the listener Open until the peer header arrives, so concurrent connects succeed
-// immediately.
+// Contributed by @alt-Rational in #109. Guards the hang described in TcpMultiplexer's
+// ProxyAmqpBidirectional: AMQPNetLite's listener pipelines its AMQP header and Open right after
+// the sasl-outcome; rhea stops parsing at the sasl-outcome and parks the rest of that TCP chunk
+// until the next socket data event, which never arrives. Under concurrent connects the three land
+// in one segment often enough that most connections hang until rhea's ~60 s idle timeout. The
+// emulator's proxy now withholds the server header until the client's header has passed, so the
+// test completes in about a second; against an emulator without that fix it hits the deadline
+// with only a couple of the connections established.
 //
 // Scenario: 6 clients (= 6 AMQP connections), each with 4 senders + 4 receivers, 10 messages per
 // sender. All connections are opened concurrently to provoke the race. A hard wall-clock deadline
-// turns the unpatched hang into a fast, clear failure instead of a multi-minute stall.
+// turns the hang into a fast, clear failure instead of a multi-minute stall.
 //
 //   ASB_CONNECTION_STRING=... ASB_ADMIN_ENDPOINT=http://localhost:5300 node concurrent-connections.mjs
 
@@ -26,8 +27,8 @@ const ADMIN_ENDPOINT = (process.env.ASB_ADMIN_ENDPOINT ?? "http://localhost:5300
 const CLIENTS = Number(process.env.ASB_CONC_CLIENTS ?? 6);
 const LINKS_PER_CLIENT = Number(process.env.ASB_CONC_LINKS ?? 4);
 const MESSAGES_PER_SENDER = Number(process.env.ASB_CONC_MESSAGES ?? 10);
-// Comfortably above the patched runtime (a few seconds) and well below the unpatched ~60s idle
-// hang, so this fails fast against an unpatched emulator.
+// Comfortably above the normal runtime (about a second) and well below rhea's ~60s idle
+// hang, so this fails fast against an emulator without the proxy fix.
 const DEADLINE_MS = Number(process.env.ASB_CONC_DEADLINE_MS ?? 30_000);
 const RECEIVE_WAIT_MS = 15_000;
 
@@ -66,14 +67,14 @@ const entry = (tag, inner) =>
   `<${tag} xmlns="${SB_NS}" xmlns:i="http://www.w3.org/2001/XMLSchema-instance">${inner}</${tag}></content></entry>`;
 const created = (r) => r.status === 200 || r.status === 201;
 
-// Reject if the whole scenario has not finished by the deadline. Without this the unpatched hang
+// Reject if the whole scenario has not finished by the deadline. Without this the hang
 // would keep the process alive for minutes; instead we surface a clear, fast failure.
 function withDeadline(promise, ms) {
   let timer;
   const deadline = new Promise((_, reject) => {
     timer = setTimeout(
       () => reject(new Error(`deadline of ${ms}ms exceeded — connections did not all open in time ` +
-        `(this is the symptom fixed by amqpnetlite PR #651)`)),
+        `(see TcpMultiplexer.ProxyAmqpBidirectional)`)),
       ms,
     );
   });
@@ -149,7 +150,7 @@ async function main() {
   step(`open ${CLIENTS} connections concurrently, send/receive ${total} messages`);
   const started = Date.now();
   // All clients start at once so their AMQP connections race — this is what triggers the
-  // unpatched listener's coalesced-header deadlock.
+  // coalesced sasl-outcome + header deadlock (see TcpMultiplexer.ProxyAmqpBidirectional).
   const perClient = await withDeadline(Promise.all(Array.from({ length: CLIENTS }, (_, c) => runClient(c))), DEADLINE_MS);
   const received = perClient.reduce((a, b) => a + b, 0);
   const elapsed = ((Date.now() - started) / 1000).toFixed(1);
@@ -169,7 +170,7 @@ async function main() {
 
 main().catch((err) => {
   console.error("    FAIL:", err instanceof Error ? err.message : err);
-  // Force exit: on the unpatched hang the stalled SDK connections keep the event loop alive, so
+  // Force exit: when connections hang the stalled SDK connections keep the event loop alive, so
   // setting process.exitCode alone would never let the process terminate.
   process.exit(1);
 });

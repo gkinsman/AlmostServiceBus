@@ -10,11 +10,8 @@ This folder contains everything needed to build and run the emulator as a contai
 Unlike a typical multi-stage Dockerfile, the .NET/Node build runs **on the host**, not inside the
 image. `build-docker.sh`:
 
-1. Applies the AMQPNetLite (and other) submodule patches, so the emulator is built against the
-   patched [AMQPNetLite](https://github.com/Azure/amqpnetlite) source when the
-   `external/amqpnetlite` submodule is checked out (see the repo's `patches/` folder). This carries
-   the fix from [Azure/amqpnetlite#651](https://github.com/Azure/amqpnetlite/pull/651) ahead of an
-   upstream release.
+1. Applies any submodule patches under the repo's `patches/` folder (idempotent; none are
+   needed for the emulator itself today — they exist for the framework conformance suites).
 2. Runs `dotnet publish` for `AlmostServiceBus.Host`, which also builds the Vue dashboard, into
    `artifacts/publish/` at the repo root.
 3. Runs `docker build` with **`artifacts/publish/` as the build context**. Because the context is
@@ -29,8 +26,6 @@ Because the build happens on the host, the machine running the script needs:
 - Node.js (for the dashboard build)
 - Docker
 - Bash — on Windows use Git Bash or WSL
-- The `external/amqpnetlite` submodule checked out, if you want the patched AMQP listener:
-  `git submodule update --init external/amqpnetlite`
 
 ## Building
 

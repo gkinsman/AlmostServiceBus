@@ -52,19 +52,22 @@ overrides the admin API base URL (default `http://localhost:5300`).
 
 ## Node.js concurrent-connection regression test
 
-`node/concurrent-connections.mjs` opens **6 clients** (6 AMQP connections) at once, each with
-**4 senders + 4 receivers** sending **10 messages** per sender (240 messages total), and asserts
-they all complete within a wall-clock deadline. It is a regression guard for
-[amqpnetlite PR #651](https://github.com/Azure/amqpnetlite/pull/651): unpatched, the listener
-writes its AMQP `Open` frame before reading the peer's protocol header, and because rhea (the
-Node transport) often coalesces its header and `Open` into one TCP segment, concurrent connects
-deadlock until a ~60s idle timeout — the test fails fast at its 30s deadline. The patched source
-(built via the `external/amqpnetlite` submodule) defers the listener `Open`, so the test passes
-in about a second. Verified both ways: patched → pass, stock NuGet 2.5.4 → deadline failure with
-only 2 of the 6 connections established.
+`node/concurrent-connections.mjs` (contributed in #109) opens **6 clients** (6 AMQP connections)
+at once, each with **4 senders + 4 receivers** sending **10 messages** per sender (240 total), and
+asserts they all complete within a 30 s deadline. Knobs: `ASB_CONC_CLIENTS`, `ASB_CONC_LINKS`,
+`ASB_CONC_MESSAGES`, `ASB_CONC_DEADLINE_MS`.
 
-Knobs (all optional): `ASB_CONC_CLIENTS`, `ASB_CONC_LINKS`, `ASB_CONC_MESSAGES`,
-`ASB_CONC_DEADLINE_MS`.
+It guards a deadlock in the connection handshake. AMQPNetLite's listener pipelines its AMQP
+protocol header and `open` immediately after the `sasl-outcome`, before it has seen the client's
+header — legal AMQP, but rhea (Node's transport) stops parsing at the `sasl-outcome` frame and
+parks the rest of that TCP chunk until the *next* socket data event. When the three arrive in one
+segment, which happens readily under concurrent connects, that event never comes: the server has
+sent everything and waits for `begin`, the client waits for a header it is already holding, and
+the connection sits until rhea's ~60 s idle timeout. The emulator's `TcpMultiplexer` now withholds
+the server's AMQP header until the client's header has been forwarded, so the header always
+arrives in a later chunk — the same thing a server that waits for the client's header (as Azure
+does) would produce. Without that, only 2 of the 6 connections typically come up before the
+deadline; with it the test finishes in about a second.
 
 ## Why management goes over plain HTTP, not the SDK admin clients
 
