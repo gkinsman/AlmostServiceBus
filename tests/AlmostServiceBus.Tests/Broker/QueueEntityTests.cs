@@ -84,7 +84,11 @@ public class QueueEntityTests
         var received = new System.Collections.Concurrent.ConcurrentBag<BrokeredMessage>();
         var tasks = new List<Task>();
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        // Generous budget: on a loaded 2-core CI runner the consumer tasks can sit in the thread
+        // pool queue for tens of seconds before they first run (seen: 0 received after 39 s).
+        // The token is deliberately not passed to Task.Run, so a late start exits the loop and
+        // fails the count assertion below instead of surfacing as a bare TaskCanceledException.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
         // 3 competing consumers
         for (var c = 0; c < 3; c++)
@@ -97,9 +101,9 @@ public class QueueEntityTests
                     if (msg is not null)
                         received.Add(msg);
                     else
-                        await Task.Delay(10, cts.Token);
+                        await Task.Delay(10);
                 }
-            }, cts.Token));
+            }));
         }
 
         await Task.WhenAll(tasks);
