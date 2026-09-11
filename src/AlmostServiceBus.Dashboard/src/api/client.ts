@@ -14,14 +14,26 @@ async function del(path: string): Promise<void> {
 }
 
 /**
- * Encodes a dynamic path segment while preserving literal "/" separators —
- * entity names here are legitimately hierarchical (topic grouping prefixes,
- * "topic/subscriptions/sub" composite paths), and the backend's {**path}
- * catch-all routes match on raw slashes, so a blanket encodeURIComponent
- * would break routing.
+ * Entity names are hierarchical ("OrderFlowDemo/Contracts/OrderSubmitted") but each name is a
+ * single segment of the API route, so its slashes travel as %2F. encodeURIComponent does that.
  */
-function encodePath(segment: string): string {
-  return segment.split('/').map(encodeURIComponent).join('/')
+const seg = encodeURIComponent
+
+const queueUrl = (ns: string, queue: string) => `/namespaces/${seg(ns)}/queues/${seg(queue)}`
+const topicUrl = (ns: string, topic: string) => `/namespaces/${seg(ns)}/topics/${seg(topic)}`
+
+/**
+ * The dashboard tracks a subscription as the composite "topicName/subscriptions/subName" path
+ * (the same address the SDK uses). The API addresses it as two segments. Subscription names
+ * cannot contain "/", so the last "/subscriptions/" marker is the split point.
+ */
+function subscriptionUrl(ns: string, entityPath: string): string {
+  const marker = '/subscriptions/'
+  const idx = entityPath.lastIndexOf(marker)
+  if (idx < 0) throw new Error(`not a subscription path: ${entityPath}`)
+  const topic = entityPath.slice(0, idx)
+  const subscription = entityPath.slice(idx + marker.length)
+  return `${topicUrl(ns, topic)}/subscriptions/${seg(subscription)}`
 }
 
 export const api = {
@@ -29,33 +41,28 @@ export const api = {
 
   getNamespaces: () => get<NamespaceInfo[]>('/namespaces'),
 
-  getEntities: (ns: string) => get<EntityOverview>(`/namespaces/${encodePath(ns)}/entities`),
+  getEntities: (ns: string) => get<EntityOverview>(`/namespaces/${seg(ns)}/entities`),
 
-  getQueueMessages: (ns: string, queueName: string) =>
-    get<MessageInfo[]>(`/namespaces/${encodePath(ns)}/queues/${encodePath(queueName)}/messages`),
+  getQueueMessages: (ns: string, queue: string) => get<MessageInfo[]>(`${queueUrl(ns, queue)}/messages`),
 
-  getTopicMessages: (ns: string, topicName: string) =>
-    get<MessageInfo[]>(`/namespaces/${encodePath(ns)}/topics/${encodePath(topicName)}/messages`),
+  getDeadLetterMessages: (ns: string, queue: string) => get<MessageInfo[]>(`${queueUrl(ns, queue)}/deadletter`),
 
-  getDeadLetterMessages: (ns: string, queueName: string) =>
-    get<MessageInfo[]>(`/namespaces/${encodePath(ns)}/queues/${encodePath(queueName)}/deadletter`),
+  getQueueProperties: (ns: string, queue: string) => get<QueueProperties>(`${queueUrl(ns, queue)}/properties`),
 
-  getQueueProperties: (ns: string, queueName: string) =>
-    get<QueueProperties>(`/namespaces/${encodePath(ns)}/queues/${encodePath(queueName)}/properties`),
+  purgeQueue: (ns: string, queue: string) => del(`${queueUrl(ns, queue)}/messages`),
 
-  purgeQueue: (ns: string, queueName: string) =>
-    del(`/namespaces/${encodePath(ns)}/queues/${encodePath(queueName)}/messages`),
+  purgeDeadLetter: (ns: string, queue: string) => del(`${queueUrl(ns, queue)}/deadletter`),
 
-  purgeDeadLetter: (ns: string, queueName: string) =>
-    del(`/namespaces/${encodePath(ns)}/queues/${encodePath(queueName)}/deadletter`),
+  /** Newest messages across all of the topic's subscriptions. */
+  getTopicMessages: (ns: string, topic: string) => get<MessageInfo[]>(`${topicUrl(ns, topic)}/messages`),
 
   /** entityPath is the composite "topicName/subscriptions/subName" path. */
   getSubscriptionMessages: (ns: string, entityPath: string) =>
-    get<MessageInfo[]>(`/namespaces/${encodePath(ns)}/topics/${encodePath(entityPath)}/messages`),
+    get<MessageInfo[]>(`${subscriptionUrl(ns, entityPath)}/messages`),
 
   getSubscriptionDeadLetterMessages: (ns: string, entityPath: string) =>
-    get<MessageInfo[]>(`/namespaces/${encodePath(ns)}/topics/${encodePath(entityPath)}/deadletter`),
+    get<MessageInfo[]>(`${subscriptionUrl(ns, entityPath)}/deadletter`),
 
   purgeSubscriptionDeadLetter: (ns: string, entityPath: string) =>
-    del(`/namespaces/${encodePath(ns)}/topics/${encodePath(entityPath)}/deadletter`),
+    del(`${subscriptionUrl(ns, entityPath)}/deadletter`),
 }
