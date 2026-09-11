@@ -123,7 +123,7 @@ function parentPath(name: string) {
     <div class="entity-header">
       <div class="title-row">
         <span class="name">{{ shortName(entity) }}</span>
-        <span class="type-badge">{{ entityType }}</span>
+        <span class="type-badge"><EntityIcon :type="entityType" :size="11" />{{ entityType }}</span>
       </div>
       <div v-if="parentPath(entity)" class="parent">{{ parentPath(entity) }}</div>
     </div>
@@ -131,9 +131,9 @@ function parentPath(name: string) {
     <!-- Queue / subscription view: messages -->
     <template v-if="entityType === 'queue' || entityType === 'subscription'">
       <div class="tabs">
-        <div class="tab" :class="{ active: activeTab === 'messages' }" @click="switchTab('messages')">Messages</div>
-        <div class="tab" :class="{ active: activeTab === 'deadletter' }" @click="switchTab('deadletter')">Dead Letter</div>
-        <div v-if="entityType === 'queue'" class="tab" :class="{ active: activeTab === 'properties' }" @click="switchTab('properties')">Properties</div>
+        <div class="tab" :class="{ active: activeTab === 'messages' }" @click="switchTab('messages')"><Mail :size="12" />Messages</div>
+        <div class="tab" :class="{ active: activeTab === 'deadletter' }" @click="switchTab('deadletter')"><MailWarning :size="12" />Dead Letter</div>
+        <div v-if="entityType === 'queue'" class="tab" :class="{ active: activeTab === 'properties' }" @click="switchTab('properties')"><Settings2 :size="12" />Properties</div>
       </div>
 
       <!-- Messages tab -->
@@ -191,7 +191,7 @@ function parentPath(name: string) {
     <!-- Topic view: subscriptions -->
     <template v-else-if="entityType === 'topic'">
       <div class="tabs">
-        <div class="tab active">Subscriptions</div>
+        <div class="tab active"><CornerDownRight :size="12" />Subscriptions</div>
       </div>
 
       <div class="rows">
@@ -225,10 +225,11 @@ function parentPath(name: string) {
 .entity-header { padding: 12px 14px; border-bottom: 1px solid var(--dark-border); background: var(--dark); }
 .title-row { display: flex; align-items: center; gap: 8px; }
 .name { color: var(--dark-text); font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.type-badge { background: var(--blue); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; flex-shrink: 0; opacity: 0.85; }
+.type-badge { background: var(--blue); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; flex-shrink: 0; opacity: 0.85; display: inline-flex; align-items: center; gap: 4px; }
+.type-badge .entity-icon { opacity: 1; }
 .parent { font-size: 10px; color: var(--dark-text-muted); margin-top: 2px; }
 .tabs { display: flex; border-bottom: 1px solid var(--dark-border); background: var(--dark); }
-.tab { padding: 8px 14px; color: var(--dark-text-muted); font-size: 12px; cursor: pointer; transition: color 0.1s; border-bottom: 2px solid transparent; }
+.tab { padding: 8px 14px; color: var(--dark-text-muted); font-size: 12px; cursor: pointer; transition: color 0.1s; border-bottom: 2px solid transparent; display: inline-flex; align-items: center; gap: 5px; }
 .tab:hover { color: var(--dark-text); }
 .tab.active { border-bottom-color: var(--blue); color: var(--blue); font-weight: 700; }
 .list-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; background: var(--bg-mantle); border-bottom: 1px solid var(--border-subtle); }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { MessageInfo } from '../types'
+import { Check, MailWarning } from 'lucide-vue-next'
 
 defineProps<{ message: MessageInfo; selected: boolean }>()
 defineEmits<{ select: [] }>()
@@ -16,8 +17,8 @@ function timeAgo(iso: string): string {
   <div class="row" :class="{ selected, consumed: message.state === 'Consumed', deadlettered: message.state === 'DeadLettered' }" @click="$emit('select')">
     <div class="header">
       <span class="msg-id">
-        <span v-if="message.state === 'Consumed'" class="state-icon consumed-icon" title="Consumed">✓</span>
-        <span v-else-if="message.state === 'DeadLettered'" class="state-icon dl-icon" title="Dead-lettered">✗</span>
+        <Check v-if="message.state === 'Consumed'" class="state-icon consumed-icon" :size="12" :stroke-width="3" title="Consumed" />
+        <MailWarning v-else-if="message.state === 'DeadLettered'" class="state-icon dl-icon" :size="12" title="Dead-lettered" />
         {{ message.messageId.substring(0, 12) }}
       </span>
       <span class="time">{{ timeAgo(message.enqueuedTimeUtc) }}</span>
@@ -44,7 +45,7 @@ function timeAgo(iso: string): string {
 .row.deadlettered { opacity: 0.55; }
 .header { display: flex; justify-content: space-between; align-items: center; }
 .msg-id { color: var(--text); font-weight: 500; font-size: 11px; display: flex; align-items: center; gap: 4px; font-family: 'Cascadia Code', 'Fira Code', monospace; }
-.state-icon { font-size: 12px; font-weight: 700; }
+.state-icon { flex-shrink: 0; }
 .consumed-icon { color: var(--green); }
 .dl-icon { color: var(--red); }
 .time { color: var(--text-muted); font-size: 9px; }

@@ -19,6 +19,11 @@ All notable changes to this project are documented here. The format is based on
 ## [0.5.0] - 2026-09-10
 
 ### Added
+- **Dashboard icons.** The sidebar, entity header, tabs and message rows use
+  [lucide](https://lucide.dev) icons (`lucide-vue-next`) for queues, topics,
+  subscriptions, dead-letter queues and message state instead of hand-picked
+  text glyphs, and the count badges have tooltips. One `EntityIcon` component
+  decides which icon stands for which kind of entity.
 - **Queue Properties tab** in the dashboard, backed by a new
   `GET /api/dashboard/namespaces/{ns}/queues/{name}/properties` endpoint:
   lock duration, max delivery count, session and duplicate-detection settings,

@@ -5,6 +5,8 @@ import ConnectionStringBar from './ConnectionStringBar.vue'
 import { useEntities } from '../composables/useEntities'
 import { sseKey } from '../composables/useNamespaceSse'
 import type { EntityType } from '../types'
+import { ChevronRight, ChevronDown, ArrowRight } from 'lucide-vue-next'
+import EntityIcon from './EntityIcon.vue'
 
 const ns = defineModel<string>('namespace', { required: true })
 const entity = defineModel<string | null>('entity', { required: true })
@@ -72,11 +74,11 @@ function shortName(fullName: string) {
         class="entity-row" :class="{ selected: entity === q.name }"
         @click="selectEntity(q.name, 'queue')"
       >
-        <span class="entity-name">{{ q.name }}</span>
+        <span class="entity-name"><EntityIcon type="queue" />{{ q.name }}</span>
         <span class="entity-badges">
-          <span v-if="q.totalMessageCount - q.consumedCount - q.deadLetterCount > 0" class="badge">{{ q.totalMessageCount - q.consumedCount - q.deadLetterCount }}</span>
-          <span v-if="q.consumedCount > 0" class="badge-green">{{ q.consumedCount }}</span>
-          <span v-if="q.deadLetterCount > 0" class="badge-red">{{ q.deadLetterCount }}</span>
+          <span v-if="q.totalMessageCount - q.consumedCount - q.deadLetterCount > 0" class="badge" title="Active messages">{{ q.totalMessageCount - q.consumedCount - q.deadLetterCount }}</span>
+          <span v-if="q.consumedCount > 0" class="badge-green" title="Completed">{{ q.consumedCount }}</span>
+          <span v-if="q.deadLetterCount > 0" class="badge-red" title="Dead-lettered">{{ q.deadLetterCount }}</span>
         </span>
       </div>
 
@@ -86,7 +88,7 @@ function shortName(fullName: string) {
       </div>
       <template v-for="group in topicGroups" :key="group.prefix">
         <div class="group-header" @click="toggleGroup(group.prefix)">
-          <span class="chevron">{{ isCollapsed(group.prefix) ? '▸' : '▾' }}</span>
+          <component :is="isCollapsed(group.prefix) ? ChevronRight : ChevronDown" class="chevron" :size="12" />
           {{ group.prefix }}
         </div>
         <template v-if="!isCollapsed(group.prefix)">
@@ -95,7 +97,7 @@ function shortName(fullName: string) {
               class="entity-row indent" :class="{ selected: entity === t.name }"
               @click="selectEntity(t.name, 'topic')"
             >
-              {{ shortName(t.name) }}
+              <span class="entity-name"><EntityIcon type="topic" />{{ shortName(t.name) }}</span>
             </div>
             <div
               v-for="s in t.subscriptions" :key="s.name"
@@ -103,10 +105,10 @@ function shortName(fullName: string) {
               :class="{ selected: s.forwardTo ? entity === s.forwardTo : entity === `${t.name}/subscriptions/${s.name}` }"
               @click="s.forwardTo ? selectEntity(s.forwardTo, 'queue') : selectSubscription(t.name, s.name)"
             >
-              ↳ {{ s.name }}
-              <span v-if="s.forwardTo" class="forward-to">→ {{ s.forwardTo }}</span>
-              <span v-if="s.messageCount > 0" class="badge-sm">{{ s.messageCount }}</span>
-              <span v-if="s.deadLetterCount > 0" class="badge-sm badge-sm-red">{{ s.deadLetterCount }}</span>
+              <EntityIcon type="subscription" :size="12" />{{ s.name }}
+              <span v-if="s.forwardTo" class="forward-to"><ArrowRight :size="10" />{{ s.forwardTo }}</span>
+              <span v-if="s.messageCount > 0" class="badge-sm" title="Active messages">{{ s.messageCount }}</span>
+              <span v-if="s.deadLetterCount > 0" class="badge-sm badge-sm-red" title="Dead-lettered">{{ s.deadLetterCount }}</span>
             </div>
           </template>
         </template>
@@ -141,7 +143,7 @@ function shortName(fullName: string) {
 .empty-hint { padding: 4px 12px; font-size: 10px; color: var(--dark-text-muted); font-style: italic; }
 .group-header { padding: 4px 4px 4px 12px; color: var(--dark-text-muted); cursor: pointer; font-size: 12px; font-weight: 600; user-select: none; transition: color 0.1s; }
 .group-header:hover { color: var(--dark-text); }
-.chevron { color: var(--dark-text-muted); margin-right: 4px; }
+.chevron { color: var(--dark-text-muted); margin-right: 4px; vertical-align: -2px; }
 .entity-row { padding: 5px 6px 5px 12px; cursor: pointer; border-radius: 5px; font-size: 12px; font-weight: 500; display: flex; justify-content: space-between; align-items: center; color: var(--dark-text); transition: background 0.1s; }
 .entity-row.indent { padding-left: 28px; }
 .entity-row:hover { background: var(--dark-surface); }
@@ -149,18 +151,20 @@ function shortName(fullName: string) {
 .entity-row.selected .badge { background: rgba(255,255,255,0.25); }
 .entity-row.selected .badge-green { background: rgba(255,255,255,0.2); }
 .entity-row.selected .badge-red { background: rgba(255,255,255,0.2); }
-.entity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.entity-name { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.entity-row .entity-icon { color: var(--dark-text-muted); }
+.entity-row.selected .entity-icon { color: #fff; opacity: 1; }
 .entity-badges { display: flex; gap: 3px; flex-shrink: 0; }
 .badge { background: var(--blue); color: #fff; border-radius: 8px; padding: 1px 6px; font-size: 10px; font-weight: 600; }
 .badge-green { background: var(--green); color: #fff; border-radius: 8px; padding: 1px 6px; font-size: 10px; font-weight: 600; }
 .badge-red { background: var(--red); color: #fff; border-radius: 8px; padding: 1px 6px; font-size: 10px; font-weight: 600; }
 .badge-sm { background: var(--dark-surface); color: var(--dark-text-muted); border-radius: 8px; padding: 0 4px; font-size: 9px; margin-left: 4px; }
 .badge-sm-red { background: var(--red); color: #fff; }
-.sub-row { padding: 3px 4px 3px 40px; color: var(--dark-text-muted); font-size: 11px; }
+.sub-row { padding: 3px 4px 3px 40px; color: var(--dark-text-muted); font-size: 11px; display: flex; align-items: center; gap: 5px; }
 .sub-row.clickable { cursor: pointer; border-radius: 4px; transition: background 0.1s; }
 .sub-row.clickable:hover { background: var(--dark-surface); color: var(--dark-text); }
 .sub-row.selected { color: var(--blue); }
-.forward-to { color: var(--dark-text-muted); font-size: 9px; margin-left: 4px; }
+.forward-to { color: var(--dark-text-muted); font-size: 9px; margin-left: 2px; display: inline-flex; align-items: center; gap: 2px; }
 .loading { padding: 20px; text-align: center; color: var(--dark-text-muted); font-size: 11px; animation: pulse 1.5s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 .footer { border-top: 1px solid var(--dark-border); padding: 8px 12px; background: var(--dark); font-size: 10px; color: var(--dark-text-muted); }
