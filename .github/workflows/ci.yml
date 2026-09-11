@@ -124,13 +124,16 @@ jobs:
       - name: Build emulator host
         run: dotnet build src/AlmostServiceBus.Host
 
-      - name: Start emulator (AMQP 5672, admin HTTP 5300)
+      - name: Start emulator (AMQP 5672, admin HTTP 5300, admin HTTPS 5301)
         run: |
           dotnet run --project src/AlmostServiceBus.Host --no-build \
-            -- --DashboardPort 0 > emulator.log 2>&1 &
+            -- --DashboardPort 0 --AdminTlsPort 5301 --AdminTlsCertDir "$RUNNER_TEMP/asb-certs" \
+            > emulator.log 2>&1 &
           echo "EMULATOR_PID=$!" >> "$GITHUB_ENV"
+          echo "ASB_CERT_DIR=$RUNNER_TEMP/asb-certs" >> "$GITHUB_ENV"
           for i in $(seq 1 30); do
             nc -z localhost 5672 2>/dev/null && nc -z localhost 5300 2>/dev/null \
+              && nc -z localhost 5301 2>/dev/null \
               && echo "Emulator ready" && break
             sleep 1
           done
@@ -153,6 +156,17 @@ jobs:
           pip install -q -r requirements.txt
           python smoke.py
 
+      # Exercises the SDK's ServiceBusAdministrationClient against the HTTPS admin endpoint
+      # (5301), trusting the emitted CA via REQUESTS_CA_BUNDLE (the requests transport honours it).
+      - name: Run Python SDK admin test (HTTPS)
+        if: matrix.sdk == 'python'
+        timeout-minutes: 5
+        working-directory: tests/client-sdk-smoke/python
+        env:
+          REQUESTS_CA_BUNDLE: ${{ env.ASB_CERT_DIR }}/emulator-ca.crt
+          ASB_ADMIN_CONNECTION_STRING: Endpoint=sb://localhost:5301;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true
+        run: python admin.py
+
       # ── Node.js ──
       - name: Setup Node.js
         if: matrix.sdk == 'node'
@@ -169,6 +183,17 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           node smoke.mjs
+
+      # Exercises the SDK's ServiceBusAdministrationClient against the HTTPS admin endpoint
+      # (5301), trusting the emitted CA via NODE_EXTRA_CA_CERTS (node ignores the OS store).
+      - name: Run Node.js SDK admin test (HTTPS)
+        if: matrix.sdk == 'node'
+        timeout-minutes: 5
+        working-directory: tests/client-sdk-smoke/node
+        env:
+          NODE_EXTRA_CA_CERTS: ${{ env.ASB_CERT_DIR }}/emulator-ca.crt
+          ASB_ADMIN_CONNECTION_STRING: Endpoint=sb://localhost:5301;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true
+        run: node admin.mjs
 
       # Regression guard for the coalesced sasl-outcome + AMQP header hang (rhea parks the
       # rest of the chunk; see TcpMultiplexer.ProxyAmqpBidirectional). Opens 6 connections at
@@ -194,6 +219,21 @@ jobs:
         timeout-minutes: 8
         working-directory: tests/client-sdk-smoke/java
         run: mvn -q -B compile exec:java
+
+      # The Java SDK admin client can't reach the emulator's admin port (it dials 443), so the
+      # admin test drives the same Atom REST API over HTTPS on 5301, trusting the CA via a PKCS12
+      # truststore built from the emitted CA. Data-plane usage still goes through the SDK (5672).
+      - name: Run Java SDK admin test (HTTPS)
+        if: matrix.sdk == 'java'
+        timeout-minutes: 8
+        working-directory: tests/client-sdk-smoke/java
+        run: |
+          keytool -importcert -noprompt -alias asb-ca \
+            -file "$ASB_CERT_DIR/emulator-ca.crt" \
+            -keystore "$ASB_CERT_DIR/emulator-truststore.p12" \
+            -storetype PKCS12 -storepass changeit
+          MAVEN_OPTS="-Djavax.net.ssl.trustStore=$ASB_CERT_DIR/emulator-truststore.p12 -Djavax.net.ssl.trustStoreType=PKCS12 -Djavax.net.ssl.trustStorePassword=changeit" \
+            mvn -q -B -o exec:java -Dexec.mainClass=io.almostservicebus.smoke.AdminSmoke
 
       - name: Emulator log on failure
         if: failure()

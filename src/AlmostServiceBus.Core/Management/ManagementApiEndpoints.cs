@@ -72,7 +72,7 @@ public static class ManagementApiEndpoints
                 };
                 sub.AddOrUpdateRule(rule);
 
-                var xml = AtomXmlWriter.WriteRuleEntry(rule, baseUrl);
+                var xml = AtomXmlWriter.WriteRuleEntry(rule, topicName, subName, baseUrl);
                 return Results.Content(xml, AtomXmlContentType,
                     statusCode: isUpdate ? StatusCodes.Status200OK : StatusCodes.Status201Created);
             }
@@ -196,7 +196,7 @@ public static class ManagementApiEndpoints
                 if (rule is null)
                     return ManagementApiErrors.EntityNotFound($"{topicName}/Subscriptions/{subName}/Rules/{ruleName}");
 
-                return Results.Content(AtomXmlWriter.WriteRuleEntry(rule, baseUrl), AtomXmlContentType);
+                return Results.Content(AtomXmlWriter.WriteRuleEntry(rule, topicName, subName, baseUrl), AtomXmlContentType);
             }
 
             if (TryParseRuleListPath(path, out topicName, out subName))
@@ -208,7 +208,7 @@ public static class ManagementApiEndpoints
 
                 var (rSkip, rTop) = ParsePagination(request);
                 var rules = sub.GetRules().Skip(rSkip).Take(rTop);
-                var feed = AtomXmlWriter.WriteRuleFeed(rules, baseUrl);
+                var feed = AtomXmlWriter.WriteRuleFeed(rules, topicName, subName, baseUrl);
                 return Results.Content(feed, AtomXmlContentType);
             }
 
@@ -295,7 +295,9 @@ public static class ManagementApiEndpoints
 
     private static string GetRoutePath(HttpRequest request)
     {
-        return request.RouteValues["path"]?.ToString() ?? string.Empty;
+        // Some SDK admin clients append a trailing slash to collection URLs (e.g. ".../Rules/");
+        // trim it so the path parsers match. Entity names never legitimately end in '/'.
+        return (request.RouteValues["path"]?.ToString() ?? string.Empty).TrimEnd('/');
     }
 
     /// <summary>
@@ -494,6 +496,8 @@ public static class ManagementApiEndpoints
             entity.MaxDeliveryCount = props.MaxDeliveryCount;
             entity.EnableBatchedOperations = props.EnableBatchedOperations;
             entity.UserMetadata = props.UserMetadata;
+            entity.DeadLetteringOnFilterEvaluationExceptions = props.DeadLetteringOnFilterEvaluationExceptions;
+            entity.AutoDeleteOnIdle = props.AutoDeleteOnIdle;
 
             if (props.ForwardTo is not null)
             {

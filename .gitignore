@@ -492,3 +492,8 @@ orderflow-sagas*
 
 # Client SDK smoke test build output
 tests/client-sdk-smoke/java/target/
+
+# AlmostServiceBus generated TLS admin material (see certs/README.md)
+emulator-ca.crt
+emulator-truststore.p12
+emulator-admin.pfx
