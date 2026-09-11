@@ -39,9 +39,11 @@ AmqpLog.Factory = LoggerFactory.Create(b => b
 
 var publicPort = mgmtBuilder.Configuration.GetValue("Port", 5672);
 var dashboardPort = mgmtBuilder.Configuration.GetValue("DashboardPort", 15672);
+var publicHost = EmulatorNetwork.GetPublicHost();
+var bindHost = EmulatorNetwork.GetBindHost();
 // Microsoft emulator compatibility: admin HTTP on port 5300.
 const int mgmtApiPort = 5300;
-var connStr = $"Endpoint=sb://localhost:{publicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
+var connStr = $"Endpoint=sb://{publicHost}:{publicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
 var internalHttpPort = EmulatorInfrastructure.GetFreePort();
 var internalAmqpPort = EmulatorInfrastructure.GetFreePort();
 
@@ -101,7 +103,7 @@ scheduledProcessor.StartBackground(TimeSpan.FromMilliseconds(500));
 
 // ── AMQP server ──
 
-var amqpServer = new AmqpServer(new AmqpServerOptions { Port = internalAmqpPort }, registry, scheduledProcessor);
+var amqpServer = new AmqpServer(new AmqpServerOptions { Host = bindHost, Port = internalAmqpPort }, registry, scheduledProcessor);
 amqpServer.Start();
 
 // ── Connection multiplexers (plaintext — clients use UseDevelopmentEmulator=true) ──
@@ -134,9 +136,9 @@ Console.WriteLine($"{cyan}  ██║  ██║███████╗██�
 Console.WriteLine($"{cyan}  ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝ ╚═════╝ ╚══════╝   ╚═╝   {reset}");
 Console.WriteLine($"{bold}        S E R V I C E   B U S   E M U L A T O R{reset}");
 Console.WriteLine();
-Console.WriteLine($"  {green}●{reset} {bold}Service Bus{reset}  {dim}──▶{reset} localhost:{yellow}{publicPort}{reset} {dim}(plain AMQP/HTTP){reset}");
-Console.WriteLine($"  {green}●{reset} {bold}Management {reset}  {dim}──▶{reset} localhost:{yellow}{mgmtApiPort}{reset} {dim}(plain HTTP){reset}");
-Console.WriteLine($"  {green}●{reset} {bold}Dashboard  {reset}  {dim}──▶{reset} {cyan}http://localhost:{dashboardPort}{reset}");
+Console.WriteLine($"  {green}●{reset} {bold}Service Bus{reset}  {dim}──▶{reset} {publicHost}:{yellow}{publicPort}{reset} {dim}(AMQP){reset}");
+Console.WriteLine($"  {green}●{reset} {bold}Management {reset}  {dim}──▶{reset} {publicHost}:{yellow}{mgmtApiPort}{reset} {dim}(HTTP){reset}");
+Console.WriteLine($"  {green}●{reset} {bold}Dashboard  {reset}  {dim}──▶{reset} {cyan}http://{publicHost}:{dashboardPort}{reset}");
 Console.WriteLine();
 var boxInner = connStr.Length + 2;
 const string label = " connection string ";
@@ -144,7 +146,7 @@ var topFill = new string('─', boxInner - label.Length - 1);
 var botFill = new string('─', boxInner);
 var padRight = new string(' ', boxInner - connStr.Length - 1);
 Console.WriteLine($"  {dim}┌─{label}{topFill}┐{reset}");
-Console.WriteLine($"  {dim}│{reset} Endpoint=sb://localhost:{yellow}{publicPort}{reset};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true{padRight}{dim}│{reset}");
+Console.WriteLine($"  {dim}│{reset} Endpoint=sb://{publicHost}:{yellow}{publicPort}{reset};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true{padRight}{dim}│{reset}");
 Console.WriteLine($"  {dim}└{botFill}┘{reset}");
 Console.WriteLine();
 Console.WriteLine($"  {dim}press Ctrl+C to shut down{reset}");

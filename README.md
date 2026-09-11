@@ -9,10 +9,11 @@ AlmostServiceBus is flexible in how you run it:
 
 - **Embedded in your test suite** — runs in-process with per-test namespace isolation, so your integration tests run in parallel without interfering with each other
 - **Standalone for local dev** — run as a dotnet tool or via Aspire, and point your app at it, just like the real thing
+- **In a container** — ships with a Dockerfile; run it standalone or alongside your app in Docker Compose, with automatic container-host detection
 
 ## Features
 
-- **No infrastructure dependencies** — no Docker, no SQL Server, no port conflicts
+- **No required infrastructure** — runs in-process or as a CLI tool with no SQL Server and no container needed (Docker is available if you want it)
 - **Namespace isolation** —  `SharedAccessKeyName` can be passed an arbitrary value which will create an isolated namespace.
 - **Full AMQP 1.0 protocol** via AMQPNetLite — no HTTP polling or fakes
 - **Queues** with PeekLock, dead-lettering, duplicate detection, and max delivery count
@@ -23,6 +24,7 @@ AlmostServiceBus is flexible in how you run it:
 - **Batch message support** — correctly decodes Azure SDK `ServiceBusMessageBatch` transfers
 - **Management API** — Atom XML REST API for queue/topic/subscription CRUD
 - **Plaintext, MS-emulator compatible** — clients connect with `UseDevelopmentEmulator=true`, the same flag used with Microsoft's official Service Bus emulator. No TLS, no dev cert, no privileged ports.
+- **Container-ready** — ships with a Dockerfile and auto-detects when it runs in a container: binds `0.0.0.0`, advertises its container hostname, and maps it (plus configurable aliases via `ASB_HOST`) to the `default` namespace
 - **Vue diagnostic dashboard** on port 15672
 
 
@@ -58,6 +60,38 @@ Connection string:
 Endpoint=sb://localhost:5672;SharedAccessKeyName=<my-namespace>;SharedAccessKey=emulator;UseDevelopmentEmulator=true
 ```
 *Note: using "RootManageSharedAccessKey" as the SharedAccessKeyName will map to the 'default' namespace.*
+
+### Run with Docker
+
+A [`Dockerfile`](Dockerfile) is included. Build and run it, exposing the AMQP (5672), admin HTTP (5300), and dashboard (15672) ports:
+
+```bash
+docker build -t almost-servicebus .
+docker run --rm -p 5672:5672 -p 5300:5300 -p 15672:15672 almost-servicebus
+```
+
+From the host, connect to `localhost:5672` exactly as with the standalone tool.
+
+**Reaching the emulator from another container.** When your app runs in the same Docker network, it connects using the emulator's service/container name rather than `localhost`. The emulator detects that it is running in a container and advertises the right host automatically, and it treats its own container hostname as the `default` namespace, so `RootManageSharedAccessKey` keeps working. For example, with Docker Compose:
+
+```yaml
+services:
+  servicebus:
+    image: almost-servicebus
+    ports:
+      - "5672:5672"
+      - "5300:5300"
+      - "15672:15672"
+
+  app:
+    build: ./app
+    depends_on: [servicebus]
+    environment:
+      # Host matches the service name above
+      ConnectionStrings__ServiceBus: "Endpoint=sb://servicebus:5672;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true"
+```
+
+If clients reach the emulator under a name that differs from the container hostname, set `ASB_HOST` to that name (see [Configuration](#configuration)).
 
 ### Integration tests (in-process)
 
@@ -172,6 +206,19 @@ Everything in these tables runs against the emulator in CI on every commit, so t
 
 Additional ports bound automatically:
 - **5300** — admin HTTP, the port `Azure.Messaging.ServiceBus` uses for management when `UseDevelopmentEmulator=true`
+
+### Environment variables
+
+Mostly useful when running in a container. All are optional.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ASB_HOST` | container hostname (in a container), else `localhost` | The host clients use to reach the emulator (for example a Docker service name). Advertised as the public host and treated as the `default` namespace, so `RootManageSharedAccessKey` resolves to `default`. |
+| `ASB_BIND_HOST` | `0.0.0.0` (in a container), else `localhost` | Network interface the listener binds to. |
+| `ASB_DEFAULT_NAMESPACE_HOSTS` | — | Extra comma/space-separated hostnames that should also map to the `default` namespace. |
+| `ASB_RUNNING_IN_CONTAINER` | — | Set to `true` to force container mode when the standard `DOTNET_RUNNING_IN_CONTAINER` flag isn't present (for example on a non–.NET base image). |
+
+`DOTNET_RUNNING_IN_CONTAINER=true` is set automatically by Microsoft's official .NET base images, so container mode is usually detected without any configuration. Loopback addresses (`localhost`, `127.0.0.1`, `0.0.0.0`, `::1`) and `host.docker.internal` always map to the `default` namespace.
 
 ## Known Limitations
 

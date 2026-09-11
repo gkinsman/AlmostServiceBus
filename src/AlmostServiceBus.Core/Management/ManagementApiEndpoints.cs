@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using AlmostServiceBus.Core.Broker;
+using AlmostServiceBus.Core.Hosting;
 
 namespace AlmostServiceBus.Core.Management;
 
@@ -415,9 +416,9 @@ public static class ManagementApiEndpoints
 
         // Fallback: hostname-based resolution (subdomain or localhost → default)
         var host = request.Host.Host ?? string.Empty;
-        var namespaceName = host.Split('.')[0];
-        if (namespaceName.Equals("localhost", StringComparison.OrdinalIgnoreCase))
-            namespaceName = "default";
+        var namespaceName = EmulatorNetwork.IsDefaultNamespaceHost(host)
+            ? "default"
+            : host.Split('.')[0];
         return registry.GetOrCreate(namespaceName);
     }
 

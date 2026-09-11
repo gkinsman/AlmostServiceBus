@@ -1,0 +1,8 @@
+*
+!patches
+!src
+!AlmostServiceBus.runsettings
+!AlmostServiceBus.sln
+!AlmostServiceBus.slnx
+!apply-patches.ps1
+!Directory.Build.props
