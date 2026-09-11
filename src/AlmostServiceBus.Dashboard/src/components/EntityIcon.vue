@@ -3,7 +3,7 @@
 // entity header and any future view agree. Icons come from lucide (lucide-vue-next):
 // consistent stroke weight, tree-shaken per icon, and they inherit `currentColor`.
 import { computed } from 'vue'
-import { Inbox, Radio, CornerDownRight, MailWarning, Layers, Globe } from 'lucide-vue-next'
+import { Inbox, Route, CornerDownRight, MailWarning, Layers, Globe } from 'lucide-vue-next'
 import type { EntityType } from '../types'
 
 export type IconKind = EntityType | 'deadletter' | 'session' | 'namespace'
@@ -13,7 +13,7 @@ const props = withDefaults(defineProps<{ type: IconKind | null | undefined; size
 const icon = computed(() => {
   switch (props.type) {
     case 'queue': return Inbox
-    case 'topic': return Radio
+    case 'topic': return Route
     case 'subscription': return CornerDownRight
     case 'deadletter': return MailWarning
     case 'session': return Layers
