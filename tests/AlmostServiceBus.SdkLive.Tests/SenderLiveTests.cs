@@ -216,8 +216,14 @@ public class SenderLiveTests : SdkLiveTestBase
     {
         var queueName = await CreateQueueAsync();
         var sender = Client.CreateSender(queueName);
+        // The upstream test cancels 20 ms into a 300-message send, which against Azure is
+        // reliably mid-flight. Against a loopback emulator the whole batch can complete in
+        // under 20 ms, so a timer-based cancel sometimes fires after the send finished and
+        // the test fails with "No exception was thrown" (flaky on CI). Cancel up front: the
+        // SDK throws TaskCanceledException before touching the link, and the send that
+        // follows still proves the sender is usable after a cancelled call.
         var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromMilliseconds(20));
+        cts.Cancel();
         await Assert.ThrowsAsync<TaskCanceledException>(() =>
             sender.SendMessagesAsync(GetMessages(300), cts.Token));
 
