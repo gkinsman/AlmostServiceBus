@@ -63,35 +63,20 @@ Endpoint=sb://localhost:5672;SharedAccessKeyName=<my-namespace>;SharedAccessKey=
 
 ### Run with Docker
 
-A [`Dockerfile`](Dockerfile) is included. Build and run it, exposing the AMQP (5672), admin HTTP (5300), and dashboard (15672) ports:
+The emulator ships as a container image. Build it with the helper script and run it, exposing the
+AMQP (5672), admin HTTP (5300), and dashboard (15672) ports:
 
 ```bash
-docker build -t almost-servicebus .
-docker run --rm -p 5672:5672 -p 5300:5300 -p 15672:15672 almost-servicebus
+./docker/build-docker.sh              # builds almostservicebus:local
+docker run --rm -p 5672:5672 -p 5300:5300 -p 15672:15672 almostservicebus:local
 ```
 
-From the host, connect to `localhost:5672` exactly as with the standalone tool.
+From the host, connect to `localhost:5672` exactly as with the standalone tool. The emulator also
+auto-detects when it runs in a container (binds `0.0.0.0`, advertises its container hostname), so
+another container on the same network can reach it by service name.
 
-**Reaching the emulator from another container.** When your app runs in the same Docker network, it connects using the emulator's service/container name rather than `localhost`. The emulator detects that it is running in a container and advertises the right host automatically, and it treats its own container hostname as the `default` namespace, so `RootManageSharedAccessKey` keeps working. For example, with Docker Compose:
-
-```yaml
-services:
-  servicebus:
-    image: almost-servicebus
-    ports:
-      - "5672:5672"
-      - "5300:5300"
-      - "15672:15672"
-
-  app:
-    build: ./app
-    depends_on: [servicebus]
-    environment:
-      # Host matches the service name above
-      ConnectionStrings__ServiceBus: "Endpoint=sb://servicebus:5672;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true"
-```
-
-If clients reach the emulator under a name that differs from the container hostname, set `ASB_HOST` to that name (see [Configuration](#configuration)).
+See [`docker/README.md`](docker/README.md) for build details, prerequisites, Docker Compose, and
+configuration (`ASB_HOST` and friends).
 
 ### Integration tests (in-process)
 
