@@ -139,7 +139,7 @@ jobs:
       # ── Python ──
       - name: Setup Python
         if: matrix.sdk == 'python'
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
@@ -156,9 +156,9 @@ jobs:
       # ── Node.js ──
       - name: Setup Node.js
         if: matrix.sdk == 'node'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: tests/client-sdk-smoke/node/package-lock.json
 
@@ -182,7 +182,7 @@ jobs:
       # ── Java ──
       - name: Setup Java
         if: matrix.sdk == 'java'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
