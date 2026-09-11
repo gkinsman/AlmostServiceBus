@@ -1,5 +1,5 @@
 import { ref, computed, reactive, onUnmounted } from 'vue'
-import type { EntityOverview, QueueInfo, TopicInfo, EntityGroup, NamespaceInfo, MessageEvent } from '../types'
+import type { EntityOverview, QueueInfo, TopicInfo, SubscriptionInfo, EntityGroup, NamespaceInfo, MessageEvent } from '../types'
 import type { NamespaceSse } from './useNamespaceSse'
 import { api } from '../api/client'
 
@@ -24,6 +24,17 @@ export function useEntities(selectedNamespace: () => string, sse: NamespaceSse) 
       entities.value = await api.getEntities(ns)
     } catch {}
     finally { if (isInitialLoad) loading.value = false }
+  }
+
+  /** Resolves a "topic/subscriptions/sub" entity path to the subscription it names, if loaded. */
+  function findSubscription(entityPath: string): SubscriptionInfo | undefined {
+    const marker = '/subscriptions/'
+    const idx = entityPath.toLowerCase().lastIndexOf(marker)
+    if (idx <= 0 || !entities.value) return undefined
+    const topicName = entityPath.slice(0, idx)
+    const subName = entityPath.slice(idx + marker.length)
+    const topic = entities.value.topics.find(t => t.name.toLowerCase() === topicName.toLowerCase())
+    return topic?.subscriptions.find(s => s.name.toLowerCase() === subName.toLowerCase())
   }
 
   // Apply SSE event deltas to local entity counts for real-time updates.
@@ -56,6 +67,21 @@ export function useEntities(selectedNamespace: () => string, sse: NamespaceSse) 
       }
 
       // Force reactivity — reassign so computed properties re-evaluate.
+      entities.value = { ...entities.value }
+      return
+    }
+
+    // A subscription's own queue (no ForwardTo) publishes under "topic/subscriptions/sub".
+    const sub = findSubscription(evt.entity)
+    if (sub) {
+      if (evt.type === 'Enqueued') {
+        sub.messageCount++
+      } else if (evt.type === 'Completed') {
+        sub.messageCount = Math.max(0, sub.messageCount - 1)
+      } else if (evt.type === 'DeadLettered') {
+        sub.messageCount = Math.max(0, sub.messageCount - 1)
+        sub.deadLetterCount++
+      }
       entities.value = { ...entities.value }
       return
     }
