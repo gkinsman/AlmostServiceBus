@@ -100,7 +100,7 @@ export function useEntities(selectedNamespace: () => string, sse: NamespaceSse) 
   }
 
   function topicHasMessages(t: TopicInfo): boolean {
-    return t.subscriptions.some(s => s.messageCount > 0)
+    return t.subscriptions.some(s => s.messageCount > 0 || s.deadLetterCount > 0)
   }
 
   const filteredQueues = computed<QueueInfo[]>(() => {

@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import { shallowRef, watch, provide, onUnmounted, onMounted } from 'vue'
-import type { MessageInfo } from './types'
+import type { MessageInfo, EntityType } from './types'
 import EntityTree from './components/EntityTree.vue'
 import MessageList from './components/MessageList.vue'
 import MessageDetail from './components/MessageDetail.vue'
 import { useNamespaceSse, sseKey } from './composables/useNamespaceSse'
 
-function readHash(): { ns: string; entity?: string; type?: 'queue' | 'topic' } {
+function readHash(): { ns: string; entity?: string; type?: EntityType } {
   const hash = location.hash.replace(/^#\/?/, '')
   if (!hash) return { ns: 'default' }
   const parts = hash.split('/')
   // Format: #namespace or #namespace/queue/entityName or #namespace/topic/entityName
+  // (a subscription's entityName is itself "topicName/subscriptions/subName")
   const ns = decodeURIComponent(parts[0]) || 'default'
   if (parts.length >= 3) {
-    const type = parts[1] as 'queue' | 'topic'
+    const type = parts[1] as EntityType
     const entity = decodeURIComponent(parts.slice(2).join('/'))
     return { ns, entity, type }
   }
@@ -23,7 +24,7 @@ function readHash(): { ns: string; entity?: string; type?: 'queue' | 'topic' } {
 const initial = readHash()
 const selectedNamespace = shallowRef(initial.ns)
 const selectedEntity = shallowRef<string | null>(initial.entity ?? null)
-const selectedEntityType = shallowRef<'queue' | 'topic' | null>(initial.type ?? null)
+const selectedEntityType = shallowRef<EntityType | null>(initial.type ?? null)
 const selectedMessage = shallowRef<MessageInfo | null>(null)
 
 // Sync state → URL hash

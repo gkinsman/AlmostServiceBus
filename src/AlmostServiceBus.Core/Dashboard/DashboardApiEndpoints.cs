@@ -45,6 +45,7 @@ public static class DashboardApiEndpoints
                 t.GetSubscriptions().Select(s => new SubscriptionInfo(
                     s.Name, s.ForwardTo,
                     (s.ResolvedForwardToQueue ?? s.Queue).MessageCount,
+                    s.Queue.DeadLetterQueue.MessageCount,
                     s.GetRules().Count)).ToList()
             )).ToList();
 
@@ -91,12 +92,19 @@ public static class DashboardApiEndpoints
             var context = registry.Get(ns);
             if (context is null) return Results.NotFound();
 
-            // path = "TopicName/subscriptions/SubName/messages"
+            // path = "TopicName/subscriptions/SubName/messages" or ".../deadletter"
             // or just "TopicName/messages" (peek all subscriptions)
             if (path.EndsWith("/messages", StringComparison.OrdinalIgnoreCase))
             {
-                var topicName = path[..^"/messages".Length];
-                var topic = context.GetTopic(topicName);
+                var rest = path[..^"/messages".Length];
+                if (TryParseSubscriptionPath(rest, out var subTopicName, out var subName))
+                {
+                    var sub = context.GetTopic(subTopicName)?.GetSubscription(subName);
+                    if (sub is null) return Results.NotFound();
+                    return Results.Ok(sub.Queue.PeekMessages(50).Select(ToMessageInfo).ToList());
+                }
+
+                var topic = context.GetTopic(rest);
                 if (topic is null) return Results.NotFound();
 
                 // Aggregate messages from all subscriptions' queues
@@ -107,6 +115,17 @@ public static class DashboardApiEndpoints
                     .Select(ToMessageInfo)
                     .ToList();
                 return Results.Ok(messages);
+            }
+
+            if (path.EndsWith("/deadletter", StringComparison.OrdinalIgnoreCase))
+            {
+                var rest = path[..^"/deadletter".Length];
+                if (!TryParseSubscriptionPath(rest, out var subTopicName, out var subName))
+                    return Results.NotFound();
+
+                var sub = context.GetTopic(subTopicName)?.GetSubscription(subName);
+                if (sub is null) return Results.NotFound();
+                return Results.Ok(sub.Queue.DeadLetterQueue.PeekMessages(50).Select(ToMessageInfo).ToList());
             }
 
             return Results.NotFound();
@@ -133,6 +152,39 @@ public static class DashboardApiEndpoints
                 var queue = context.GetQueue(queueName);
                 if (queue is null) return Results.NotFound();
                 while (queue.DeadLetterQueue.TryDequeueImmediate() is not null) { }
+                return Results.Ok();
+            }
+
+            return Results.NotFound();
+        });
+
+        // Catch-all DELETE for subscription purge operations.
+        api.MapDelete("/namespaces/{ns}/topics/{**path}", (string ns, string path) =>
+        {
+            var context = registry.Get(ns);
+            if (context is null) return Results.NotFound();
+
+            if (path.EndsWith("/messages", StringComparison.OrdinalIgnoreCase))
+            {
+                var rest = path[..^"/messages".Length];
+                if (!TryParseSubscriptionPath(rest, out var topicName, out var subName))
+                    return Results.NotFound();
+
+                var sub = context.GetTopic(topicName)?.GetSubscription(subName);
+                if (sub is null) return Results.NotFound();
+                while (sub.Queue.TryDequeueImmediate() is not null) { }
+                return Results.Ok();
+            }
+
+            if (path.EndsWith("/deadletter", StringComparison.OrdinalIgnoreCase))
+            {
+                var rest = path[..^"/deadletter".Length];
+                if (!TryParseSubscriptionPath(rest, out var topicName, out var subName))
+                    return Results.NotFound();
+
+                var sub = context.GetTopic(topicName)?.GetSubscription(subName);
+                if (sub is null) return Results.NotFound();
+                while (sub.Queue.DeadLetterQueue.TryDequeueImmediate() is not null) { }
                 return Results.Ok();
             }
 
@@ -214,6 +266,26 @@ public static class DashboardApiEndpoints
     /// <summary>ISO 8601 duration, or null for "unbounded" (TimeSpan.MaxValue).</summary>
     private static string? Duration(TimeSpan ts) =>
         ts == TimeSpan.MaxValue ? null : System.Xml.XmlConvert.ToString(ts);
+
+    /// <summary>
+    /// Splits a "TopicName/subscriptions/SubName" dashboard path into its parts.
+    /// Returns <see langword="false"/> for a plain topic path with no subscription segment.
+    /// </summary>
+    private static bool TryParseSubscriptionPath(string path, out string topicName, out string subscriptionName)
+    {
+        const string marker = "/subscriptions/";
+        var idx = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+        {
+            topicName = "";
+            subscriptionName = "";
+            return false;
+        }
+
+        topicName = path[..idx];
+        subscriptionName = path[(idx + marker.Length)..];
+        return topicName.Length > 0 && subscriptionName.Length > 0;
+    }
 
     private static Dictionary<string, object>? ExtractScalars(string json)
     {

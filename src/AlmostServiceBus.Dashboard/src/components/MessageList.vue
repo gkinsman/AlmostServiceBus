@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, inject, watch, onUnmounted, computed } from 'vue'
-import type { MessageInfo, SubscriptionInfo } from '../types'
+import type { MessageInfo, SubscriptionInfo, EntityType } from '../types'
 import MessageRow from './MessageRow.vue'
 import { useMessages } from '../composables/useMessages'
 import { sseKey } from '../composables/useNamespaceSse'
@@ -9,7 +9,7 @@ import { api } from '../api/client'
 const props = defineProps<{
   namespace: string
   entity: string
-  entityType: 'queue' | 'topic' | null
+  entityType: EntityType | null
 }>()
 
 const emit = defineEmits<{ selectQueue: [name: string] }>()
@@ -95,7 +95,7 @@ watch(() => [props.namespace, props.entity, props.entityType], () => {
   messages.value = []
   deadLetterMessages.value = []
   properties.value = null
-  if (props.entityType === 'queue') {
+  if (props.entityType === 'queue' || props.entityType === 'subscription') {
     refresh()
     startListening()
     topicSubscriptions.value = []
@@ -128,12 +128,12 @@ function parentPath(name: string) {
       <div v-if="parentPath(entity)" class="parent">{{ parentPath(entity) }}</div>
     </div>
 
-    <!-- Queue view: messages -->
-    <template v-if="entityType === 'queue'">
+    <!-- Queue / subscription view: messages -->
+    <template v-if="entityType === 'queue' || entityType === 'subscription'">
       <div class="tabs">
         <div class="tab" :class="{ active: activeTab === 'messages' }" @click="switchTab('messages')">Messages</div>
         <div class="tab" :class="{ active: activeTab === 'deadletter' }" @click="switchTab('deadletter')">Dead Letter</div>
-        <div class="tab" :class="{ active: activeTab === 'properties' }" @click="switchTab('properties')">Properties</div>
+        <div v-if="entityType === 'queue'" class="tab" :class="{ active: activeTab === 'properties' }" @click="switchTab('properties')">Properties</div>
       </div>
 
       <!-- Messages tab -->
