@@ -36,8 +36,11 @@ export interface SubscriptionInfo {
   name: string
   forwardTo: string | null
   messageCount: number
+  deadLetterCount: number
   ruleCount: number
 }
+
+export type EntityType = 'queue' | 'topic' | 'subscription'
 
 export interface MessageInfo {
   messageId: string

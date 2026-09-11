@@ -4,10 +4,11 @@ import NamespaceSelector from './NamespaceSelector.vue'
 import ConnectionStringBar from './ConnectionStringBar.vue'
 import { useEntities } from '../composables/useEntities'
 import { sseKey } from '../composables/useNamespaceSse'
+import type { EntityType } from '../types'
 
 const ns = defineModel<string>('namespace', { required: true })
 const entity = defineModel<string | null>('entity', { required: true })
-const entityType = defineModel<'queue' | 'topic' | null>('entityType', { required: true })
+const entityType = defineModel<EntityType | null>('entityType', { required: true })
 const emit = defineEmits<{ select: [] }>()
 
 const sse = inject(sseKey)!
@@ -27,10 +28,14 @@ watch(ns, () => {
   onNamespaceChange()
 })
 
-function selectEntity(name: string, type: 'queue' | 'topic') {
+function selectEntity(name: string, type: EntityType) {
   entity.value = name
   entityType.value = type
   emit('select')
+}
+
+function selectSubscription(topicName: string, subName: string) {
+  selectEntity(`${topicName}/subscriptions/${subName}`, 'subscription')
 }
 
 function shortName(fullName: string) {
@@ -95,12 +100,13 @@ function shortName(fullName: string) {
             <div
               v-for="s in t.subscriptions" :key="s.name"
               class="sub-row clickable"
-              :class="{ selected: entity === s.forwardTo }"
-              @click="s.forwardTo && selectEntity(s.forwardTo, 'queue')"
+              :class="{ selected: s.forwardTo ? entity === s.forwardTo : entity === `${t.name}/subscriptions/${s.name}` }"
+              @click="s.forwardTo ? selectEntity(s.forwardTo, 'queue') : selectSubscription(t.name, s.name)"
             >
               ↳ {{ s.name }}
               <span v-if="s.forwardTo" class="forward-to">→ {{ s.forwardTo }}</span>
               <span v-if="s.messageCount > 0" class="badge-sm">{{ s.messageCount }}</span>
+              <span v-if="s.deadLetterCount > 0" class="badge-sm badge-sm-red">{{ s.deadLetterCount }}</span>
             </div>
           </template>
         </template>
@@ -149,6 +155,7 @@ function shortName(fullName: string) {
 .badge-green { background: var(--green); color: #fff; border-radius: 8px; padding: 1px 6px; font-size: 10px; font-weight: 600; }
 .badge-red { background: var(--red); color: #fff; border-radius: 8px; padding: 1px 6px; font-size: 10px; font-weight: 600; }
 .badge-sm { background: var(--dark-surface); color: var(--dark-text-muted); border-radius: 8px; padding: 0 4px; font-size: 9px; margin-left: 4px; }
+.badge-sm-red { background: var(--red); color: #fff; }
 .sub-row { padding: 3px 4px 3px 40px; color: var(--dark-text-muted); font-size: 11px; }
 .sub-row.clickable { cursor: pointer; border-radius: 4px; transition: background 0.1s; }
 .sub-row.clickable:hover { background: var(--dark-surface); color: var(--dark-text); }

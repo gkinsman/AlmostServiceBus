@@ -12,9 +12,32 @@ public sealed class TopicEntity
     private readonly ConcurrentDictionary<string, SubscriptionEntity> _subscriptions =
         new(SubscriptionKeyComparer);
 
+    private MessageEventBus? _eventBus;
+    private string? _namespaceName;
+
     public TopicEntity(string name)
     {
         Name = name;
+    }
+
+    /// <summary>
+    /// Connects this topic's subscription queues to the dashboard event stream. A subscription's
+    /// own queue (used when it has no ForwardTo) publishes under the entity path
+    /// <c>{topic}/subscriptions/{subscription}</c>, which is how the dashboard addresses it.
+    /// Applies to subscriptions added later as well as any that already exist.
+    /// </summary>
+    public void SetEventBus(MessageEventBus bus, string namespaceName)
+    {
+        _eventBus = bus;
+        _namespaceName = namespaceName;
+        foreach (var sub in _subscriptions.Values)
+            WireEvents(sub);
+    }
+
+    private void WireEvents(SubscriptionEntity sub)
+    {
+        if (_eventBus is not null)
+            sub.Queue.SetEventBus(_eventBus, _namespaceName ?? "", $"{Name}/subscriptions/{sub.Name}");
     }
 
     // --- Configuration ---
@@ -49,7 +72,12 @@ public sealed class TopicEntity
     /// Adds a new subscription with the given name, or returns the existing one if it already exists.
     /// </summary>
     public SubscriptionEntity AddSubscription(string name) =>
-        _subscriptions.GetOrAdd(name, n => new SubscriptionEntity(n, Name));
+        _subscriptions.GetOrAdd(name, n =>
+        {
+            var sub = new SubscriptionEntity(n, Name);
+            WireEvents(sub);
+            return sub;
+        });
 
     public SubscriptionEntity? GetSubscription(string name) =>
         _subscriptions.TryGetValue(name, out var sub) ? sub : null;

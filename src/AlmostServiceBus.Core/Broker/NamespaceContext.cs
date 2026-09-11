@@ -84,7 +84,19 @@ public sealed class NamespaceContext
     public TopicEntity CreateTopic(string name)
     {
         Touch();
-        return _topics.GetOrAdd(name, n => new TopicEntity(n));
+        return _topics.GetOrAdd(name, NewTopic);
+    }
+
+    /// <summary>
+    /// Creates a topic wired to the dashboard event bus, so the queues of its subscriptions
+    /// stream Enqueued / Completed / DeadLettered events like top-level queues do.
+    /// </summary>
+    private TopicEntity NewTopic(string name)
+    {
+        var topic = new TopicEntity(name);
+        if (_eventBus is not null)
+            topic.SetEventBus(_eventBus, Name);
+        return topic;
     }
 
     public TopicEntity? GetTopic(string name) =>
@@ -106,7 +118,7 @@ public sealed class NamespaceContext
     /// </summary>
     public SubscriptionEntity CreateSubscription(string topicName, string subName, string? forwardTo = null)
     {
-        var topic = _topics.GetOrAdd(topicName, n => new TopicEntity(n));
+        var topic = _topics.GetOrAdd(topicName, NewTopic);
         var sub = topic.AddSubscription(subName);
 
         if (forwardTo is not null)

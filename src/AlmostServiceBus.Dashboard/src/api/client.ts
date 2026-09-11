@@ -13,28 +13,49 @@ async function del(path: string): Promise<void> {
   if (!res.ok) throw new Error(`API error: ${res.status}`)
 }
 
+/**
+ * Encodes a dynamic path segment while preserving literal "/" separators —
+ * entity names here are legitimately hierarchical (topic grouping prefixes,
+ * "topic/subscriptions/sub" composite paths), and the backend's {**path}
+ * catch-all routes match on raw slashes, so a blanket encodeURIComponent
+ * would break routing.
+ */
+function encodePath(segment: string): string {
+  return segment.split('/').map(encodeURIComponent).join('/')
+}
+
 export const api = {
   getInfo: () => get<EmulatorInfo>('/info'),
 
   getNamespaces: () => get<NamespaceInfo[]>('/namespaces'),
 
-  getEntities: (ns: string) => get<EntityOverview>(`/namespaces/${ns}/entities`),
+  getEntities: (ns: string) => get<EntityOverview>(`/namespaces/${encodePath(ns)}/entities`),
 
   getQueueMessages: (ns: string, queueName: string) =>
-    get<MessageInfo[]>(`/namespaces/${ns}/queues/${queueName}/messages`),
+    get<MessageInfo[]>(`/namespaces/${encodePath(ns)}/queues/${encodePath(queueName)}/messages`),
 
   getTopicMessages: (ns: string, topicName: string) =>
-    get<MessageInfo[]>(`/namespaces/${ns}/topics/${topicName}/messages`),
+    get<MessageInfo[]>(`/namespaces/${encodePath(ns)}/topics/${encodePath(topicName)}/messages`),
 
   getDeadLetterMessages: (ns: string, queueName: string) =>
-    get<MessageInfo[]>(`/namespaces/${ns}/queues/${queueName}/deadletter`),
+    get<MessageInfo[]>(`/namespaces/${encodePath(ns)}/queues/${encodePath(queueName)}/deadletter`),
 
   getQueueProperties: (ns: string, queueName: string) =>
-    get<QueueProperties>(`/namespaces/${ns}/queues/${queueName}/properties`),
+    get<QueueProperties>(`/namespaces/${encodePath(ns)}/queues/${encodePath(queueName)}/properties`),
 
   purgeQueue: (ns: string, queueName: string) =>
-    del(`/namespaces/${ns}/queues/${queueName}/messages`),
+    del(`/namespaces/${encodePath(ns)}/queues/${encodePath(queueName)}/messages`),
 
   purgeDeadLetter: (ns: string, queueName: string) =>
-    del(`/namespaces/${ns}/queues/${queueName}/deadletter`),
+    del(`/namespaces/${encodePath(ns)}/queues/${encodePath(queueName)}/deadletter`),
+
+  /** entityPath is the composite "topicName/subscriptions/subName" path. */
+  getSubscriptionMessages: (ns: string, entityPath: string) =>
+    get<MessageInfo[]>(`/namespaces/${encodePath(ns)}/topics/${encodePath(entityPath)}/messages`),
+
+  getSubscriptionDeadLetterMessages: (ns: string, entityPath: string) =>
+    get<MessageInfo[]>(`/namespaces/${encodePath(ns)}/topics/${encodePath(entityPath)}/deadletter`),
+
+  purgeSubscriptionDeadLetter: (ns: string, entityPath: string) =>
+    del(`/namespaces/${encodePath(ns)}/topics/${encodePath(entityPath)}/deadletter`),
 }
