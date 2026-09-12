@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:11.0
 WORKDIR /app
 
 # Expose AMQP (5672), HTTP Management (5300), and the Dashboard UI (15672)
