@@ -225,6 +225,21 @@ public class SessionManager
         }
     }
 
+    /// <summary>
+    /// Total messages waiting across all sessions (excludes messages currently locked
+    /// by a receiver).
+    /// </summary>
+    public int TotalMessageCount
+    {
+        get
+        {
+            var total = 0;
+            foreach (var session in _sessions.Values)
+                total += session.MessageCount;
+            return total;
+        }
+    }
+
     public IReadOnlyCollection<string> GetAvailableSessionIds()
     {
         lock (_acceptLock)

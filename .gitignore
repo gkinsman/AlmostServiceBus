@@ -492,3 +492,5 @@ orderflow-sagas*
 
 # Client SDK smoke test build output
 tests/client-sdk-smoke/java/target/
+# OrderFlowDemo soak-test output
+samples/OrderFlowDemo/soak-out/

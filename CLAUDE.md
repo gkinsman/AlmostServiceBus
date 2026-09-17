@@ -100,6 +100,13 @@ dotnet test AlmostServiceBus.sln --filter "FullyQualifiedName!~RealAsbConformanc
 # Run against real ASB for comparison
 ASB_CONNECTION_STRING="Endpoint=sb://..." dotnet test tests/AlmostServiceBus.Conformance.Tests --filter "FullyQualifiedName~RealAsbConformanceTests"
 
+# Soak the OrderFlow demo (headless emulator + apps, loops black-friday, writes cycles.csv + summary.md)
+# Stop run.ps1 windows first — needs ports 5672/5300/15672/5200.
+pwsh samples/OrderFlowDemo/soak.ps1 -Hours 3
+
+# AMQP frame diagnostics on the host: TRACE_AMQP=1 (every frame to stderr) or
+# TRACE_AMQP=ring (last 5000 frames dumped to AMQP_TRACE_DIR when a connection closes with an error)
+
 # Run external framework tests (emulator must be running)
 cd external/wolverine && dotnet test src/Transports/Azure/Wolverine.AzureServiceBus.Tests --no-build -f net9.0
 cd external/MassTransit && MT_ASB_EMULATOR=1 MT_ASB_KEYNAME=RootManageSharedAccessKey MT_ASB_KEYVALUE=emulator dotnet test tests/MassTransit.Azure.ServiceBus.Core.Tests --no-build

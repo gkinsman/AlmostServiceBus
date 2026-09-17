@@ -131,8 +131,13 @@ public sealed class QueueEntity : IDisposable
 
     /// <summary>
     /// Approximate count of messages currently in the queue.
+    /// Session queues hand their messages to the <see cref="SessionManager"/>, whose
+    /// per-session counters are the source of truth; the local counter is only decremented
+    /// on the non-session dequeue path.
     /// </summary>
-    public int MessageCount => _messageCount;
+    public int MessageCount => RequiresSession && _sessionManager is { } sessions
+        ? sessions.TotalMessageCount
+        : _messageCount;
 
     /// <summary>
     /// Total messages that have passed through this queue (active + consumed + dead-lettered).

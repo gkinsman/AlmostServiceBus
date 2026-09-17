@@ -110,4 +110,34 @@ public class SessionManagerTests
         Assert.Equal(1, a1!.SequenceNumber);
         Assert.Equal(3, a2!.SequenceNumber);
     }
+
+    [Fact]
+    public void SessionQueue_MessageCount_TracksWaitingMessagesNotEnqueueTotal()
+    {
+        // A session queue hands its messages to the SessionManager; the queue-level
+        // counter used to only ever grow (it was never decremented on the session
+        // dequeue path), so the dashboard showed more active messages than had ever
+        // been enqueued once redeliveries kicked in.
+        var queue = new QueueEntity("session-queue") { RequiresSession = true };
+        queue.Enqueue(new BrokeredMessage { SessionId = "a", Body = "1"u8.ToArray() });
+        queue.Enqueue(new BrokeredMessage { SessionId = "a", Body = "2"u8.ToArray() });
+        queue.Enqueue(new BrokeredMessage { SessionId = "b", Body = "3"u8.ToArray() });
+        Assert.Equal(3, queue.MessageCount);
+
+        var session = queue.Sessions!.TryAcceptSession("a", "receiver-1");
+        Assert.NotNull(session);
+        Assert.True(session!.TryDequeue(out var first));
+        queue.TrackPending(first!);
+        Assert.Equal(2, queue.MessageCount);
+
+        queue.Complete(first!.LockToken!);
+        Assert.Equal(2, queue.MessageCount);
+
+        Assert.True(session.TryDequeue(out var second));
+        queue.TrackPending(second!);
+        queue.Abandon(second!.LockToken!);
+        // Abandon re-enqueues after a 1s delay; the message is in flight (not waiting)
+        // during that window, then returns to the session.
+        Assert.Equal(1, queue.MessageCount);
+    }
 }

@@ -10,8 +10,22 @@ using Vite.AspNetCore;
 // Windows OEM code page which mangles them into '�' replacement characters.
 try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { /* no console attached */ }
 
-// Enable AMQPNetLite frame tracing for diagnostic builds. Set TRACE_AMQP=1 env var.
-if (Environment.GetEnvironmentVariable("TRACE_AMQP") == "1")
+// Enable AMQPNetLite frame tracing for diagnostic builds.
+//   TRACE_AMQP=1    — write every frame to stderr (very verbose)
+//   TRACE_AMQP=ring — keep the last few thousand frames in memory and write them to
+//                     AMQP_TRACE_DIR (default: current directory) only when a connection
+//                     closes with an error. Cheap enough to leave on during soak runs.
+var traceMode = Environment.GetEnvironmentVariable("TRACE_AMQP");
+AlmostServiceBus.Host.AmqpFrameRing? frameRing = null;
+if (traceMode == "ring")
+{
+    var traceDir = Environment.GetEnvironmentVariable("AMQP_TRACE_DIR") ?? Directory.GetCurrentDirectory();
+    frameRing = new AlmostServiceBus.Host.AmqpFrameRing(capacity: 5000, directory: traceDir);
+    Console.Error.WriteLine($"[TRACE] AMQP frame ring enabled — dumps go to {traceDir}");
+    Amqp.Trace.TraceLevel = Amqp.TraceLevel.Frame;
+    Amqp.Trace.TraceListener = frameRing.Record;
+}
+else if (traceMode == "1")
 {
     Console.Error.WriteLine("[TRACE] Enabling AMQP frame tracing");
     Amqp.Trace.TraceLevel = Amqp.TraceLevel.Frame;
@@ -33,9 +47,13 @@ mgmtBuilder.Logging.SetMinimumLevel(LogLevel.Warning);
 mgmtBuilder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Warning);
 
 // Wire up logging for AMQP components (not DI-managed)
-AmqpLog.Factory = LoggerFactory.Create(b => b
-    .SetMinimumLevel(mgmtBuilder.Configuration.GetValue("Logging:LogLevel:AlmostServiceBus.Amqp", LogLevel.Warning))
-    .AddConsole());
+AmqpLog.Factory = LoggerFactory.Create(b =>
+{
+    b.SetMinimumLevel(mgmtBuilder.Configuration.GetValue("Logging:LogLevel:AlmostServiceBus.Amqp", LogLevel.Warning))
+     .AddConsole();
+    if (frameRing is not null)
+        b.AddProvider(new AlmostServiceBus.Host.FrameDumpOnConnectionErrorProvider(frameRing));
+});
 
 var publicPort = mgmtBuilder.Configuration.GetValue("Port", 5672);
 var dashboardPort = mgmtBuilder.Configuration.GetValue("DashboardPort", 15672);
