@@ -59,7 +59,7 @@ public static class AtomXmlWriter
             Elem("RequiresDuplicateDetection", queue.RequiresDuplicateDetection),
             Elem("DuplicateDetectionHistoryTimeWindow", FormatTimeSpan(queue.DuplicateDetectionHistoryTimeWindow)));
 
-        return BuildEntry(queue.Name, desc, baseUrl);
+        return BuildEntry(queue.Name, queue.Name, desc, baseUrl);
     }
 
     // ── Topic ────────────────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ public static class AtomXmlWriter
             Elem("RequiresDuplicateDetection", topic.RequiresDuplicateDetection),
             Elem("DuplicateDetectionHistoryTimeWindow", FormatTimeSpan(topic.DuplicateDetectionHistoryTimeWindow)));
 
-        return BuildEntry(topic.Name, desc, baseUrl);
+        return BuildEntry(topic.Name, topic.Name, desc, baseUrl);
     }
 
     // ── Subscription ─────────────────────────────────────────────────────────
@@ -105,23 +105,31 @@ public static class AtomXmlWriter
             Elem("RequiresSession", sub.RequiresSession),
             Elem("DefaultMessageTimeToLive", FormatTimeSpan(sub.DefaultMessageTimeToLive)),
             Elem("DeadLetteringOnMessageExpiration", sub.DeadLetteringOnMessageExpiration),
+            Elem("DeadLetteringOnFilterEvaluationExceptions", sub.DeadLetteringOnFilterEvaluationExceptions),
             Elem("MaxDeliveryCount", sub.MaxDeliveryCount),
             Elem("EnableBatchedOperations", sub.EnableBatchedOperations),
+            Elem("Status", "Active"),
             OptElem("ForwardTo", sub.ForwardTo),
-            OptElem("UserMetadata", sub.UserMetadata));
+            OptElem("UserMetadata", sub.UserMetadata),
+            // Emitted with a max-value default when unset so the SDK admin clients, which require
+            // these fields to be present, can deserialize the entry.
+            Elem("AutoDeleteOnIdle", FormatTimeSpan(sub.AutoDeleteOnIdle ?? TimeSpan.MaxValue)),
+            Elem("EntityAvailabilityStatus", "Available"));
 
-        return BuildEntry(sub.Name, desc, baseUrl);
+        // The SDK admin clients derive the topic and subscription names from the entry id path,
+        // so it must be the full "{topic}/Subscriptions/{sub}" resource path, not just the leaf name.
+        return BuildEntry($"{sub.TopicName}/Subscriptions/{sub.Name}", sub.Name, desc, baseUrl);
     }
 
     // ── Rule ─────────────────────────────────────────────────────────────────
 
-    public static string WriteRuleEntry(RuleEntity rule, string baseUrl = "") =>
-        SerializeToString(BuildRuleEntry(rule, baseUrl));
+    public static string WriteRuleEntry(RuleEntity rule, string topicName, string subscriptionName, string baseUrl = "") =>
+        SerializeToString(BuildRuleEntry(rule, topicName, subscriptionName, baseUrl));
 
-    public static string WriteRuleFeed(IEnumerable<RuleEntity> rules, string baseUrl = "") =>
-        SerializeToString(BuildFeed(rules.Select(r => BuildRuleEntry(r, baseUrl))));
+    public static string WriteRuleFeed(IEnumerable<RuleEntity> rules, string topicName, string subscriptionName, string baseUrl = "") =>
+        SerializeToString(BuildFeed(rules.Select(r => BuildRuleEntry(r, topicName, subscriptionName, baseUrl))));
 
-    private static XElement BuildRuleEntry(RuleEntity rule, string baseUrl)
+    private static XElement BuildRuleEntry(RuleEntity rule, string topicName, string subscriptionName, string baseUrl)
     {
         var filterType = rule.FilterType switch
         {
@@ -184,20 +192,21 @@ public static class AtomXmlWriter
             actionElement,
             Elem("Name", rule.Name));
 
-        return BuildEntry(rule.Name, desc, baseUrl);
+        // Full "{topic}/Subscriptions/{sub}/Rules/{rule}" path so the SDK can parse the entity names.
+        return BuildEntry($"{topicName}/Subscriptions/{subscriptionName}/Rules/{rule.Name}", rule.Name, desc, baseUrl);
     }
 
     // ── Shared helpers ───────────────────────────────────────────────────────
 
-    private static XElement BuildEntry(string name, XElement description, string baseUrl) 
+    private static XElement BuildEntry(string resourcePath, string title, XElement description, string baseUrl) 
     {
         // Strip trailing slashes to prevent "http://hostname.com//topicName"
         baseUrl = baseUrl.TrimEnd('/');
-        var resourceUrl = $"{baseUrl}/{name}?api-version=2021-05";
+        var resourceUrl = $"{baseUrl}/{resourcePath}?api-version=2021-05";
 
         return new XElement(Atom + "entry",
             new XElement(Atom + "id", resourceUrl),
-            new XElement(Atom + "title", new XAttribute("type", "text"), name),
+            new XElement(Atom + "title", new XAttribute("type", "text"), title),
             new XElement(Atom + "author",
                 new XElement(Atom + "name", "almost-service-bus")
             ),

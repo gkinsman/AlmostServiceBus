@@ -144,7 +144,7 @@ public class AtomXmlReaderTests
             FilterType = FilterType.TrueFilter,
         };
 
-        var xml = AtomXmlWriter.WriteRuleEntry(rule);
+        var xml = AtomXmlWriter.WriteRuleEntry(rule, "topic", "sub");
         var props = AtomXmlReader.ReadRuleProperties(xml);
 
         Assert.Equal("$Default", props.Name);
@@ -164,7 +164,7 @@ public class AtomXmlReaderTests
             ActionExpression = "SET sys.label = 'handled'",
         };
 
-        var xml = AtomXmlWriter.WriteRuleEntry(rule);
+        var xml = AtomXmlWriter.WriteRuleEntry(rule, "topic", "sub");
         var props = AtomXmlReader.ReadRuleProperties(xml);
 
         Assert.Equal("color-filter", props.Name);
@@ -183,7 +183,7 @@ public class AtomXmlReaderTests
             CorrelationId = "my-correlation-id",
         };
 
-        var xml = AtomXmlWriter.WriteRuleEntry(rule);
+        var xml = AtomXmlWriter.WriteRuleEntry(rule, "topic", "sub");
         var props = AtomXmlReader.ReadRuleProperties(xml);
 
         Assert.Equal("corr-filter", props.Name);
