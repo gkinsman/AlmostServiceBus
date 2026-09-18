@@ -23,7 +23,7 @@ AlmostServiceBus is flexible in how you run it:
 - **AMQP transactions** — `System.Transactions.TransactionScope` works end-to-end, including cross-entity transactions (`EnableCrossEntityTransactions`); commit applies all operations atomically, rollback applies none
 - **Batch message support** — correctly decodes Azure SDK `ServiceBusMessageBatch` transfers
 - **Management API** — Atom XML REST API for queue/topic/subscription CRUD
-- **Plaintext, MS-emulator compatible** — clients connect with `UseDevelopmentEmulator=true`, the same flag used with Microsoft's official Service Bus emulator. No TLS, no dev cert, no privileged ports.
+- **Plaintext, MS-emulator compatible** — clients connect with `UseDevelopmentEmulator=true`, the same flag used with Microsoft's official Service Bus emulator. No TLS or dev cert needed for .NET. For the Node.js/Java/Python admin clients that require HTTPS, an **opt-in** TLS admin endpoint (port 5301, enabled with `--AdminTlsEnabled true`) is available with a generate-once CA or a certificate you supply.
 - **Container-ready** — ships with a Dockerfile and auto-detects when it runs in a container: binds `0.0.0.0`, advertises its container hostname, and maps it (plus configurable aliases via `ASB_HOST`) to the `default` namespace
 - **Vue diagnostic dashboard** on port 15672
 
@@ -64,11 +64,11 @@ Endpoint=sb://localhost:5672;SharedAccessKeyName=<my-namespace>;SharedAccessKey=
 ### Run with Docker
 
 The emulator ships as a container image. Build it with the helper script and run it, exposing the
-AMQP (5672), admin HTTP (5300), and dashboard (15672) ports:
+AMQP (5672), admin HTTP (5300), admin HTTPS (5301), and dashboard (15672) ports:
 
 ```bash
 ./docker/build-docker.sh              # builds almostservicebus:local
-docker run --rm -p 5672:5672 -p 5300:5300 -p 15672:15672 almostservicebus:local
+docker run --rm -p 5672:5672 -p 5300:5300 -p 5301:5301 -p 15672:15672 almostservicebus:local
 ```
 
 From the host, connect to `localhost:5672` exactly as with the standalone tool. The emulator also
@@ -106,6 +106,26 @@ Add `AlmostServiceBus.Aspire.Hosting` to your Aspire host project:
 var builder = DistributedApplication.CreateBuilder(args);
 var serviceBus = builder.AddServiceBusEmulator("servicebus");
 ```
+
+Need the HTTPS admin endpoint (for the Node.js/Python/Java admin SDKs)? Chain `WithAdminTls()`. It
+enables the endpoint and serves it with the **ASP.NET Core HTTPS development certificate** — the same
+cert Aspire uses for its own HTTPS endpoints — so there is nothing extra to generate:
+
+```csharp
+var serviceBus = builder.AddServiceBusEmulator("servicebus")
+    .WithAdminTls();                       // HTTPS admin on port 5301, using the dev cert
+```
+
+`WithAdminTls` exports the dev cert (`dotnet dev-certs https`), registers an `https` endpoint, and
+passes the cert to the emulator. Options:
+
+- `WithAdminTls(port: 443)` — bind a different port (the Java admin SDK only reaches the endpoint on 443).
+- `WithAdminTls(certPath: "cert.pfx", certPassword: "…")` — serve your own certificate instead of the dev cert.
+
+The dev cert's SAN is `localhost`, so connect as `localhost`. .NET needs nothing further (it uses the
+plaintext admin port). Node.js/Python/Java clients still trust the emitted CA once — see the
+[HTTPS admin endpoint](#https-admin-endpoint-nodejs-java-python) section. If the export fails, run
+`dotnet dev-certs https --trust` to create the dev cert.
 
 ## When to Use (and When Not To)
 
@@ -159,11 +179,13 @@ Everything in these tables runs against the emulator in CI on every commit, so t
 | SDK | Data plane | Management plane | Verified by |
 |-----|------------|------------------|-------------|
 | .NET `Azure.Messaging.ServiceBus` | **Full** — PeekLock, sessions, scheduled messages, processors, batch sends, transactions | **Full** — `ServiceBusAdministrationClient` honours `UseDevelopmentEmulator=true` (plain HTTP on 5300) | Internal suites + the framework suites below |
-| Python `azure-servicebus` (pyamqp) | **Smoke-tested** — send/receive, properties, peek, lock renewal, abandon, dead-letter, sessions + state, topics, scheduled | REST only¹ | [`tests/client-sdk-smoke/python`](tests/client-sdk-smoke) |
-| Node.js `@azure/service-bus` (rhea) | **Smoke-tested** — same scenario | REST only¹ | [`tests/client-sdk-smoke/node`](tests/client-sdk-smoke) |
-| Java `azure-messaging-servicebus` (proton-j) | **Smoke-tested** — same scenario | REST only¹ | [`tests/client-sdk-smoke/java`](tests/client-sdk-smoke) |
+| Python `azure-servicebus` (pyamqp) | **Smoke-tested** — send/receive, properties, peek, lock renewal, abandon, dead-letter, sessions + state, topics, scheduled | **Full** — `ServiceBusAdministrationClient` over the opt-in TLS admin endpoint (5301)¹, or REST | [`tests/client-sdk-smoke/python`](tests/client-sdk-smoke) |
+| Node.js `@azure/service-bus` (rhea) | **Smoke-tested** — same scenario | **Full** — `ServiceBusAdministrationClient` over the opt-in TLS admin endpoint (5301)¹, or REST | [`tests/client-sdk-smoke/node`](tests/client-sdk-smoke) |
+| Java `azure-messaging-servicebus` (proton-j) | **Smoke-tested** — same scenario | **Full** — via the SDK `ServiceBusAdministrationClient`, which only reaches the emulator when the TLS admin endpoint is bound on port 443² | [`tests/client-sdk-smoke/java`](tests/client-sdk-smoke) |
 
-¹ The Python, Node.js and Java admin clients only speak HTTPS, and the emulator (like Microsoft's) is plaintext-only. Create entities from those languages through the Atom XML REST API on port 5300 directly — the smoke tests show how — or from .NET, or put a TLS-terminating proxy in front. The Atom XML the emulator emits is verified to parse in the Java and Node.js SDKs.
+¹ The Python, Node.js and Java admin clients only speak HTTPS. The emulator (like Microsoft's) is plaintext on the data plane, and the HTTPS admin endpoint is **off by default** — you must opt in with **`--AdminTlsEnabled true`** to bind the **HTTPS admin endpoint on port 5301** and generate a CA (see [HTTPS admin endpoint](#https-admin-endpoint-nodejs-java-python)). Once enabled, the **Node.js and Python** `ServiceBusAdministrationClient`s work directly against `https://localhost:5301` after they trust the generated (or your own) CA — CI exercises full queue/topic/subscription/rule CRUD over TLS for both. Without opting in, create entities through the Atom XML REST API on port 5300 directly — the smoke tests show how — or from .NET. The Atom XML the emulator emits is verified to parse in the Java and Node.js SDKs.
+
+² The **Java** `ServiceBusAdministrationClient` strips the endpoint port and always dials the host on **443**, so the SDK admin client only reaches the emulator when the TLS admin endpoint is bound on port 443 (`--AdminTlsPort 443`, portless connection string). Its admin test therefore runs the SDK admin client against port 443 — see [`certs/java.md`](certs/java.md).
 
 ### Frameworks
 
@@ -188,9 +210,18 @@ Everything in these tables runs against the emulator in CI on every commit, so t
 |-------------|---------|-------------|
 | `--Port` | 5672 | Main public port (plain AMQP + plain HTTP, multiplexed) |
 | `--DashboardPort` | 15672 | Vue dashboard port (0 to disable) |
+| `--AdminTlsEnabled` | `false` | Opt-in switch for the HTTPS admin endpoint. When `false` (default) no TLS listener is bound and no certificate is generated. Set to `true` to enable it. |
+| `--AdminTlsPort` | 5301 | HTTPS admin port for clients that hard-code TLS (Node.js/Java/Python). Only used when `--AdminTlsEnabled true`; `0` also disables it. |
+| `--AdminTlsCertDir` | `<app>/certs` | Directory where the emulator writes/reads its TLS material (CA, server PFX, Java truststore). Mount a volume here to keep the CA stable across restarts. |
+| `--AdminTlsCertPath` | — | Path to your own certificate: a PKCS#12/PFX file, or a PEM certificate (pair with `--AdminTlsKeyPath`). |
+| `--AdminTlsKeyPath` | — | Path to a PEM private key, when `--AdminTlsCertPath` points at a PEM certificate. |
+| `--AdminTlsCertPassword` | — | Password for the supplied PFX (file or base64). |
+| `--AdminTlsCertBase64` | — | Base64-encoded PFX, for supplying a certificate via configuration/env var (see Docker). |
+| `--AdminTlsHosts` | — | Extra comma/space-separated hostnames/IPs to add to the auto-generated certificate's SANs. |
 
 Additional ports bound automatically:
 - **5300** — admin HTTP, the port `Azure.Messaging.ServiceBus` uses for management when `UseDevelopmentEmulator=true`
+- **5301** — admin HTTPS, for the Node.js/Java/Python admin clients that only speak TLS, **only when `--AdminTlsEnabled true`** (see [HTTPS admin endpoint](#https-admin-endpoint-nodejs-java-python))
 
 ### Environment variables
 
@@ -204,6 +235,36 @@ Mostly useful when running in a container. All are optional.
 | `ASB_RUNNING_IN_CONTAINER` | — | Set to `true` to force container mode when the standard `DOTNET_RUNNING_IN_CONTAINER` flag isn't present (for example on a non–.NET base image). |
 
 `DOTNET_RUNNING_IN_CONTAINER=true` is set automatically by Microsoft's official .NET base images, so container mode is usually detected without any configuration. Loopback addresses (`localhost`, `127.0.0.1`, `0.0.0.0`, `::1`) and `host.docker.internal` always map to the `default` namespace.
+
+## HTTPS admin endpoint (Node.js, Java, Python)
+
+The data plane is always plain AMQP (`UseDevelopmentEmulator=true`), and the .NET
+`ServiceBusAdministrationClient` uses plain HTTP on port 5300 — so .NET needs no certificates. The
+Node.js, Java and Python **admin** clients only speak HTTPS, so the emulator can also expose an HTTPS
+admin endpoint on **port 5301**. It is **opt-in** — enable it with `--AdminTlsEnabled true` (or
+`AdminTlsEnabled=true`); by default no TLS listener is bound and no certificate is generated.
+
+When enabled, on first start it generates a local development CA and server certificate (reused on
+every later start, so you trust the CA **once**) and writes three files to the cert directory:
+
+| File | Purpose |
+|------|---------|
+| `emulator-ca.crt` | PEM CA — for Node.js, Python and curl |
+| `emulator-truststore.p12` | PKCS#12 truststore (password `changeit`) — for Java |
+| `emulator-admin.pfx` | server certificate used by the emulator itself |
+
+Point your admin client at `https://localhost:5301`, trust the CA, and create entities as usual. You
+can also **bring your own certificate** (`--AdminTlsCertPath`, `--AdminTlsKeyPath`,
+`--AdminTlsCertPassword`, or `--AdminTlsCertBase64`). Leave `--AdminTlsEnabled` unset (the default)
+to keep TLS off entirely.
+
+Using **Aspire**? Call `.WithAdminTls()` on the emulator resource to enable this endpoint and serve
+it with the ASP.NET Core dev cert automatically — see [Aspire integration](#aspire-integration).
+
+Per-language trust setup lives in its own guide — [Node.js](certs/nodejs.md),
+[Python](certs/python.md), [Java](certs/java.md) (note: the Java SDK admin client only works on port
+443) and [.NET](certs/dotnet.md). **See [`certs/README.md`](certs/README.md)** for what the emulator
+generates, bring-your-own-certificate instructions, and the full list of certificate options.
 
 ## Known Limitations
 

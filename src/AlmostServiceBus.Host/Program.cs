@@ -43,6 +43,12 @@ var publicHost = EmulatorNetwork.GetPublicHost();
 var bindHost = EmulatorNetwork.GetBindHost();
 // Microsoft emulator compatibility: admin HTTP on port 5300.
 const int mgmtApiPort = 5300;
+// TLS admin endpoint for clients that hard-code HTTPS (Node/Java/Python). Opt-in: off unless
+// AdminTlsEnabled is set. When enabled, no cert exists yet, one is generated on first start.
+var adminTlsEnabled = mgmtBuilder.Configuration.GetValue("AdminTlsEnabled", false);
+var adminTlsPort = mgmtBuilder.Configuration.GetValue("AdminTlsPort", 5301);
+var adminTlsCertDir = mgmtBuilder.Configuration.GetValue<string?>("AdminTlsCertDir")
+    ?? Path.Combine(AppContext.BaseDirectory, "certs");
 var connStr = $"Endpoint=sb://{publicHost}:{publicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
 var internalHttpPort = EmulatorInfrastructure.GetFreePort();
 var internalAmqpPort = EmulatorInfrastructure.GetFreePort();
@@ -50,9 +56,34 @@ var internalAmqpPort = EmulatorInfrastructure.GetFreePort();
 var eventBus = new MessageEventBus();
 var registry = new NamespaceRegistry(eventBus);
 
+EmulatorCertificate.CertificateBundle? tlsBundle = null;
+if (adminTlsEnabled && adminTlsPort > 0)
+{
+    var certPath = mgmtBuilder.Configuration.GetValue<string?>("AdminTlsCertPath");
+    var keyPath = mgmtBuilder.Configuration.GetValue<string?>("AdminTlsKeyPath");
+    var certPassword = mgmtBuilder.Configuration.GetValue<string?>("AdminTlsCertPassword");
+    var certBase64 = mgmtBuilder.Configuration.GetValue<string?>("AdminTlsCertBase64");
+
+    if (!string.IsNullOrWhiteSpace(certBase64) || !string.IsNullOrWhiteSpace(certPath))
+    {
+        tlsBundle = EmulatorCertificate.FromUserCertificate(adminTlsCertDir, certPath, keyPath, certPassword, certBase64);
+    }
+    else
+    {
+        var sanHosts = new List<string> { publicHost };
+        var extraHosts = mgmtBuilder.Configuration.GetValue<string?>("AdminTlsHosts");
+        if (!string.IsNullOrWhiteSpace(extraHosts))
+            sanHosts.AddRange(extraHosts.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+        tlsBundle = EmulatorCertificate.GetOrCreate(adminTlsCertDir, sanHosts);
+    }
+}
+
 mgmtBuilder.WebHost.ConfigureKestrel(k =>
 {
     k.ListenLocalhost(internalHttpPort);
+    if (tlsBundle is not null)
+        k.ListenAnyIP(adminTlsPort, lo => lo.UseHttps(tlsBundle.ServerCertificate));
 });
 
 var mgmtApp = mgmtBuilder.Build();
@@ -136,19 +167,62 @@ Console.WriteLine($"{cyan}  ██║  ██║███████╗██�
 Console.WriteLine($"{cyan}  ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝ ╚═════╝ ╚══════╝   ╚═╝   {reset}");
 Console.WriteLine($"{bold}        S E R V I C E   B U S   E M U L A T O R{reset}");
 Console.WriteLine();
-Console.WriteLine($"  {green}●{reset} {bold}Service Bus{reset}  {dim}──▶{reset} {publicHost}:{yellow}{publicPort}{reset} {dim}(AMQP){reset}");
-Console.WriteLine($"  {green}●{reset} {bold}Management {reset}  {dim}──▶{reset} {publicHost}:{yellow}{mgmtApiPort}{reset} {dim}(HTTP){reset}");
-Console.WriteLine($"  {green}●{reset} {bold}Dashboard  {reset}  {dim}──▶{reset} {cyan}http://{publicHost}:{dashboardPort}{reset}");
+
+// Prints a boxed connection string for the given endpoint port under a titled frame.
+void PrintConnStringBox(string title, int port)
+{
+    var cs = $"Endpoint=sb://{publicHost}:{port};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
+    var inner = cs.Length + 2;
+    var label = $" {title} ";
+    var topFill = new string('─', inner - label.Length - 1);
+    var botFill = new string('─', inner);
+    var padRight = new string(' ', inner - cs.Length - 1);
+    Console.WriteLine($"  {dim}┌─{label}{topFill}┐{reset}");
+    Console.WriteLine($"  {dim}│{reset} Endpoint=sb://{publicHost}:{yellow}{port}{reset};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true{padRight}{dim}│{reset}");
+    Console.WriteLine($"  {dim}└{botFill}┘{reset}");
+}
+
+// ── Service Bus client ──
+Console.WriteLine($"  {bold}Service Bus client{reset} {dim}— AMQP data plane{reset}");
+Console.WriteLine($"  {green}●{reset} {publicHost}:{yellow}{publicPort}{reset} {dim}(AMQP){reset}");
 Console.WriteLine();
-var boxInner = connStr.Length + 2;
-const string label = " connection string ";
-var topFill = new string('─', boxInner - label.Length - 1);
-var botFill = new string('─', boxInner);
-var padRight = new string(' ', boxInner - connStr.Length - 1);
-Console.WriteLine($"  {dim}┌─{label}{topFill}┐{reset}");
-Console.WriteLine($"  {dim}│{reset} Endpoint=sb://{publicHost}:{yellow}{publicPort}{reset};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true{padRight}{dim}│{reset}");
-Console.WriteLine($"  {dim}└{botFill}┘{reset}");
+PrintConnStringBox("connection string", publicPort);
 Console.WriteLine();
+
+// ── Service Bus admin ──
+Console.WriteLine($"  {bold}Service Bus admin{reset} {dim}— entity management{reset}");
+Console.WriteLine();
+
+// Plaintext (HTTP) — the default admin endpoint, best for .NET.
+Console.WriteLine($"  {green}●{reset} {bold}HTTP{reset}  {dim}plaintext, no cert — recommended for .NET{reset}");
+PrintConnStringBox("HTTP admin", mgmtApiPort);
+
+if (tlsBundle is not null)
+{
+    // TLS (HTTPS) — for clients that hard-code HTTPS (Node/Java/Python).
+    Console.WriteLine();
+    Console.WriteLine($"  {yellow}●{reset} {bold}HTTPS{reset} {dim}TLS — required by Node / Python / Java admin clients{reset}");
+    PrintConnStringBox("HTTPS admin", adminTlsPort);
+    Console.WriteLine();
+
+    var caPath = Path.GetFullPath(tlsBundle.CaCertPath);
+    var trustStorePath = Path.GetFullPath(tlsBundle.TrustStorePath);
+    var certSource = tlsBundle.UserSupplied ? "supplied certificate" : "auto-generated CA";
+    Console.WriteLine($"    {dim}Trust the {certSource} once so HTTPS clients accept the endpoint:{reset}");
+    Console.WriteLine($"    {dim}Node   {reset} NODE_EXTRA_CA_CERTS={caPath}");
+    Console.WriteLine($"    {dim}Python {reset} connection_verify=\"{caPath}\"");
+    Console.WriteLine($"    {dim}Java   {reset} -Djavax.net.ssl.trustStore={trustStorePath} -Djavax.net.ssl.trustStorePassword={tlsBundle.TrustStorePassword}");
+}
+Console.WriteLine();
+
+// ── Dashboard ──
+if (dashboardPort > 0)
+{
+    Console.WriteLine($"  {bold}Dashboard{reset} {dim}— diagnostics UI{reset}");
+    Console.WriteLine($"  {green}●{reset} {cyan}http://{publicHost}:{dashboardPort}{reset}");
+    Console.WriteLine();
+}
+
 Console.WriteLine($"  {dim}press Ctrl+C to shut down{reset}");
 Console.WriteLine();
 

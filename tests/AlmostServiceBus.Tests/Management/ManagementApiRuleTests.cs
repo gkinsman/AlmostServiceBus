@@ -55,7 +55,7 @@ public class ManagementApiRuleTests : IAsyncLifetime
     private StringContent RuleXmlBody(string ruleName)
     {
         var rule = new RuleEntity { Name = ruleName, FilterType = FilterType.TrueFilter };
-        var xml = AtomXmlWriter.WriteRuleEntry(rule);
+        var xml = AtomXmlWriter.WriteRuleEntry(rule, TopicName, SubName);
         return new StringContent(xml, Encoding.UTF8, "application/atom+xml");
     }
 
