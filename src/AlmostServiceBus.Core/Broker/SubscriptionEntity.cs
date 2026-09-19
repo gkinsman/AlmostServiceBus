@@ -62,6 +62,10 @@ public sealed class SubscriptionEntity
         set => Queue.DeadLetteringOnMessageExpiration = value;
     }
 
+    public bool DeadLetteringOnFilterEvaluationExceptions { get; set; } = true;
+
+    public TimeSpan? AutoDeleteOnIdle { get; set; }
+
     public bool EnableBatchedOperations { get; set; }
 
     public bool RequiresSession

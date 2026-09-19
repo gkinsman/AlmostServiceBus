@@ -227,7 +227,7 @@ public class AtomXmlWriterTests
             FilterType = FilterType.TrueFilter,
         };
 
-        var xml = AtomXmlWriter.WriteRuleEntry(rule);
+        var xml = AtomXmlWriter.WriteRuleEntry(rule, "my-topic", "my-sub");
         var doc = XDocument.Parse(xml);
 
         var entry = doc.Root!;
@@ -255,7 +255,7 @@ public class AtomXmlWriterTests
             SqlExpression = "color = 'red'",
         };
 
-        var xml = AtomXmlWriter.WriteRuleEntry(rule);
+        var xml = AtomXmlWriter.WriteRuleEntry(rule, "my-topic", "my-sub");
         var doc = XDocument.Parse(xml);
         var ruleDesc = doc.Descendants(Sb + "RuleDescription").Single();
         var filter = ruleDesc.Element(Sb + "Filter");
@@ -321,7 +321,7 @@ public class AtomXmlWriterTests
             new RuleEntity { Name = "rule-b" },
         };
 
-        var xml = AtomXmlWriter.WriteRuleFeed(rules);
+        var xml = AtomXmlWriter.WriteRuleFeed(rules, "my-topic", "my-sub");
         var doc = XDocument.Parse(xml);
         var entries = doc.Root!.Elements(Atom + "entry").ToList();
         Assert.Equal(2, entries.Count);
