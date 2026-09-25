@@ -13,9 +13,9 @@ async function del(path: string): Promise<void> {
   if (!res.ok) throw new Error(`API error: ${res.status}`)
 }
 
-async function send<T = void>(method: 'POST' | 'PUT', path: string, body?: unknown): Promise<T> {
+async function post<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    method,
+    method: 'POST',
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
@@ -84,24 +84,15 @@ export const api = {
     del(`${subscriptionUrl(ns, entityPath)}/deadletter`),
 
   // ── Scheduled messages (admin) ──
+  // Namespace-wide only: changing a single message is an AMQP operation for the client.
 
   getScheduled: (ns: string, entity?: string | null) =>
     get<ScheduledMessageInfo[]>(scheduledUrl(ns, '', entity)),
 
-  /** `when` is an ISO timestamp; a time in the past delivers on the emulator's next poll. */
-  reschedule: (ns: string, sequenceNumber: number, when: string) =>
-    send('PUT', scheduledUrl(ns, `/${sequenceNumber}`), { scheduledEnqueueTimeUtc: when }),
-
-  deliverScheduledNow: (ns: string, sequenceNumber: number) =>
-    send('POST', scheduledUrl(ns, `/${sequenceNumber}/deliver`)),
-
-  cancelScheduled: (ns: string, sequenceNumber: number) =>
-    del(scheduledUrl(ns, `/${sequenceNumber}`)),
-
   /** Moves every scheduled message in the namespace (or just `entity`'s) by `offsetSeconds`. */
   shiftScheduled: (ns: string, offsetSeconds: number, entity?: string | null) =>
-    send<{ count: number }>('POST', scheduledUrl(ns, '/shift', entity), { offsetSeconds }),
+    post<{ count: number }>(scheduledUrl(ns, '/shift', entity), { offsetSeconds }),
 
   deliverAllScheduledNow: (ns: string, entity?: string | null) =>
-    send<{ count: number }>('POST', scheduledUrl(ns, '/deliver', entity)),
+    post<{ count: number }>(scheduledUrl(ns, '/deliver', entity)),
 }

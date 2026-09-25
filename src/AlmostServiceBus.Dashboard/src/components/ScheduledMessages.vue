@@ -2,12 +2,13 @@
 import { ref, shallowRef, watch, onMounted, onUnmounted } from 'vue'
 import type { MessageInfo, ScheduledMessageInfo } from '../types'
 import { api } from '../api/client'
-import { Play, Pencil, X, Check, FastForward } from 'lucide-vue-next'
+import { FastForward } from 'lucide-vue-next'
 
 /**
  * Scheduled messages for a namespace, or for one queue/topic when `entity` is set.
- * Every action is scoped to that namespace: rescheduling, shifting, delivering or cancelling
- * never touches another namespace's messages.
+ * The actions are bulk and scoped to that namespace, and never touch another namespace's
+ * messages. There are deliberately no per-message actions: cancelling or rescheduling one
+ * message is an AMQP operation for the client, and the admin API doesn't duplicate AMQP.
  */
 const props = defineProps<{
   namespace: string
@@ -21,10 +22,6 @@ const loaded = ref(false)
 const error = ref<string | null>(null)
 const busy = ref(false)
 const now = ref(Date.now())
-
-/** Sequence number of the row whose time is being edited, and the draft value. */
-const editing = ref<number | null>(null)
-const draft = ref('')
 
 const shiftAmount = ref(1)
 const shiftUnit = ref<'s' | 'm' | 'h' | 'd'>('h')
@@ -70,7 +67,6 @@ onUnmounted(() => {
 watch(() => [props.namespace, props.entity], () => {
   items.value = []
   loaded.value = false
-  editing.value = null
   refresh()
 }, { immediate: true })
 
@@ -85,36 +81,6 @@ function countdown(iso: string | null): string {
   if (h) return `in ${h}h ${m}m`
   if (m) return `in ${m}m ${s}s`
   return `in ${s}s`
-}
-
-/** ISO → the local "YYYY-MM-DDTHH:mm:ss" string a datetime-local input expects. */
-function toLocalInput(iso: string | null): string {
-  const d = iso ? new Date(iso) : new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-
-function startEdit(item: ScheduledMessageInfo) {
-  editing.value = item.message.sequenceNumber
-  draft.value = toLocalInput(item.scheduledEnqueueTimeUtc)
-}
-
-function saveEdit(item: ScheduledMessageInfo) {
-  const when = new Date(draft.value)
-  if (Number.isNaN(when.getTime())) { error.value = 'Invalid date'; return }
-  editing.value = null
-  act(() => api.reschedule(props.namespace, item.message.sequenceNumber, when.toISOString()))
-}
-
-function deliverNow(item: ScheduledMessageInfo) {
-  act(() => api.deliverScheduledNow(props.namespace, item.message.sequenceNumber))
-  if (selectedMessage.value?.sequenceNumber === item.message.sequenceNumber) selectedMessage.value = null
-}
-
-function cancel(item: ScheduledMessageInfo) {
-  if (!confirm(`Cancel scheduled message ${item.message.messageId}? It will never be delivered.`)) return
-  act(() => api.cancelScheduled(props.namespace, item.message.sequenceNumber))
-  if (selectedMessage.value?.sequenceNumber === item.message.sequenceNumber) selectedMessage.value = null
 }
 
 function shift(direction: 1 | -1) {
@@ -167,19 +133,9 @@ function deliverAll() {
           </span>
         </div>
 
-        <div v-if="editing === item.message.sequenceNumber" class="edit" @click.stop>
-          <input v-model="draft" type="datetime-local" step="1" @keyup.enter="saveEdit(item)" @keyup.esc="editing = null" />
-          <button class="icon ok" title="Save" @click="saveEdit(item)"><Check :size="12" /></button>
-          <button class="icon" title="Discard" @click="editing = null"><X :size="12" /></button>
-        </div>
-        <div v-else class="meta">
+        <div class="meta">
           <span class="when" :title="item.scheduledEnqueueTimeUtc ?? ''">
             {{ item.scheduledEnqueueTimeUtc ? new Date(item.scheduledEnqueueTimeUtc).toLocaleString() : '—' }}
-          </span>
-          <span class="actions" @click.stop>
-            <button class="icon" title="Change delivery time" :disabled="busy" @click="startEdit(item)"><Pencil :size="11" /></button>
-            <button class="icon ok" title="Deliver now" :disabled="busy" @click="deliverNow(item)"><Play :size="11" /></button>
-            <button class="icon danger" title="Cancel (never deliver)" :disabled="busy" @click="cancel(item)"><X :size="11" /></button>
           </span>
         </div>
 
@@ -214,14 +170,6 @@ button:disabled { opacity: 0.45; cursor: default; }
 .countdown.due { color: var(--green); }
 .meta { margin-top: 3px; }
 .when { font-size: 10px; color: var(--text-muted); }
-.actions { display: flex; gap: 2px; opacity: 0.4; transition: opacity 0.1s; }
-.row:hover .actions, .row.selected .actions { opacity: 1; }
-.icon { background: transparent; color: var(--text-muted); padding: 2px 4px; }
-.icon:hover:not(:disabled) { background: var(--bg-crust); color: var(--text); }
-.icon.ok:hover:not(:disabled) { color: var(--green); }
-.icon.danger:hover:not(:disabled) { color: var(--red); }
-.edit { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
-.edit input { flex: 1; font-size: 11px; padding: 2px 4px; border: 1px solid var(--blue); border-radius: 4px; }
 .target { margin-top: 3px; font-size: 10px; color: var(--blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty { padding: 20px; text-align: center; color: var(--text-muted); }
 </style>

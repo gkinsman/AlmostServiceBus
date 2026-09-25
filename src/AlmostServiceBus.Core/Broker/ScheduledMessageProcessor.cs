@@ -97,13 +97,9 @@ public sealed class ScheduledMessageProcessor : IDisposable
             .ThenBy(m => m.Message.SequenceNumber)
             .ToList();
 
-    /// <summary>
-    /// Moves a scheduled message to a new enqueue time. Returns <see langword="false"/> if it is
-    /// no longer scheduled (already delivered or cancelled). A time in the past makes it due on
-    /// the next poll.
-    /// </summary>
-    public bool Reschedule(string namespaceName, long sequenceNumber, DateTimeOffset scheduledEnqueueTimeUtc) =>
-        Update(new ScheduledKey(namespaceName, sequenceNumber), _ => scheduledEnqueueTimeUtc);
+    // Admin operations are namespace-wide on purpose. Anything addressing one message
+    // (cancel, or cancel + reschedule) is the client's job over AMQP $management; these only
+    // cover what AMQP has no operation for.
 
     /// <summary>
     /// Shifts every scheduled message in the namespace (optionally only those targeting
@@ -124,31 +120,25 @@ public sealed class ScheduledMessageProcessor : IDisposable
     }
 
     /// <summary>
-    /// Delivers a scheduled message to its target entity immediately, ignoring its enqueue time.
-    /// Returns <see langword="false"/> if it is no longer scheduled.
-    /// </summary>
-    public bool DeliverNow(string namespaceName, long sequenceNumber)
-    {
-        if (!TryResolveKey(namespaceName, sequenceNumber, out var key) || !_scheduled.TryRemove(key, out var entry))
-            return false;
-        Deliver(entry);
-        return true;
-    }
-
-    /// <summary>
     /// Delivers every scheduled message in the namespace (optionally only those targeting
-    /// <paramref name="entityName"/>) immediately. Returns how many were delivered.
+    /// <paramref name="entityName"/>) immediately, ignoring their enqueue times.
+    /// Returns how many were delivered.
     /// </summary>
-    public int DeliverAllNow(string namespaceName, string? entityName = null) =>
-        ListScheduled(namespaceName, entityName)
-            .Count(m => DeliverNow(namespaceName, m.Message.SequenceNumber));
-
-    /// <summary>
-    /// Cancels a scheduled message by namespace name rather than context (the dashboard only
-    /// has the name). Returns <see langword="true"/> if found and removed.
-    /// </summary>
-    public bool CancelScheduled(string namespaceName, long sequenceNumber) =>
-        TryResolveKey(namespaceName, sequenceNumber, out var key) && _scheduled.TryRemove(key, out _);
+    public int DeliverAllNow(string namespaceName, string? entityName = null)
+    {
+        var delivered = 0;
+        foreach (var scheduled in ListScheduled(namespaceName, entityName))
+        {
+            // Skip anything the poller or a client cancel removed since the listing.
+            if (TryResolveKey(namespaceName, scheduled.Message.SequenceNumber, out var key) &&
+                _scheduled.TryRemove(key, out var entry))
+            {
+                Deliver(entry);
+                delivered++;
+            }
+        }
+        return delivered;
+    }
 
     /// <summary>
     /// Changes a scheduled message's enqueue time without racing the delivery loop.
@@ -206,13 +196,13 @@ public sealed class ScheduledMessageProcessor : IDisposable
 
             // Remove from the scheduled store; if another thread beat us here, skip.
             // Deliver the removed entry, not the enumerated one: an admin reschedule swaps it
-            // out, and the enumerated copy may carry a time that no longer applies.
+            // out while shifting it, and the enumerated copy may carry a time that no longer applies.
             if (!_scheduled.TryRemove(key, out var removed))
                 continue;
 
             if (removed.Message.ScheduledEnqueueTimeUtc is { } current && current > now)
             {
-                // Rescheduled into the future between the check above and the removal.
+                // Shifted into the future between the check above and the removal.
                 _scheduled.TryAdd(key, removed);
                 continue;
             }

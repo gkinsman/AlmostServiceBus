@@ -89,9 +89,6 @@ public record ScheduledMessageInfo(
     DateTimeOffset? ScheduledEnqueueTimeUtc,
     MessageInfo Message);
 
-/// <summary>Body of <c>PUT .../scheduled/{sequenceNumber}</c>.</summary>
-public record RescheduleRequest(DateTimeOffset ScheduledEnqueueTimeUtc);
-
 /// <summary>Body of <c>POST .../scheduled/shift</c>. Negative values bring messages forward.</summary>
 public record ShiftScheduledRequest(double OffsetSeconds);
 

@@ -33,7 +33,7 @@ public class DashboardScheduledMessagesTests : IAsyncLifetime
         });
 
     [Fact]
-    public async Task ListedScheduledMessage_CanBeRescheduledToNow_AndIsReceived()
+    public async Task ListedScheduledMessage_ShiftedIntoThePast_IsReceived_AndStaysCancellableUntilThen()
     {
         const string queueName = "scheduled/admin";
         _fixture.GetNamespaceContext().CreateQueue(queueName);
@@ -43,24 +43,30 @@ public class DashboardScheduledMessagesTests : IAsyncLifetime
         var seq = await sender.ScheduleMessageAsync(
             new ServiceBusMessage("later") { MessageId = "s1" },
             DateTimeOffset.UtcNow.AddDays(1));
+        var cancelled = await sender.ScheduleMessageAsync(
+            new ServiceBusMessage("never") { MessageId = "s2" },
+            DateTimeOffset.UtcNow.AddDays(2));
 
         var listed = await _http.GetFromJsonAsync<JsonElement>($"{Api}?entity={Uri.EscapeDataString(queueName)}");
-        var item = listed.EnumerateArray().Single();
-        Assert.Equal(queueName, item.GetProperty("entityName").GetString());
-        Assert.Equal("s1", item.GetProperty("message").GetProperty("messageId").GetString());
-        Assert.Equal(seq, item.GetProperty("message").GetProperty("sequenceNumber").GetInt64());
+        var first = listed.EnumerateArray().First();
+        Assert.Equal(2, listed.GetArrayLength());
+        Assert.Equal(queueName, first.GetProperty("entityName").GetString());
+        Assert.Equal("s1", first.GetProperty("message").GetProperty("messageId").GetString());
+        Assert.Equal(seq, first.GetProperty("message").GetProperty("sequenceNumber").GetInt64());
 
-        var put = await _http.PutAsJsonAsync($"{Api}/{seq}", new { scheduledEnqueueTimeUtc = DateTimeOffset.UtcNow.AddSeconds(-1) });
-        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        // A shift keeps sequence numbers, so the SDK's own cancel still finds the message.
+        var shift = await _http.PostAsJsonAsync($"{Api}/shift", new { offsetSeconds = 3600 });
+        Assert.Equal(HttpStatusCode.OK, shift.StatusCode);
+        await sender.CancelScheduledMessageAsync(cancelled);
+
+        shift = await _http.PostAsJsonAsync($"{Api}/shift", new { offsetSeconds = -TimeSpan.FromDays(2).TotalSeconds });
+        Assert.Equal(1, (await shift.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("count").GetInt32());
 
         var receiver = client.CreateReceiver(queueName);
         var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
         Assert.NotNull(received);
         Assert.Equal("s1", received.MessageId);
-
-        // Once delivered it is no longer scheduled.
-        var again = await _http.PutAsJsonAsync($"{Api}/{seq}", new { scheduledEnqueueTimeUtc = DateTimeOffset.UtcNow });
-        Assert.Equal(HttpStatusCode.NotFound, again.StatusCode);
+        Assert.Empty((await _http.GetFromJsonAsync<JsonElement>(Api)).EnumerateArray());
     }
 
     [Fact]
@@ -99,21 +105,5 @@ public class DashboardScheduledMessagesTests : IAsyncLifetime
 
         var listed = await _http.GetFromJsonAsync<JsonElement>(Api);
         Assert.Empty(listed.EnumerateArray());
-    }
-
-    [Fact]
-    public async Task Cancel_RemovesTheMessage_SoTheSdkCancelFindsNothing()
-    {
-        const string queueName = "scheduled-cancel";
-        _fixture.GetNamespaceContext().CreateQueue(queueName);
-
-        await using var client = CreateClient();
-        var sender = client.CreateSender(queueName);
-        var seq = await sender.ScheduleMessageAsync(new ServiceBusMessage("x"), DateTimeOffset.UtcNow.AddDays(1));
-
-        var delete = await _http.DeleteAsync($"{Api}/{seq}");
-        Assert.Equal(HttpStatusCode.OK, delete.StatusCode);
-        Assert.Empty((await _http.GetFromJsonAsync<JsonElement>(Api)).EnumerateArray());
-        Assert.Equal(HttpStatusCode.NotFound, (await _http.DeleteAsync($"{Api}/{seq}")).StatusCode);
     }
 }

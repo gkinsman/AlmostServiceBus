@@ -192,51 +192,6 @@ public class ScheduledMessageProcessorTests
     }
 
     [Fact]
-    public void Reschedule_IntoThePast_DeliversOnNextPoll()
-    {
-        var ns = CreateNamespace();
-        var queue = ns.CreateQueue("my-queue");
-        var processor = new ScheduledMessageProcessor(ns);
-        var seqNo = processor.Schedule("my-queue", CreateMessage(DateTimeOffset.UtcNow.AddDays(1)));
-
-        Assert.True(processor.Reschedule(ns.Name, seqNo, DateTimeOffset.UtcNow.AddSeconds(-1)));
-        processor.ProcessDueMessages();
-
-        var delivered = queue.TryDequeueImmediate();
-        Assert.NotNull(delivered);
-        Assert.Empty(processor.ListScheduled(ns.Name));
-    }
-
-    [Fact]
-    public void Reschedule_IntoTheFuture_KeepsSequenceNumberCancellable()
-    {
-        var ns = CreateNamespace();
-        var queue = ns.CreateQueue("my-queue");
-        var processor = new ScheduledMessageProcessor(ns);
-        var seqNo = processor.Schedule("my-queue", CreateMessage(DateTimeOffset.UtcNow.AddSeconds(-1)));
-
-        var target = DateTimeOffset.UtcNow.AddHours(3);
-        Assert.True(processor.Reschedule(ns.Name, seqNo, target));
-        processor.ProcessDueMessages();
-
-        Assert.Null(queue.TryDequeueImmediate());
-        Assert.Equal(target, processor.GetScheduledBySequence(ns.Name, seqNo)!.ScheduledEnqueueTimeUtc);
-        // The client still cancels it by the sequence number it was given.
-        Assert.True(processor.CancelScheduled(seqNo, ns));
-    }
-
-    [Fact]
-    public void Reschedule_UnknownOrOtherNamespace_ReturnsFalse()
-    {
-        var ns = new NamespaceContext("tenant-a");
-        var processor = new ScheduledMessageProcessor(ns);
-        var seqNo = processor.Schedule("q", CreateMessage(DateTimeOffset.UtcNow.AddHours(1)), ns);
-
-        Assert.False(processor.Reschedule("tenant-b", seqNo, DateTimeOffset.UtcNow));
-        Assert.False(processor.Reschedule("tenant-a", seqNo + 100, DateTimeOffset.UtcNow));
-    }
-
-    [Fact]
     public void Shift_MovesOnlyTheNamespaceAndEntityAsked()
     {
         var ns = new NamespaceContext("tenant-a");
@@ -256,22 +211,6 @@ public class ScheduledMessageProcessorTests
         Assert.Equal(t.AddMinutes(-20), processor.GetScheduledBySequence("tenant-a", a1)!.ScheduledEnqueueTimeUtc);
         Assert.Equal(t.AddMinutes(10), processor.GetScheduledBySequence("tenant-a", a2)!.ScheduledEnqueueTimeUtc);
         Assert.Equal(t, processor.GetScheduledBySequence("tenant-b", b1)!.ScheduledEnqueueTimeUtc);
-    }
-
-    [Fact]
-    public void DeliverNow_EnqueuesImmediately_AndClearsSchedule()
-    {
-        var ns = CreateNamespace();
-        var queue = ns.CreateQueue("my-queue");
-        var processor = new ScheduledMessageProcessor(ns);
-        var seqNo = processor.Schedule("my-queue", CreateMessage(DateTimeOffset.UtcNow.AddDays(1)));
-
-        Assert.True(processor.DeliverNow(ns.Name, seqNo));
-        Assert.False(processor.DeliverNow(ns.Name, seqNo));
-
-        var delivered = queue.TryDequeueImmediate();
-        Assert.NotNull(delivered);
-        Assert.Null(delivered!.ScheduledEnqueueTimeUtc);
     }
 
     [Fact]
@@ -297,19 +236,44 @@ public class ScheduledMessageProcessorTests
     }
 
     [Fact]
-    public void CancelScheduled_ByNamespaceName_OnlyRemovesFromThatNamespace()
+    public void Shift_IntoThePast_DeliversOnNextPoll()
+    {
+        var ns = CreateNamespace();
+        var queue = ns.CreateQueue("my-queue");
+        var processor = new ScheduledMessageProcessor(ns);
+        processor.Schedule("my-queue", CreateMessage(DateTimeOffset.UtcNow.AddHours(1)));
+
+        Assert.Equal(1, processor.Shift(ns.Name, TimeSpan.FromHours(-2)));
+        processor.ProcessDueMessages();
+
+        var delivered = queue.TryDequeueImmediate();
+        Assert.NotNull(delivered);
+        Assert.Null(delivered!.ScheduledEnqueueTimeUtc);
+        Assert.Empty(processor.ListScheduled(ns.Name));
+    }
+
+    [Fact]
+    public void Shift_KeepsSequenceNumber_SoClientCancelStillWorks()
+    {
+        var ns = CreateNamespace();
+        var processor = new ScheduledMessageProcessor(ns);
+        var seqNo = processor.Schedule("my-queue", CreateMessage(DateTimeOffset.UtcNow.AddHours(1)));
+
+        processor.Shift(ns.Name, TimeSpan.FromHours(3));
+
+        Assert.NotNull(processor.GetScheduledBySequence(ns.Name, seqNo));
+        Assert.True(processor.CancelScheduled(seqNo, ns));
+    }
+
+    [Fact]
+    public void Shift_UnknownNamespace_MovesNothing()
     {
         var ns = new NamespaceContext("tenant-a");
-        var other = new NamespaceContext("tenant-b");
         var processor = new ScheduledMessageProcessor(ns);
-        var future = DateTimeOffset.UtcNow.AddDays(1);
+        var t = DateTimeOffset.UtcNow.AddHours(1);
+        var seqNo = processor.Schedule("q", CreateMessage(t), ns);
 
-        var seqA = processor.Schedule("q", CreateMessage(future), ns);
-        var seqB = processor.Schedule("q", CreateMessage(future), other);
-        Assert.Equal(seqA, seqB);
-
-        Assert.True(processor.CancelScheduled("tenant-a", seqA));
-        Assert.Empty(processor.ListScheduled("tenant-a"));
-        Assert.Single(processor.ListScheduled("tenant-b"));
+        Assert.Equal(0, processor.Shift("tenant-b", TimeSpan.FromHours(-1)));
+        Assert.Equal(t, processor.GetScheduledBySequence("tenant-a", seqNo)!.ScheduledEnqueueTimeUtc);
     }
 }
