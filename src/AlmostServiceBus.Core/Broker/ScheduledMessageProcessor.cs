@@ -85,6 +85,111 @@ public sealed class ScheduledMessageProcessor : IDisposable
     }
 
     /// <summary>
+    /// Every scheduled message in the given namespace, soonest first. Used by the dashboard's
+    /// admin view; <paramref name="entityName"/> narrows it to one queue or topic.
+    /// </summary>
+    public IReadOnlyList<ScheduledMessage> ListScheduled(string namespaceName, string? entityName = null) =>
+        _scheduled
+            .Where(kv => string.Equals(kv.Key.NamespaceName, namespaceName, StringComparison.OrdinalIgnoreCase))
+            .Where(kv => entityName is null || string.Equals(kv.Value.EntityName, entityName, StringComparison.OrdinalIgnoreCase))
+            .Select(kv => new ScheduledMessage(kv.Value.EntityName, kv.Value.Message))
+            .OrderBy(m => m.Message.ScheduledEnqueueTimeUtc ?? DateTimeOffset.MinValue)
+            .ThenBy(m => m.Message.SequenceNumber)
+            .ToList();
+
+    /// <summary>
+    /// Moves a scheduled message to a new enqueue time. Returns <see langword="false"/> if it is
+    /// no longer scheduled (already delivered or cancelled). A time in the past makes it due on
+    /// the next poll.
+    /// </summary>
+    public bool Reschedule(string namespaceName, long sequenceNumber, DateTimeOffset scheduledEnqueueTimeUtc) =>
+        Update(new ScheduledKey(namespaceName, sequenceNumber), _ => scheduledEnqueueTimeUtc);
+
+    /// <summary>
+    /// Shifts every scheduled message in the namespace (optionally only those targeting
+    /// <paramref name="entityName"/>) by <paramref name="offset"/>. A negative offset brings
+    /// them forward; anything pushed into the past is delivered on the next poll.
+    /// Returns how many messages were moved.
+    /// </summary>
+    public int Shift(string namespaceName, TimeSpan offset, string? entityName = null)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var moved = 0;
+        foreach (var scheduled in ListScheduled(namespaceName, entityName))
+        {
+            var key = new ScheduledKey(namespaceName, scheduled.Message.SequenceNumber);
+            if (Update(key, current => (current ?? now) + offset)) moved++;
+        }
+        return moved;
+    }
+
+    /// <summary>
+    /// Delivers a scheduled message to its target entity immediately, ignoring its enqueue time.
+    /// Returns <see langword="false"/> if it is no longer scheduled.
+    /// </summary>
+    public bool DeliverNow(string namespaceName, long sequenceNumber)
+    {
+        if (!TryResolveKey(namespaceName, sequenceNumber, out var key) || !_scheduled.TryRemove(key, out var entry))
+            return false;
+        Deliver(entry);
+        return true;
+    }
+
+    /// <summary>
+    /// Delivers every scheduled message in the namespace (optionally only those targeting
+    /// <paramref name="entityName"/>) immediately. Returns how many were delivered.
+    /// </summary>
+    public int DeliverAllNow(string namespaceName, string? entityName = null) =>
+        ListScheduled(namespaceName, entityName)
+            .Count(m => DeliverNow(namespaceName, m.Message.SequenceNumber));
+
+    /// <summary>
+    /// Cancels a scheduled message by namespace name rather than context (the dashboard only
+    /// has the name). Returns <see langword="true"/> if found and removed.
+    /// </summary>
+    public bool CancelScheduled(string namespaceName, long sequenceNumber) =>
+        TryResolveKey(namespaceName, sequenceNumber, out var key) && _scheduled.TryRemove(key, out _);
+
+    /// <summary>
+    /// Changes a scheduled message's enqueue time without racing the delivery loop.
+    /// </summary>
+    /// <remarks>
+    /// The entry is taken out of the store before its time is touched, so <c>TryRemove</c>
+    /// arbitrates: if the poller removed it first it has been delivered and this reports
+    /// <see langword="false"/>; if this removed it first the poller cannot see it while the
+    /// time changes. It goes back under the same key, so the sequence number is unchanged and
+    /// the client's <c>CancelScheduledMessageAsync</c> still finds it.
+    /// </remarks>
+    private bool Update(ScheduledKey key, Func<DateTimeOffset?, DateTimeOffset> newTime)
+    {
+        if (!TryResolveKey(key.NamespaceName, key.SequenceNumber, out key) || !_scheduled.TryRemove(key, out var entry))
+            return false;
+        entry.Message.ScheduledEnqueueTimeUtc = newTime(entry.Message.ScheduledEnqueueTimeUtc);
+        _scheduled[key] = entry;
+        return true;
+    }
+
+    /// <summary>
+    /// Keys hold the namespace name exactly as the scheduling client sent it, while the
+    /// dashboard may spell it differently; match case-insensitively like <see cref="ListScheduled"/>.
+    /// </summary>
+    private bool TryResolveKey(string namespaceName, long sequenceNumber, out ScheduledKey key)
+    {
+        key = new ScheduledKey(namespaceName, sequenceNumber);
+        if (_scheduled.ContainsKey(key)) return true;
+        foreach (var candidate in _scheduled.Keys)
+        {
+            if (candidate.SequenceNumber == sequenceNumber &&
+                string.Equals(candidate.NamespaceName, namespaceName, StringComparison.OrdinalIgnoreCase))
+            {
+                key = candidate;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Checks all scheduled entries and delivers any whose enqueue time has arrived.
     /// Messages with no <see cref="BrokeredMessage.ScheduledEnqueueTimeUtc"/> (or a null value)
     /// are treated as immediately due.
@@ -100,20 +205,34 @@ public sealed class ScheduledMessageProcessor : IDisposable
                 continue;
 
             // Remove from the scheduled store; if another thread beat us here, skip.
-            if (!_scheduled.TryRemove(key, out _))
+            // Deliver the removed entry, not the enumerated one: an admin reschedule swaps it
+            // out, and the enumerated copy may carry a time that no longer applies.
+            if (!_scheduled.TryRemove(key, out var removed))
                 continue;
 
-            // Clear the scheduled time before delivery
-            entry.Message.ScheduledEnqueueTimeUtc = null;
+            if (removed.Message.ScheduledEnqueueTimeUtc is { } current && current > now)
+            {
+                // Rescheduled into the future between the check above and the removal.
+                _scheduled.TryAdd(key, removed);
+                continue;
+            }
 
-            // Deliver to the resolved target using the namespace stored at schedule time
-            var (queue, topic) = entry.Namespace.ResolveSendTarget(entry.EntityName);
-
-            if (queue is not null)
-                queue.Enqueue(entry.Message);
-            else if (topic is not null)
-                topic.Publish(entry.Message);
+            Deliver(removed);
         }
+    }
+
+    private static void Deliver(ScheduledEntry entry)
+    {
+        // Clear the scheduled time before delivery
+        entry.Message.ScheduledEnqueueTimeUtc = null;
+
+        // Deliver to the resolved target using the namespace stored at schedule time
+        var (queue, topic) = entry.Namespace.ResolveSendTarget(entry.EntityName);
+
+        if (queue is not null)
+            queue.Enqueue(entry.Message);
+        else if (topic is not null)
+            topic.Publish(entry.Message);
     }
 
     /// <summary>
@@ -163,3 +282,6 @@ public sealed class ScheduledMessageProcessor : IDisposable
         }
     }
 }
+
+/// <summary>A message waiting in the scheduled store, with the queue or topic it will be sent to.</summary>
+public sealed record ScheduledMessage(string EntityName, BrokeredMessage Message);

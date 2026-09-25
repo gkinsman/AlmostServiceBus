@@ -84,6 +84,14 @@ export interface QueueProperties {
   sessionCount: number
 }
 
+/** GET /namespaces/{ns}/scheduled: a message held back by ScheduleMessageAsync. */
+export interface ScheduledMessageInfo {
+  /** Queue or topic it will be sent to. */
+  entityName: string
+  scheduledEnqueueTimeUtc: string | null
+  message: MessageInfo
+}
+
 export interface MessageEvent {
   type: 'Enqueued' | 'Completed' | 'DeadLettered' | 'Abandoned' | 'Deferred' | 'NamespaceCreated'
   namespace: string

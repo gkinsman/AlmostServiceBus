@@ -25,7 +25,15 @@ namespace AlmostServiceBus.Core.Dashboard;
 /// DELETE /api/dashboard/namespaces/{ns}/topics/{topic}/subscriptions/{subscription}/messages
 /// DELETE /api/dashboard/namespaces/{ns}/topics/{topic}/subscriptions/{subscription}/deadletter
 /// GET    /api/dashboard/diagnostics
+/// GET    /api/dashboard/namespaces/{ns}/scheduled[?entity=]
+/// POST   /api/dashboard/namespaces/{ns}/scheduled/shift[?entity=]      { "offsetSeconds": 3600 }
+/// POST   /api/dashboard/namespaces/{ns}/scheduled/deliver[?entity=]
+/// PUT    /api/dashboard/namespaces/{ns}/scheduled/{sequenceNumber}     { "scheduledEnqueueTimeUtc": "..." }
+/// POST   /api/dashboard/namespaces/{ns}/scheduled/{sequenceNumber}/deliver
+/// DELETE /api/dashboard/namespaces/{ns}/scheduled/{sequenceNumber}
 /// </code>
+/// The scheduled-message routes are admin operations: they change when (or whether) a message
+/// scheduled with <c>ScheduleMessageAsync</c> is delivered, and never reach outside <c>{ns}</c>.
 /// Entity names may contain slashes (MassTransit and Wolverine both produce hierarchical
 /// names), so they travel percent-encoded as a single path segment; see <see cref="EntityName"/>.
 /// </summary>
@@ -36,7 +44,8 @@ public static class DashboardApiEndpoints
     public static IEndpointRouteBuilder MapDashboardApi(
         this IEndpointRouteBuilder app,
         NamespaceRegistry registry,
-        EmulatorInfo info)
+        EmulatorInfo info,
+        ScheduledMessageProcessor? scheduler = null)
     {
         var api = app.MapGroup("/api/dashboard");
         api.MapGet("/info", () => info);
@@ -65,6 +74,17 @@ public static class DashboardApiEndpoints
             Purge(FindSubscription(ns, topic, subscription)?.Queue));
         subscriptionGroup.MapDelete("/deadletter", (string ns, EntityName topic, EntityName subscription) =>
             Purge(FindSubscription(ns, topic, subscription)?.Queue.DeadLetterQueue));
+
+        if (scheduler is not null)
+        {
+            var scheduledGroup = namespaceGroup.MapGroup("/scheduled");
+            scheduledGroup.MapGet("", ListScheduled);
+            scheduledGroup.MapPost("/shift", ShiftScheduled);
+            scheduledGroup.MapPost("/deliver", DeliverAllScheduled);
+            scheduledGroup.MapPut("/{sequenceNumber:long}", Reschedule);
+            scheduledGroup.MapPost("/{sequenceNumber:long}/deliver", DeliverScheduled);
+            scheduledGroup.MapDelete("/{sequenceNumber:long}", CancelScheduled);
+        }
 
         return app;
 
@@ -119,6 +139,39 @@ public static class DashboardApiEndpoints
                 .ToList();
             return TypedResults.Ok(messages);
         }
+
+        Results<Ok<List<ScheduledMessageInfo>>, NotFound> ListScheduled(string ns, string? entity)
+        {
+            if (registry.Get(ns) is null) return TypedResults.NotFound();
+            return TypedResults.Ok(scheduler!.ListScheduled(ns, entity)
+                .Select(s => new ScheduledMessageInfo(s.EntityName, s.Message.ScheduledEnqueueTimeUtc, ToMessageInfo(s.Message)))
+                .ToList());
+        }
+
+        Results<Ok<ScheduledBulkResult>, NotFound, BadRequest<string>> ShiftScheduled(string ns, string? entity, ShiftScheduledRequest request)
+        {
+            if (registry.Get(ns) is null) return TypedResults.NotFound();
+            if (!double.IsFinite(request.OffsetSeconds) || Math.Abs(request.OffsetSeconds) > TimeSpan.FromDays(3650).TotalSeconds)
+                return TypedResults.BadRequest("offsetSeconds must be a finite number of seconds within ten years.");
+            return TypedResults.Ok(new ScheduledBulkResult(
+                scheduler!.Shift(ns, TimeSpan.FromSeconds(request.OffsetSeconds), entity)));
+        }
+
+        Results<Ok<ScheduledBulkResult>, NotFound> DeliverAllScheduled(string ns, string? entity) =>
+            registry.Get(ns) is null
+                ? TypedResults.NotFound()
+                : TypedResults.Ok(new ScheduledBulkResult(scheduler!.DeliverAllNow(ns, entity)));
+
+        Results<Ok, NotFound> Reschedule(string ns, long sequenceNumber, RescheduleRequest request) =>
+            scheduler!.Reschedule(ns, sequenceNumber, request.ScheduledEnqueueTimeUtc.ToUniversalTime())
+                ? TypedResults.Ok()
+                : TypedResults.NotFound();
+
+        Results<Ok, NotFound> DeliverScheduled(string ns, long sequenceNumber) =>
+            scheduler!.DeliverNow(ns, sequenceNumber) ? TypedResults.Ok() : TypedResults.NotFound();
+
+        Results<Ok, NotFound> CancelScheduled(string ns, long sequenceNumber) =>
+            scheduler!.CancelScheduled(ns, sequenceNumber) ? TypedResults.Ok() : TypedResults.NotFound();
 
         QueueEntity? FindQueue(string ns, EntityName queue) =>
             registry.Get(ns)?.GetQueue(queue.Value);

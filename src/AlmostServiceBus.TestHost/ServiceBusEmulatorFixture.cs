@@ -93,14 +93,14 @@ public class ServiceBusEmulatorFixture : IAsyncDisposable
         });
         builder.Logging.ClearProviders();
 
-        _webApp = builder.Build();
-        _webApp.MapServiceBusManagementApi(_registry);
-        _webApp.MapDashboardApi(_registry, new EmulatorInfo(ConnectionString, PublicPort, 5300, HttpPort));
-        _webApp.MapDashboardSse(_eventBus);
-        await _webApp.StartAsync();
-
         _scheduledProcessor = new ScheduledMessageProcessor(_registry.GetOrCreate("default"));
         _scheduledProcessor.StartBackground(TimeSpan.FromMilliseconds(500));
+
+        _webApp = builder.Build();
+        _webApp.MapServiceBusManagementApi(_registry);
+        _webApp.MapDashboardApi(_registry, new EmulatorInfo(ConnectionString, PublicPort, 5300, HttpPort), _scheduledProcessor);
+        _webApp.MapDashboardSse(_eventBus);
+        await _webApp.StartAsync();
 
         _amqpServer = new AmqpServer(new AmqpServerOptions { Port = AmqpPort }, _registry, _scheduledProcessor);
         _amqpServer.Start();

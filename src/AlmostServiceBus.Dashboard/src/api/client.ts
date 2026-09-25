@@ -1,4 +1,4 @@
-import type { NamespaceInfo, EntityOverview, MessageInfo, EmulatorInfo, QueueProperties } from '../types'
+import type { NamespaceInfo, EntityOverview, MessageInfo, EmulatorInfo, QueueProperties, ScheduledMessageInfo } from '../types'
 
 const BASE = '/api/dashboard'
 
@@ -11,6 +11,17 @@ async function get<T>(path: string): Promise<T> {
 async function del(path: string): Promise<void> {
   const res = await fetch(`${BASE}${path}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`API error: ${res.status}`)
+}
+
+async function send<T = void>(method: 'POST' | 'PUT', path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  const text = await res.text()
+  return (text ? JSON.parse(text) : undefined) as T
 }
 
 /**
@@ -27,6 +38,12 @@ const topicUrl = (ns: string, topic: string) => `/namespaces/${seg(ns)}/topics/$
  * (the same address the SDK uses). The API addresses it as two segments. Subscription names
  * cannot contain "/", so the last "/subscriptions/" marker is the split point.
  */
+/** Namespace-wide scheduled-message routes; `entity` (a queue or topic) narrows them. */
+function scheduledUrl(ns: string, suffix = '', entity?: string | null): string {
+  const query = entity ? `?entity=${seg(entity)}` : ''
+  return `/namespaces/${seg(ns)}/scheduled${suffix}${query}`
+}
+
 function subscriptionUrl(ns: string, entityPath: string): string {
   const marker = '/subscriptions/'
   const idx = entityPath.lastIndexOf(marker)
@@ -65,4 +82,26 @@ export const api = {
 
   purgeSubscriptionDeadLetter: (ns: string, entityPath: string) =>
     del(`${subscriptionUrl(ns, entityPath)}/deadletter`),
+
+  // ── Scheduled messages (admin) ──
+
+  getScheduled: (ns: string, entity?: string | null) =>
+    get<ScheduledMessageInfo[]>(scheduledUrl(ns, '', entity)),
+
+  /** `when` is an ISO timestamp; a time in the past delivers on the emulator's next poll. */
+  reschedule: (ns: string, sequenceNumber: number, when: string) =>
+    send('PUT', scheduledUrl(ns, `/${sequenceNumber}`), { scheduledEnqueueTimeUtc: when }),
+
+  deliverScheduledNow: (ns: string, sequenceNumber: number) =>
+    send('POST', scheduledUrl(ns, `/${sequenceNumber}/deliver`)),
+
+  cancelScheduled: (ns: string, sequenceNumber: number) =>
+    del(scheduledUrl(ns, `/${sequenceNumber}`)),
+
+  /** Moves every scheduled message in the namespace (or just `entity`'s) by `offsetSeconds`. */
+  shiftScheduled: (ns: string, offsetSeconds: number, entity?: string | null) =>
+    send<{ count: number }>('POST', scheduledUrl(ns, '/shift', entity), { offsetSeconds }),
+
+  deliverAllScheduledNow: (ns: string, entity?: string | null) =>
+    send<{ count: number }>('POST', scheduledUrl(ns, '/deliver', entity)),
 }

@@ -90,6 +90,12 @@ var mgmtApp = mgmtBuilder.Build();
 mgmtApp.MapServiceBusManagementApi(registry);
 await mgmtApp.StartAsync();
 
+// ── Scheduled message processor (shared by AMQP and the dashboard's admin routes) ──
+
+var defaultContext = registry.GetOrCreate("default");
+var scheduledProcessor = new ScheduledMessageProcessor(defaultContext);
+scheduledProcessor.StartBackground(TimeSpan.FromMilliseconds(500));
+
 // ── Dashboard server (separate port, no route conflicts) ──
 
 var dashBuilder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -120,17 +126,11 @@ if (dashApp.Environment.IsDevelopment())
 }
 
 dashApp.UseStaticFiles();
-dashApp.MapDashboardApi(registry, new EmulatorInfo(connStr, publicPort, mgmtApiPort, dashboardPort));
+dashApp.MapDashboardApi(registry, new EmulatorInfo(connStr, publicPort, mgmtApiPort, dashboardPort), scheduledProcessor);
 dashApp.MapDashboardSse(eventBus);
 dashApp.MapFallbackToFile("index.html");
 
 await dashApp.StartAsync();
-
-// ── Scheduled message processor ──
-
-var defaultContext = registry.GetOrCreate("default");
-var scheduledProcessor = new ScheduledMessageProcessor(defaultContext);
-scheduledProcessor.StartBackground(TimeSpan.FromMilliseconds(500));
 
 // ── AMQP server ──
 

@@ -19,7 +19,7 @@ AlmostServiceBus is flexible in how you run it:
 - **Queues** with PeekLock, dead-lettering, duplicate detection, and max delivery count
 - **Topics & Subscriptions** with SQL and correlation filters, forwarding, fan-out
 - **Sessions** (FIFO) with session locking, next-available-session, isolated delivery, and session state
-- **Scheduled messages** with enqueue-time semantics
+- **Scheduled messages** with enqueue-time semantics, plus a dashboard view and admin API to list, reschedule, time-shift, deliver early or cancel them per namespace (see [Scheduled message admin](#scheduled-message-admin))
 - **AMQP transactions** — `System.Transactions.TransactionScope` works end-to-end, including cross-entity transactions (`EnableCrossEntityTransactions`); commit applies all operations atomically, rollback applies none
 - **Batch message support** — correctly decodes Azure SDK `ServiceBusMessageBatch` transfers
 - **Management API** — Atom XML REST API for queue/topic/subscription CRUD
@@ -203,6 +203,29 @@ Everything in these tables runs against the emulator in CI on every commit, so t
 | Conformance (emulator) | 34 | 34 |
 | MassTransit ASB test suite | 26 | 27 |
 | Wolverine ASB test suite | 149 | 155 |
+
+## Scheduled message admin
+
+The dashboard's **Scheduled messages** view (sidebar, or the **Scheduled** tab on a queue or
+topic) lists every message waiting on `ScheduleMessageAsync` with a live countdown, and lets you
+change a message's delivery time, deliver it now, cancel it, or shift everything in the view
+earlier or later. The same operations are a JSON API on the dashboard port, which is handy for
+fast-forwarding time in tests. Every route is scoped to one namespace, and `?entity=` narrows
+the bulk routes to one queue or topic:
+
+```bash
+NS=http://localhost:15672/api/dashboard/namespaces/default/scheduled
+
+curl $NS                                                    # list, soonest first
+curl -X POST $NS/shift -H 'Content-Type: application/json' -d '{"offsetSeconds":-3600}'  # everything 1h sooner
+curl -X POST "$NS/deliver?entity=orders"                    # deliver all of one queue's now
+curl -X PUT $NS/42 -H 'Content-Type: application/json' -d '{"scheduledEnqueueTimeUtc":"2026-01-01T09:00:00Z"}'
+curl -X POST $NS/42/deliver                                 # deliver sequence number 42 now
+curl -X DELETE $NS/42                                       # cancel it
+```
+
+A message keeps its sequence number when rescheduled, so `CancelScheduledMessageAsync` still
+works on it. A time in the past delivers it on the next poll (within 500 ms).
 
 ## Configuration
 

@@ -5,13 +5,15 @@ import ConnectionStringBar from './ConnectionStringBar.vue'
 import { useEntities } from '../composables/useEntities'
 import { sseKey } from '../composables/useNamespaceSse'
 import type { EntityType } from '../types'
-import { ChevronRight, ChevronDown, ArrowRight } from 'lucide-vue-next'
+import { ChevronRight, ChevronDown, ArrowRight, CalendarClock } from 'lucide-vue-next'
 import EntityIcon from './EntityIcon.vue'
 
 const ns = defineModel<string>('namespace', { required: true })
 const entity = defineModel<string | null>('entity', { required: true })
 const entityType = defineModel<EntityType | null>('entityType', { required: true })
 const emit = defineEmits<{ select: [] }>()
+/** True while the namespace-wide scheduled-messages view is open. */
+const scheduledView = defineModel<boolean>('scheduledView', { default: false })
 
 const sse = inject(sseKey)!
 
@@ -31,8 +33,16 @@ watch(ns, () => {
 })
 
 function selectEntity(name: string, type: EntityType) {
+  scheduledView.value = false
   entity.value = name
   entityType.value = type
+  emit('select')
+}
+
+function openScheduled() {
+  entity.value = null
+  entityType.value = null
+  scheduledView.value = true
   emit('select')
 }
 
@@ -64,6 +74,10 @@ function shortName(fullName: string) {
     <div class="tree">
       <div v-if="loading" class="loading">Loading entities...</div>
       <template v-else>
+
+      <div class="entity-row scheduled-row" :class="{ selected: scheduledView }" @click="openScheduled">
+        <span class="entity-name"><CalendarClock :size="13" class="entity-icon" />Scheduled messages</span>
+      </div>
 
       <div class="section-header">{{ showAll ? 'All Queues' : 'Active Queues' }}</div>
       <div v-if="!showAll && filteredQueues.length === 0" class="empty-hint">
@@ -167,5 +181,6 @@ function shortName(fullName: string) {
 .forward-to { color: var(--dark-text-muted); font-size: 9px; margin-left: 2px; display: inline-flex; align-items: center; gap: 2px; }
 .loading { padding: 20px; text-align: center; color: var(--dark-text-muted); font-size: 11px; animation: pulse 1.5s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+.scheduled-row { margin-top: 4px; }
 .footer { border-top: 1px solid var(--dark-border); padding: 8px 12px; background: var(--dark); font-size: 10px; color: var(--dark-text-muted); }
 </style>

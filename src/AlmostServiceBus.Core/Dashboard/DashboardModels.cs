@@ -79,3 +79,21 @@ public record MessageInfo(
     string? DeadLetterReason = null,
     string? DeadLetterErrorDescription = null,
     string? DeadLetterSource = null);
+
+/// <summary>
+/// A message held back by <c>ScheduleMessageAsync</c>. <see cref="EntityName"/> is the queue or
+/// topic it will be sent to; <see cref="ScheduledEnqueueTimeUtc"/> is when.
+/// </summary>
+public record ScheduledMessageInfo(
+    string EntityName,
+    DateTimeOffset? ScheduledEnqueueTimeUtc,
+    MessageInfo Message);
+
+/// <summary>Body of <c>PUT .../scheduled/{sequenceNumber}</c>.</summary>
+public record RescheduleRequest(DateTimeOffset ScheduledEnqueueTimeUtc);
+
+/// <summary>Body of <c>POST .../scheduled/shift</c>. Negative values bring messages forward.</summary>
+public record ShiftScheduledRequest(double OffsetSeconds);
+
+/// <summary>How many scheduled messages a bulk operation touched.</summary>
+public record ScheduledBulkResult(int Count);

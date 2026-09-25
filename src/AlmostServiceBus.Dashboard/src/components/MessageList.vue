@@ -2,6 +2,9 @@
 import { ref, inject, watch, onUnmounted, computed } from 'vue'
 import type { MessageInfo, SubscriptionInfo, EntityType } from '../types'
 import MessageRow from './MessageRow.vue'
+import EntityIcon from './EntityIcon.vue'
+import ScheduledMessages from './ScheduledMessages.vue'
+import { Mail, MailWarning, Settings2, CornerDownRight, CalendarClock } from 'lucide-vue-next'
 import { useMessages } from '../composables/useMessages'
 import { sseKey } from '../composables/useNamespaceSse'
 import { api } from '../api/client'
@@ -22,7 +25,8 @@ const {
   refresh, refreshDeadLetter, refreshProperties, startListening, stopListening,
 } = useMessages(() => props.namespace, () => props.entity, () => props.entityType, sse)
 
-const activeTab = ref<'messages' | 'deadletter' | 'properties'>('messages')
+type Tab = 'messages' | 'deadletter' | 'properties' | 'scheduled'
+const activeTab = ref<Tab>('messages')
 
 /** ISO 8601 duration → something a human reads at a glance ("PT5M" → "5m", "P14D" → "14d"). */
 function duration(iso: string | null): string {
@@ -80,7 +84,7 @@ async function refreshSubscriptions() {
   } catch { topicSubscriptions.value = [] }
 }
 
-function switchTab(tab: 'messages' | 'deadletter' | 'properties') {
+function switchTab(tab: Tab) {
   activeTab.value = tab
   selectedMessage.value = null
   deadLetterViewActive.value = tab === 'deadletter'
@@ -133,8 +137,17 @@ function parentPath(name: string) {
       <div class="tabs">
         <div class="tab" :class="{ active: activeTab === 'messages' }" @click="switchTab('messages')"><Mail :size="12" />Messages</div>
         <div class="tab" :class="{ active: activeTab === 'deadletter' }" @click="switchTab('deadletter')"><MailWarning :size="12" />Dead Letter</div>
+        <div v-if="entityType === 'queue'" class="tab" :class="{ active: activeTab === 'scheduled' }" @click="switchTab('scheduled')"><CalendarClock :size="12" />Scheduled</div>
         <div v-if="entityType === 'queue'" class="tab" :class="{ active: activeTab === 'properties' }" @click="switchTab('properties')"><Settings2 :size="12" />Properties</div>
       </div>
+
+      <!-- Scheduled tab -->
+      <ScheduledMessages
+        v-if="activeTab === 'scheduled'"
+        :namespace="namespace"
+        :entity="entity"
+        v-model:selectedMessage="selectedMessage"
+      />
 
       <!-- Messages tab -->
       <template v-if="activeTab === 'messages'">
@@ -191,10 +204,18 @@ function parentPath(name: string) {
     <!-- Topic view: subscriptions -->
     <template v-else-if="entityType === 'topic'">
       <div class="tabs">
-        <div class="tab active"><CornerDownRight :size="12" />Subscriptions</div>
+        <div class="tab" :class="{ active: activeTab !== 'scheduled' }" @click="switchTab('messages')"><CornerDownRight :size="12" />Subscriptions</div>
+        <div class="tab" :class="{ active: activeTab === 'scheduled' }" @click="switchTab('scheduled')"><CalendarClock :size="12" />Scheduled</div>
       </div>
 
-      <div class="rows">
+      <ScheduledMessages
+        v-if="activeTab === 'scheduled'"
+        :namespace="namespace"
+        :entity="entity"
+        v-model:selectedMessage="selectedMessage"
+      />
+
+      <div v-else class="rows">
         <div
           v-for="sub in topicSubscriptions" :key="sub.name"
           class="sub-item"
