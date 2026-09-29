@@ -1011,6 +1011,159 @@ public abstract class ConformanceTestBase : IAsyncLifetime
     }
 
     // ══════════════════════════════════════════════════════════════════════════
+    // Test 16c: Scheduled messages on a topic are peekable via the topic path
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ScheduledMessage_OnTopic_PeekableViaTopicReceiver()
+    {
+        // Real ASB parks a scheduled message on the topic until it fires, so subscriptions can't
+        // see it. A receiver on the topic path can't receive, but it can peek those messages.
+        ThrowIfSkipped();
+        var topic = await CreateTestTopicAsync();
+        await CreateTestSubscriptionAsync(topic, "sub");
+
+        var fireAt = DateTimeOffset.UtcNow.AddHours(1);
+        await using var sender = Client.CreateSender(topic);
+        var seqNo = await sender.ScheduleMessageAsync(
+            new ServiceBusMessage("topic-scheduled") { MessageId = "topic-sched-1" },
+            fireAt);
+
+        await using var topicReceiver = Client.CreateReceiver(topic);
+        var peeked = await topicReceiver.PeekMessagesAsync(10);
+
+        var msg = Assert.Single(peeked);
+        Assert.Equal(seqNo, msg.SequenceNumber);
+        Assert.Equal(ServiceBusMessageState.Scheduled, msg.State);
+        Assert.Equal("topic-sched-1", msg.MessageId);
+        Assert.Equal("topic-scheduled", msg.Body.ToString());
+        Assert.True((msg.ScheduledEnqueueTime - fireAt).Duration() < TimeSpan.FromSeconds(1));
+
+        await using var subReceiver = Client.CreateReceiver(topic, "sub");
+        Assert.Empty(await subReceiver.PeekMessagesAsync(10));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Test 16d: Runtime properties report scheduled message counts
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task RuntimeProperties_ReportScheduledMessageCount_ForQueueAndTopic()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateTestQueueAsync();
+        var topic = await CreateTestTopicAsync();
+        await CreateTestSubscriptionAsync(topic, "sub");
+
+        var fireAt = DateTimeOffset.UtcNow.AddHours(1);
+        await using var queueSender = Client.CreateSender(queue);
+        await using var topicSender = Client.CreateSender(topic);
+        var queueSeq = await queueSender.ScheduleMessageAsync(new ServiceBusMessage("q"), fireAt);
+        await topicSender.ScheduleMessageAsync(new ServiceBusMessage("t1"), fireAt);
+        await topicSender.ScheduleMessageAsync(new ServiceBusMessage("t2"), fireAt);
+
+        var queueProps = await EventuallyAsync(
+            async () => (await AdminClient.GetQueueRuntimePropertiesAsync(queue)).Value,
+            p => p.ScheduledMessageCount == 1);
+        Assert.Equal(1, queueProps.ScheduledMessageCount);
+        Assert.Equal(0, queueProps.ActiveMessageCount);
+
+        var topicProps = await EventuallyAsync(
+            async () => (await AdminClient.GetTopicRuntimePropertiesAsync(topic)).Value,
+            p => p.ScheduledMessageCount == 2);
+        Assert.Equal(2, topicProps.ScheduledMessageCount);
+        Assert.Equal(1, topicProps.SubscriptionCount);
+
+        // The paged listings carry the same counts.
+        var listedQueue = await EventuallyAsync(
+            () => FindAsync(AdminClient.GetQueuesRuntimePropertiesAsync(), q => q.Name == queue),
+            p => p?.ScheduledMessageCount == 1);
+        Assert.Equal(1, listedQueue?.ScheduledMessageCount);
+
+        var listedTopic = await EventuallyAsync(
+            () => FindAsync(AdminClient.GetTopicsRuntimePropertiesAsync(), t => t.Name == topic),
+            p => p?.ScheduledMessageCount == 2);
+        Assert.Equal(2, listedTopic?.ScheduledMessageCount);
+
+        await queueSender.CancelScheduledMessageAsync(queueSeq);
+        queueProps = await EventuallyAsync(
+            async () => (await AdminClient.GetQueueRuntimePropertiesAsync(queue)).Value,
+            p => p.ScheduledMessageCount == 0);
+        Assert.Equal(0, queueProps.ScheduledMessageCount);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Test 16e: Runtime properties report active and dead-letter counts
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task RuntimeProperties_ReportActiveAndDeadLetterCounts()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateTestQueueAsync();
+        var topic = await CreateTestTopicAsync();
+        await CreateTestSubscriptionAsync(topic, "sub");
+
+        await using (var sender = Client.CreateSender(queue))
+        {
+            await sender.SendMessagesAsync(
+                [new ServiceBusMessage("a"), new ServiceBusMessage("b"), new ServiceBusMessage("c")]);
+        }
+
+        await using var receiver = Client.CreateReceiver(queue);
+        var toDeadLetter = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(toDeadLetter);
+        await receiver.DeadLetterMessageAsync(toDeadLetter);
+
+        // A locked message still counts as active.
+        var locked = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(locked);
+
+        var queueProps = await EventuallyAsync(
+            async () => (await AdminClient.GetQueueRuntimePropertiesAsync(queue)).Value,
+            p => p.ActiveMessageCount == 2 && p.DeadLetterMessageCount == 1);
+        Assert.Equal(2, queueProps.ActiveMessageCount);
+        Assert.Equal(1, queueProps.DeadLetterMessageCount);
+        Assert.Equal(3, queueProps.TotalMessageCount);
+
+        await using (var topicSender = Client.CreateSender(topic))
+        {
+            await topicSender.SendMessageAsync(new ServiceBusMessage("fan-out"));
+        }
+
+        var subProps = await EventuallyAsync(
+            async () => (await AdminClient.GetSubscriptionRuntimePropertiesAsync(topic, "sub")).Value,
+            p => p.ActiveMessageCount == 1);
+        Assert.Equal(1, subProps.ActiveMessageCount);
+        Assert.Equal(0, subProps.DeadLetterMessageCount);
+        Assert.Equal(1, subProps.TotalMessageCount);
+    }
+
+    // Real ASB updates runtime counts asynchronously, so poll briefly before asserting.
+    private static async Task<T> EventuallyAsync<T>(Func<Task<T>> read, Func<T, bool> done)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (true)
+        {
+            var value = await read();
+            if (done(value) || DateTime.UtcNow > deadline)
+                return value;
+            await Task.Delay(250);
+        }
+    }
+
+    private static async Task<T?> FindAsync<T>(Azure.AsyncPageable<T> pageable, Func<T, bool> match)
+        where T : class
+    {
+        await foreach (var item in pageable)
+        {
+            if (match(item))
+                return item;
+        }
+        return null;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
     // Test 17: Subscription SQL Filter
     // ══════════════════════════════════════════════════════════════════════════
 
