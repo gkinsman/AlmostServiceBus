@@ -22,10 +22,11 @@ All notable changes to this project are documented here. The format is based on
 ## [0.6.1] - 2026-09-18
 
 ### Added
-- **HTTPS admin endpoint for Node.js and Python (opt-in TLS).** The official
-  `@azure/service-bus` and `azure-servicebus` `ServiceBusAdministrationClient`s
-  always speak HTTPS, so they could not reach the plaintext-only management API
-  and only the .NET admin client worked. The emulator can now serve the
+- **HTTPS admin endpoint for Node.js, Python and Java (opt-in TLS).** The
+  official `@azure/service-bus`, `azure-servicebus` and
+  `azure-messaging-servicebus` `ServiceBusAdministrationClient`s always speak
+  HTTPS, so they could not reach the plaintext-only management API and only
+  the .NET admin client worked. The emulator can now serve the
   management API over TLS on a separate port, so those clients can create and
   manage entities against it. A self-signed CA and server certificate are
   generated and persisted on first start and reused on restart, or you can
@@ -35,13 +36,16 @@ All notable changes to this project are documented here. The format is based on
   `AdminTlsPort` (default `5301`) and the certificate directory is
   `AdminTlsCertDir`. The AMQP data plane (`5672`) and the plaintext admin API
   (`5300`) are unchanged, so this is fully backward compatible. The Java admin
-  client still cannot be pointed at the emulator (it always dials `443`).
-  Contributed by @alt-Rational (#117).
+  client ignores the port in the endpoint and always dials `443`, so bind the
+  endpoint there for Java (`AdminTlsPort=443` or `WithAdminTls(port: 443)`,
+  portless connection string); see `certs/java.md`. Contributed by
+  @alt-Rational (#117).
 
 ### Changed
 - Dependency updates (no functional change): `Microsoft.NET.Test.Sdk` 18.10.1
-  (#122), `Aspire.Hosting` 13.5.4 (#123), `@vitejs/plugin-vue` 6.0.9
-  (dashboard build only) (#120), `java-jdk` 21.0.12+101.0.LTS (#121) and the
+  (#122), `Aspire.Hosting` 13.5.4 (#123), `System.Security.Cryptography.Pkcs`
+  10.0.12 (#128), `vue` 3.5.43 and `@vitejs/plugin-vue` 6.0.9 (dashboard)
+  (#126, #120), `java-jdk` 21.0.12+101.0.LTS (#121) and the
   Maven `exec-maven-plugin` 3.6.4 (#118) for the client-SDK smoke tests, and
   the `external/NServiceBus.Transport.AzureServiceBus` submodule to `2b73ed3`
   (#119).
