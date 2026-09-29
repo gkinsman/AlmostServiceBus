@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Runtime message counts in the admin API.** Queue, topic and subscription
+  entries now carry `MessageCount` and `CountDetails`, so
+  `GetQueueRuntimePropertiesAsync`, `GetTopicRuntimePropertiesAsync`,
+  `GetSubscriptionRuntimePropertiesAsync` and their paged listings report
+  real `ActiveMessageCount` (locked messages included, as in Service Bus),
+  `DeadLetterMessageCount` and `ScheduledMessageCount` instead of zeros.
+  Topics also report `SubscriptionCount`.
+- **Peeking scheduled messages on a topic.** Scheduled messages sent to a topic
+  stay on the topic until they fire. A receiver created with the topic name can
+  now peek them (`State == Scheduled`), which is the workaround Service Bus
+  documents for them.
+
 ## [0.6.1] - 2026-09-18
 
 ### Added

@@ -86,8 +86,13 @@ mgmtBuilder.WebHost.ConfigureKestrel(k =>
         k.ListenAnyIP(adminTlsPort, lo => lo.UseHttps(tlsBundle.ServerCertificate));
 });
 
+// Created before the management API, which reports its scheduled message counts.
+var defaultContext = registry.GetOrCreate("default");
+var scheduledProcessor = new ScheduledMessageProcessor(defaultContext);
+scheduledProcessor.StartBackground(TimeSpan.FromMilliseconds(500));
+
 var mgmtApp = mgmtBuilder.Build();
-mgmtApp.MapServiceBusManagementApi(registry);
+mgmtApp.MapServiceBusManagementApi(registry, scheduledProcessor);
 await mgmtApp.StartAsync();
 
 // ── Dashboard server (separate port, no route conflicts) ──
@@ -125,12 +130,6 @@ dashApp.MapDashboardSse(eventBus);
 dashApp.MapFallbackToFile("index.html");
 
 await dashApp.StartAsync();
-
-// ── Scheduled message processor ──
-
-var defaultContext = registry.GetOrCreate("default");
-var scheduledProcessor = new ScheduledMessageProcessor(defaultContext);
-scheduledProcessor.StartBackground(TimeSpan.FromMilliseconds(500));
 
 // ── AMQP server ──
 

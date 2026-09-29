@@ -498,12 +498,15 @@ public class ManagementLinkEndpoint : IRequestProcessor
     /// <summary>
     /// Handles com.microsoft:peek-message — returns active messages from the queue
     /// without removing them. Used by ServiceBusReceiver.PeekMessageAsync.
+    /// On a topic it returns the scheduled messages parked there until they fire, which is
+    /// how real Service Bus lets a receiver created with a topic name peek them.
     /// </summary>
     private void HandlePeekMessage(RequestContext requestContext)
     {
         var ns = ResolveNamespace(requestContext);
         var queue = ResolveScopedQueue(requestContext, ns);
-        if (queue is null)
+        var entityName = queue?.Name ?? ResolveScopedTopic(ns)?.Name;
+        if (entityName is null)
         {
             SendNoContentResponse(requestContext);
             return;
@@ -528,16 +531,19 @@ public class ManagementLinkEndpoint : IRequestProcessor
         // Include scheduled messages so PeekMessageAsync(seq) returns them with State=Scheduled.
         if (_scheduledProcessor is not null)
         {
-            foreach (var msg in _scheduledProcessor.GetScheduledForEntity(ns.Name, queue.Name, fromSeq))
+            foreach (var msg in _scheduledProcessor.GetScheduledForEntity(ns.Name, entityName, fromSeq))
             {
                 if (sessionFilter is not null && msg.SessionId != sessionFilter) continue;
                 matches.Add(msg);
             }
         }
 
-        foreach (var msg in queue.PeekFromSequence(fromSeq, messageCount, sessionFilter))
+        if (queue is not null)
         {
-            matches.Add(msg);
+            foreach (var msg in queue.PeekFromSequence(fromSeq, messageCount, sessionFilter))
+            {
+                matches.Add(msg);
+            }
         }
 
         // Apply final ordering and limit.
@@ -733,6 +739,9 @@ public class ManagementLinkEndpoint : IRequestProcessor
     /// available, otherwise tries to look up the queue by associated-link-name in the
     /// request properties.
     /// </summary>
+    private TopicEntity? ResolveScopedTopic(NamespaceContext ns) =>
+        _scopedAddress is null ? null : ns.GetTopic(_scopedAddress);
+
     private QueueEntity? ResolveScopedQueue(RequestContext requestContext, NamespaceContext ns)
     {
         if (_scopedQueue is not null)
