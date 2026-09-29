@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using AlmostServiceBus.Core.Broker;
+using AlmostServiceBus.Tests.TestHelpers;
 
 namespace AlmostServiceBus.Tests.Broker;
 
@@ -33,7 +34,7 @@ public class ConcurrencyTests
             var barrier = new Barrier(concurrentReceivers);
             var results = new ConcurrentBag<SessionState>();
 
-            var tasks = Enumerable.Range(0, concurrentReceivers).Select(r => Task.Run(() =>
+            var tasks = Enumerable.Range(0, concurrentReceivers).Select(r => DedicatedThread.Run(() =>
             {
                 barrier.SignalAndWait();
                 var session = mgr.TryAcceptSession(null, $"receiver-{r}");
@@ -68,7 +69,7 @@ public class ConcurrencyTests
             var barrier = new Barrier(concurrentReceivers);
             var results = new ConcurrentBag<SessionState>();
 
-            var tasks = Enumerable.Range(0, concurrentReceivers).Select(r => Task.Run(() =>
+            var tasks = Enumerable.Range(0, concurrentReceivers).Select(r => DedicatedThread.Run(() =>
             {
                 barrier.SignalAndWait();
                 var session = mgr.TryAcceptSession("target", $"receiver-{r}");
@@ -115,7 +116,7 @@ public class ConcurrencyTests
             // Task.Delay(10) can complete before all threads check on slow CI.
             var pumpTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            var tasks = Enumerable.Range(0, concurrentFlows).Select(_ => Task.Run(() =>
+            var tasks = Enumerable.Range(0, concurrentFlows).Select(_ => DedicatedThread.Run(() =>
             {
                 barrier.SignalAndWait();
                 // This mirrors the fixed OnFlow pattern
@@ -169,7 +170,7 @@ public class ConcurrencyTests
 
         var barrier = new Barrier(2);
 
-        var releaseTask = Task.Run(() =>
+        var releaseTask = DedicatedThread.Run(() =>
         {
             barrier.SignalAndWait();
             for (var i = 0; i < iterations; i++)
@@ -180,7 +181,7 @@ public class ConcurrencyTests
             }
         });
 
-        var renewTask = Task.Run(() =>
+        var renewTask = DedicatedThread.Run(() =>
         {
             barrier.SignalAndWait();
             for (var i = 0; i < iterations; i++)
@@ -223,7 +224,7 @@ public class ConcurrencyTests
         var activeHolders = 0;
 
         var barrier = new Barrier(threads);
-        var tasks = Enumerable.Range(0, threads).Select(_ => Task.Run(() =>
+        var tasks = Enumerable.Range(0, threads).Select(_ => DedicatedThread.Run(() =>
         {
             barrier.SignalAndWait();
             for (var i = 0; i < iterations; i++)
@@ -372,7 +373,7 @@ public class ConcurrencyTests
         var msg = new BrokeredMessage();
 
         var barrier = new Barrier(threads);
-        var tasks = Enumerable.Range(0, threads).Select(_ => Task.Run(() =>
+        var tasks = Enumerable.Range(0, threads).Select(_ => DedicatedThread.Run(() =>
         {
             barrier.SignalAndWait();
             for (var i = 0; i < incrementsPerThread; i++)
@@ -397,7 +398,7 @@ public class ConcurrencyTests
         var tornReads = 0;
         var done = false;
 
-        var writerTask = Task.Run(() =>
+        var writerTask = DedicatedThread.Run(() =>
         {
             for (var i = 0; i < 100_000 && !Volatile.Read(ref done); i++)
             {
@@ -406,7 +407,7 @@ public class ConcurrencyTests
             Volatile.Write(ref done, true);
         });
 
-        var readerTask = Task.Run(() =>
+        var readerTask = DedicatedThread.Run(() =>
         {
             while (!Volatile.Read(ref done))
             {
@@ -438,7 +439,7 @@ public class ConcurrencyTests
         var barrier = new Barrier(threads);
         var results = new ConcurrentBag<QueueEntity>();
 
-        var tasks = Enumerable.Range(0, threads).Select(_ => Task.Run(() =>
+        var tasks = Enumerable.Range(0, threads).Select(_ => DedicatedThread.Run(() =>
         {
             barrier.SignalAndWait();
             results.Add(queue.DeadLetterQueue);
@@ -521,7 +522,7 @@ public class ConcurrencyTests
         // Record the initial value
         var initial = ns.LastActivityAt;
 
-        var writerTask = Task.Run(() =>
+        var writerTask = DedicatedThread.Run(() =>
         {
             for (var i = 0; i < 100_000 && !Volatile.Read(ref done); i++)
             {
@@ -530,7 +531,7 @@ public class ConcurrencyTests
             Volatile.Write(ref done, true);
         });
 
-        var readerTask = Task.Run(() =>
+        var readerTask = DedicatedThread.Run(() =>
         {
             while (!Volatile.Read(ref done))
             {
