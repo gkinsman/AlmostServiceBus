@@ -303,8 +303,10 @@ public class QueueEntityTests
         {
             // Sweep already ran and removed from _pending before renewal.
             // The message was re-enqueued — consume it to clean up.
-            // This is valid behaviour; the race didn't occur in this run.
-            var redelivered = queue.TryDequeueImmediate();
+            // This is valid behaviour; the race didn't occur in this run. Redelivery is
+            // delayed by 1s, so wait for it rather than expecting it immediately.
+            using var redeliveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var redelivered = await queue.DequeueAsync(redeliveryCts.Token);
             Assert.NotNull(redelivered);
             return;
         }
