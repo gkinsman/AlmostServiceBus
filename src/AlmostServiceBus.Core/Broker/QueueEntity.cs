@@ -135,6 +135,12 @@ public sealed class QueueEntity : IDisposable
     public int MessageCount => _messageCount;
 
     /// <summary>
+    /// Messages waiting for delivery plus those locked by a receiver. Mirrors Service Bus's
+    /// <c>ActiveMessageCount</c>, which keeps counting a message until it is settled.
+    /// </summary>
+    public int ActiveMessageCount => _messageCount + _pending.Count;
+
+    /// <summary>
     /// Total messages that have passed through this queue (active + consumed + dead-lettered).
     /// Used by the dashboard to show queues that have had any activity.
     /// </summary>

@@ -12,6 +12,7 @@ public static class AtomXmlWriter
     private static readonly XNamespace Atom = "http://www.w3.org/2005/Atom";
     private static readonly XNamespace Sb = "http://schemas.microsoft.com/netservices/2010/10/servicebus/connect";
     private static readonly XNamespace Xsi = "http://www.w3.org/2001/XMLSchema-instance";
+    private static readonly XNamespace SbCounts = "http://schemas.microsoft.com/netservices/2011/06/servicebus";
 
     /// <summary>
     /// Formats a <see cref="TimeSpan"/> in ISO 8601 duration format.
@@ -34,14 +35,18 @@ public static class AtomXmlWriter
 
     // ── Queue ────────────────────────────────────────────────────────────────
 
-    public static string WriteQueueEntry(QueueEntity queue, string baseUrl = "") =>
-        SerializeToString(BuildQueueEntry(queue, baseUrl));
+    public static string WriteQueueEntry(QueueEntity queue, string baseUrl = "", Func<string, int>? scheduledCount = null) =>
+        SerializeToString(BuildQueueEntry(queue, baseUrl, scheduledCount));
 
-    public static string WriteQueueFeed(IEnumerable<QueueEntity> queues, string baseUrl = "") =>
-        SerializeToString(BuildFeed(queues.Select(queue => BuildQueueEntry(queue, baseUrl))));
+    public static string WriteQueueFeed(IEnumerable<QueueEntity> queues, string baseUrl = "", Func<string, int>? scheduledCount = null) =>
+        SerializeToString(BuildFeed(queues.Select(queue => BuildQueueEntry(queue, baseUrl, scheduledCount))));
 
-    private static XElement BuildQueueEntry(QueueEntity queue, string baseUrl)
+    private static XElement BuildQueueEntry(QueueEntity queue, string baseUrl, Func<string, int>? scheduledCount)
     {
+        var active = queue.ActiveMessageCount;
+        var deadLetter = queue.DeadLetterQueue.ActiveMessageCount;
+        var scheduled = scheduledCount?.Invoke(queue.Name) ?? 0;
+
         var desc = new XElement(Sb + "QueueDescription",
             new XAttribute(XNamespace.Xmlns + "i", Xsi.NamespaceName),
             Elem("LockDuration", FormatTimeSpan(queue.LockDuration)),
@@ -57,20 +62,24 @@ public static class AtomXmlWriter
             OptElem("UserMetadata", queue.UserMetadata),
             queue.AutoDeleteOnIdle.HasValue ? Elem("AutoDeleteOnIdle", FormatTimeSpan(queue.AutoDeleteOnIdle.Value)) : null,
             Elem("RequiresDuplicateDetection", queue.RequiresDuplicateDetection),
-            Elem("DuplicateDetectionHistoryTimeWindow", FormatTimeSpan(queue.DuplicateDetectionHistoryTimeWindow)));
+            Elem("DuplicateDetectionHistoryTimeWindow", FormatTimeSpan(queue.DuplicateDetectionHistoryTimeWindow)),
+            Elem("MessageCount", active + deadLetter + scheduled),
+            CountDetails(active, deadLetter, scheduled));
 
         return BuildEntry(queue.Name, queue.Name, desc, baseUrl);
     }
 
     // ── Topic ────────────────────────────────────────────────────────────────
 
-    public static string WriteTopicEntry(TopicEntity topic, string baseUrl = "") =>
-        SerializeToString(BuildTopicEntry(topic, baseUrl));
+    public static string WriteTopicEntry(TopicEntity topic, string baseUrl = "", Func<string, int>? scheduledCount = null) =>
+        SerializeToString(BuildTopicEntry(topic, baseUrl, scheduledCount));
 
-    public static string WriteTopicFeed(IEnumerable<TopicEntity> topics, string baseUrl = "") =>
-        SerializeToString(BuildFeed(topics.Select(t => BuildTopicEntry(t, baseUrl))));
+    public static string WriteTopicFeed(IEnumerable<TopicEntity> topics, string baseUrl = "", Func<string, int>? scheduledCount = null) =>
+        SerializeToString(BuildFeed(topics.Select(t => BuildTopicEntry(t, baseUrl, scheduledCount))));
 
-    private static XElement BuildTopicEntry(TopicEntity topic, string baseUrl)
+    // A topic never holds deliverable messages (they fan out to subscriptions immediately), so the
+    // only non-zero count is the scheduled messages parked on it until they fire.
+    private static XElement BuildTopicEntry(TopicEntity topic, string baseUrl, Func<string, int>? scheduledCount)
     {
         var desc = new XElement(Sb + "TopicDescription",
             new XAttribute(XNamespace.Xmlns + "i", Xsi.NamespaceName),
@@ -84,7 +93,9 @@ public static class AtomXmlWriter
             OptElem("UserMetadata", topic.UserMetadata),
             topic.AutoDeleteOnIdle.HasValue ? Elem("AutoDeleteOnIdle", FormatTimeSpan(topic.AutoDeleteOnIdle.Value)) : null,
             Elem("RequiresDuplicateDetection", topic.RequiresDuplicateDetection),
-            Elem("DuplicateDetectionHistoryTimeWindow", FormatTimeSpan(topic.DuplicateDetectionHistoryTimeWindow)));
+            Elem("DuplicateDetectionHistoryTimeWindow", FormatTimeSpan(topic.DuplicateDetectionHistoryTimeWindow)),
+            Elem("SubscriptionCount", topic.GetSubscriptions().Count),
+            CountDetails(0, 0, scheduledCount?.Invoke(topic.Name) ?? 0));
 
         return BuildEntry(topic.Name, topic.Name, desc, baseUrl);
     }
@@ -99,6 +110,9 @@ public static class AtomXmlWriter
 
     private static XElement BuildSubscriptionEntry(SubscriptionEntity sub, string baseUrl)
     {
+        var active = sub.Queue.ActiveMessageCount;
+        var deadLetter = sub.Queue.DeadLetterQueue.ActiveMessageCount;
+
         var desc = new XElement(Sb + "SubscriptionDescription",
             new XAttribute(XNamespace.Xmlns + "i", Xsi.NamespaceName),
             Elem("LockDuration", FormatTimeSpan(sub.LockDuration)),
@@ -114,7 +128,9 @@ public static class AtomXmlWriter
             // Emitted with a max-value default when unset so the SDK admin clients, which require
             // these fields to be present, can deserialize the entry.
             Elem("AutoDeleteOnIdle", FormatTimeSpan(sub.AutoDeleteOnIdle ?? TimeSpan.MaxValue)),
-            Elem("EntityAvailabilityStatus", "Available"));
+            Elem("EntityAvailabilityStatus", "Available"),
+            Elem("MessageCount", active + deadLetter),
+            CountDetails(active, deadLetter, 0));
 
         // The SDK admin clients derive the topic and subscription names from the entry id path,
         // so it must be the full "{topic}/Subscriptions/{sub}" resource path, not just the leaf name.
@@ -225,6 +241,15 @@ public static class AtomXmlWriter
 
     private static XElement Elem(string localName, object value) =>
         new(Sb + localName, value is bool b ? b.ToString().ToLowerInvariant() : value);
+
+    private static XElement CountDetails(int active, int deadLetter, int scheduled) =>
+        new(Sb + "CountDetails",
+            new XAttribute(XNamespace.Xmlns + "d2p1", SbCounts.NamespaceName),
+            new XElement(SbCounts + "ActiveMessageCount", active),
+            new XElement(SbCounts + "DeadLetterMessageCount", deadLetter),
+            new XElement(SbCounts + "ScheduledMessageCount", scheduled),
+            new XElement(SbCounts + "TransferMessageCount", 0),
+            new XElement(SbCounts + "TransferDeadLetterMessageCount", 0));
 
     private static XElement? OptElem(string localName, string? value) =>
         value is null ? null : new XElement(Sb + localName, value);
