@@ -1,4 +1,5 @@
 using AlmostServiceBus.Core.Broker;
+using AlmostServiceBus.Tests.TestHelpers;
 
 namespace AlmostServiceBus.Tests.Broker;
 
@@ -37,7 +38,7 @@ public class SessionManagerTests
         // Use a barrier to maximize concurrent contention
         var barrier = new Barrier(messageCount);
 
-        var tasks = Enumerable.Range(1, messageCount).Select(seq => Task.Run(() =>
+        var tasks = Enumerable.Range(1, messageCount).Select(seq => DedicatedThread.Run(() =>
         {
             var msg = new BrokeredMessage
             {
