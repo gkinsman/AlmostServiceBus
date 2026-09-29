@@ -81,6 +81,34 @@ public class TcpMultiplexerAmqpHeaderTests : IAsyncDisposable
         return (received.Task, server);
     }
 
+    // Expected bytes are awaited up to a generous deadline, so a loaded CI runner can't fail a
+    // test by being slow. Only the "nothing more arrives" checks are time-boxed, and those can
+    // only pass spuriously under load, never fail.
+    private static readonly TimeSpan ArrivalDeadline = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan QuietWindow = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>
+    /// Reads until <paramref name="count"/> bytes have arrived or the deadline passes, returning
+    /// whatever arrived so a failed assertion shows the actual bytes.
+    /// </summary>
+    private static async Task<byte[]> ReadBytesAsync(NetworkStream stream, int count)
+    {
+        var buffer = new byte[count];
+        var read = 0;
+        using var cts = new CancellationTokenSource(ArrivalDeadline);
+        try
+        {
+            while (read < count)
+            {
+                var n = await stream.ReadAsync(buffer.AsMemory(read), cts.Token);
+                if (n == 0) break;
+                read += n;
+            }
+        }
+        catch (OperationCanceledException) { }
+        return buffer[..read];
+    }
+
     private static async Task<byte[]> ReadAvailableAsync(NetworkStream stream, TimeSpan window)
     {
         var buffer = new byte[4096];
@@ -128,13 +156,12 @@ public class TcpMultiplexerAmqpHeaderTests : IAsyncDisposable
         await stream.WriteAsync(SaslHeader);
 
         // Only the sasl-outcome may come through; the header and open must wait.
-        var early = await ReadAvailableAsync(stream, TimeSpan.FromMilliseconds(400));
-        Assert.Equal(Outcome, early);
+        Assert.Equal(Outcome, await ReadBytesAsync(stream, Outcome.Length));
+        Assert.Empty(await ReadAvailableAsync(stream, QuietWindow));
 
         // Now the client sends its AMQP header — and the server's header + open are released.
         await stream.WriteAsync(AmqpHeader);
-        var late = await ReadAvailableAsync(stream, TimeSpan.FromMilliseconds(400));
-        Assert.Equal((byte[])[.. AmqpHeader, .. Open], late);
+        Assert.Equal((byte[])[.. AmqpHeader, .. Open], await ReadBytesAsync(stream, AmqpHeader.Length + Open.Length));
 
         // Everything the client sent reached the backend intact and in order.
         Assert.Equal((byte[])[.. SaslHeader, .. AmqpHeader], await backendReceived.WaitAsync(TimeSpan.FromSeconds(5)));
@@ -151,12 +178,11 @@ public class TcpMultiplexerAmqpHeaderTests : IAsyncDisposable
         var stream = client.GetStream();
 
         await stream.WriteAsync(SaslHeader);
-        var early = await ReadAvailableAsync(stream, TimeSpan.FromMilliseconds(400));
-        Assert.Equal(Outcome, early);
+        Assert.Equal(Outcome, await ReadBytesAsync(stream, Outcome.Length));
+        Assert.Empty(await ReadAvailableAsync(stream, QuietWindow));
 
         await stream.WriteAsync(AmqpHeader);
-        var late = await ReadAvailableAsync(stream, TimeSpan.FromMilliseconds(400));
-        Assert.Equal((byte[])[.. AmqpHeader, .. Open], late);
+        Assert.Equal((byte[])[.. AmqpHeader, .. Open], await ReadBytesAsync(stream, AmqpHeader.Length + Open.Length));
     }
 
     [Fact]
@@ -169,8 +195,7 @@ public class TcpMultiplexerAmqpHeaderTests : IAsyncDisposable
         var stream = client.GetStream();
 
         await stream.WriteAsync(AmqpHeader);
-        var got = await ReadAvailableAsync(stream, TimeSpan.FromMilliseconds(600));
-        Assert.Equal((byte[])[.. AmqpHeader, .. Open], got);
+        Assert.Equal((byte[])[.. AmqpHeader, .. Open], await ReadBytesAsync(stream, AmqpHeader.Length + Open.Length));
         Assert.Equal(AmqpHeader, (await backendReceived.WaitAsync(TimeSpan.FromSeconds(5)))[..8]);
     }
 }
