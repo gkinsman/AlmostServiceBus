@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.2] - 2026-09-30
 
 ### Added
 - **Runtime message counts in the admin API.** Queue, topic and subscription
@@ -13,11 +13,31 @@ All notable changes to this project are documented here. The format is based on
   `GetSubscriptionRuntimePropertiesAsync` and their paged listings report
   real `ActiveMessageCount` (locked messages included, as in Service Bus),
   `DeadLetterMessageCount` and `ScheduledMessageCount` instead of zeros.
-  Topics also report `SubscriptionCount`.
+  Topics also report `SubscriptionCount`. (#137)
 - **Peeking scheduled messages on a topic.** Scheduled messages sent to a topic
   stay on the topic until they fire. A receiver created with the topic name can
   now peek them (`State == Scheduled`), which is the workaround Service Bus
-  documents for them.
+  documents for them. (#137)
+
+### Changed
+- `AlmostServiceBus.Aspire.Hosting` now depends on `Aspire.Hosting` 13.6.0
+  (#140).
+- Dependency updates for the test suites and dashboard build (no change to the
+  shipped packages): `Azure.Messaging.ServiceBus` 7.21.0 (#133),
+  `Microsoft.NET.Test.Sdk` 18.10.1 in the Aspire tests (#127),
+  `coverlet.collector` 10.1.0 (#136), `vite` 8.3.1 (#132), and for the Java
+  smoke tests `azure-messaging-servicebus` 7.18.0 (#134) and `slf4j-simple`
+  2.0.20 (#131); the `external/NServiceBus.Transport.AzureServiceBus`
+  submodule to `e35643a` (#130).
+
+### Fixed
+- **Intermittent CI failures in the unit tests.** The concurrency tests parked
+  up to 50 thread-pool threads at a `Barrier`, starving the pool for seconds
+  and stalling timers in the lock-expiry and renewal tests running alongside;
+  that blocking work now runs on dedicated threads. The multiplexer header
+  tests wait for the bytes they expect instead of reading a fixed window, and
+  `RenewLock_PreventsExpirySweep_NoDoubleDelivery` no longer fails whenever
+  the sweep wins the race. Test-only. (#138, #139)
 
 ## [0.6.1] - 2026-09-18
 
