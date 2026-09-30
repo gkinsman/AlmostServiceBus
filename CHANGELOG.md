@@ -19,6 +19,47 @@ All notable changes to this project are documented here. The format is based on
   now peek them (`State == Scheduled`), which is the workaround Service Bus
   documents for them.
 
+## [0.6.1] - 2026-09-18
+
+### Added
+- **HTTPS admin endpoint for Node.js, Python and Java (opt-in TLS).** The
+  official `@azure/service-bus`, `azure-servicebus` and
+  `azure-messaging-servicebus` `ServiceBusAdministrationClient`s always speak
+  HTTPS, so they could not reach the plaintext-only management API and only
+  the .NET admin client worked. The emulator can now serve the
+  management API over TLS on a separate port, so those clients can create and
+  manage entities against it. A self-signed CA and server certificate are
+  generated and persisted on first start and reused on restart, or you can
+  bring your own (PEM/PFX via path, or base64, with an optional password); the
+  Aspire dev certificate is picked up automatically when running under Aspire.
+  It is **off by default** — enable it with `AdminTlsEnabled=true`; the port is
+  `AdminTlsPort` (default `5301`) and the certificate directory is
+  `AdminTlsCertDir`. The AMQP data plane (`5672`) and the plaintext admin API
+  (`5300`) are unchanged, so this is fully backward compatible. The Java admin
+  client ignores the port in the endpoint and always dials `443`, so bind the
+  endpoint there for Java (`AdminTlsPort=443` or `WithAdminTls(port: 443)`,
+  portless connection string); see `certs/java.md`. Contributed by
+  @alt-Rational (#117).
+
+### Changed
+- Dependency updates (no functional change): `Microsoft.NET.Test.Sdk` 18.10.1
+  (#122), `Aspire.Hosting` 13.5.4 (#123), `System.Security.Cryptography.Pkcs`
+  10.0.12 (#128), `vue` 3.5.43 and `@vitejs/plugin-vue` 6.0.9 (dashboard)
+  (#126, #120), `java-jdk` 21.0.12+101.0.LTS (#121) and the
+  Maven `exec-maven-plugin` 3.6.4 (#118) for the client-SDK smoke tests, and
+  the `external/NServiceBus.Transport.AzureServiceBus` submodule to `2b73ed3`
+  (#119).
+
+### Fixed
+- **Atom-XML management responses the Node.js and Python SDKs reject** (found
+  while making their admin clients work over TLS, #117): entity `<id>` and
+  `link href` now carry the full `{topic}/Subscriptions/{subscription}` (and
+  `.../Rules/{rule}`) path so the SDKs can parse entity identities;
+  subscription descriptions now emit `DeadLetteringOnFilterEvaluationExceptions`,
+  `Status`, `AutoDeleteOnIdle` and `EntityAvailabilityStatus`, which those SDKs
+  throw on when absent; and listing rules no longer 404s on the trailing slash
+  the SDK appends.
+
 ## [0.6.0] - 2026-09-11
 
 ### Added
