@@ -1,16 +1,15 @@
 // Admin-interface test: the official Node.js Azure Service Bus SDK's
-// ServiceBusAdministrationClient against a running AlmostServiceBus emulator over its HTTPS
-// admin endpoint (default port 5301). Unlike smoke.mjs — which drives the data plane and creates
-// entities through the plain-HTTP Atom API — this exercises the SDK admin client itself:
+// ServiceBusAdministrationClient against a running AlmostServiceBus emulator over its plain-HTTP
+// admin endpoint (port 5300). Unlike smoke.mjs — which drives the data plane and creates entities
+// through the plain-HTTP Atom API by hand — this exercises the SDK admin client itself:
 // queue / topic / subscription / rule create, get, list, update and delete, plus a data-plane
 // round-trip on an admin-created queue to prove the entity is usable.
 //
-// The admin client speaks HTTPS to the endpoint host and port, so it needs to trust the
-// emulator's CA. Point NODE_EXTRA_CA_CERTS at the emitted emulator-ca.crt *before* starting node
-// (Node reads it at startup and ignores the OS trust store). See ../../../certs/README.md.
+// Since @azure/service-bus 7.10.0 the admin client honours UseDevelopmentEmulator=true and speaks
+// plain HTTP, like the .NET SDK — no certificate needed. (With that flag it no longer speaks TLS at
+// all, so pointing it at the HTTPS endpoint on 5301 hangs up; see ../../../certs/nodejs.md.)
 //
-//   NODE_EXTRA_CA_CERTS=<certdir>/emulator-ca.crt \
-//   ASB_ADMIN_CONNECTION_STRING=Endpoint=sb://localhost:5301;...;UseDevelopmentEmulator=true \
+//   ASB_ADMIN_CONNECTION_STRING=Endpoint=sb://localhost:5300;...;UseDevelopmentEmulator=true \
 //   node admin.mjs
 
 import { ServiceBusAdministrationClient, ServiceBusClient } from "@azure/service-bus";
@@ -18,7 +17,7 @@ import { randomUUID } from "node:crypto";
 
 const ADMIN_CONNECTION_STRING =
   process.env.ASB_ADMIN_CONNECTION_STRING ??
-  "Endpoint=sb://localhost:5301;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
+  "Endpoint=sb://localhost:5300;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
 const DATA_CONNECTION_STRING =
   process.env.ASB_CONNECTION_STRING ??
   "Endpoint=sb://localhost:5672;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";

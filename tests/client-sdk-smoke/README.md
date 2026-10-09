@@ -22,7 +22,9 @@ Each script drives the same scenario and stops at the first failed check:
 Each language also has an **admin test** (`admin.py` / `admin.mjs` / `AdminSmoke`) that exercises
 the management interface end-to-end — queue / topic / subscription / rule create, get, list,
 update and delete, plus a data-plane send/receive on an admin-created entity. All three use the
-SDK's `ServiceBusAdministrationClient`. Node and Python target the HTTPS admin endpoint (`5301`);
+SDK's `ServiceBusAdministrationClient`. Node targets the plain-HTTP admin endpoint (`5300`) —
+`@azure/service-bus` 7.10.0+ honours `UseDevelopmentEmulator=true` there; Python targets the
+HTTPS admin endpoint (`5301`);
 Java's SDK strips the port and always dials 443, so its test targets the endpoint bound on port
 443 with a portless connection string (see below). See
 [../../certs/README.md](../../certs/README.md) for per-language CA trust setup.
@@ -75,9 +77,9 @@ it differently (see [../../certs/README.md](../../certs/README.md)):
 cd tests/client-sdk-smoke/python
 REQUESTS_CA_BUNDLE=/tmp/asb-certs/emulator-ca.crt python admin.py
 
-# Node.js — node ignores the OS store; use NODE_EXTRA_CA_CERTS
+# Node.js — plain HTTP on 5300 (SDK 7.10.0+ honours UseDevelopmentEmulator=true); no CA needed
 cd tests/client-sdk-smoke/node
-NODE_EXTRA_CA_CERTS=/tmp/asb-certs/emulator-ca.crt node admin.mjs
+node admin.mjs
 
 # Java — its SDK admin client dials 443, so bind the endpoint there (privileged) and use a
 # portless connection string. Trust the CA via a PKCS12 truststore, then run the AdminSmoke main.
@@ -90,8 +92,8 @@ MAVEN_OPTS="-Djavax.net.ssl.trustStore=/tmp/asb-certs/emulator-truststore.p12 -D
   mvn -q -o exec:java -Dexec.mainClass=io.almostservicebus.smoke.AdminSmoke
 ```
 
-`ASB_ADMIN_CONNECTION_STRING` overrides the admin target for all three (Node/Python default
-`Endpoint=sb://localhost:5301;…`; Java default is the portless `Endpoint=sb://localhost;…`).
+`ASB_ADMIN_CONNECTION_STRING` overrides the admin target for all three (Node default
+`Endpoint=sb://localhost:5300;…`, Python default `Endpoint=sb://localhost:5301;…`; Java default is the portless `Endpoint=sb://localhost;…`).
 
 ## Node.js concurrent-connection regression test
 
@@ -122,17 +124,20 @@ plane** (which honours `UseDevelopmentEmulator=true` in all three SDKs).
 The emulator also exposes an optional **HTTPS admin endpoint** (port `5301`, `--AdminTlsPort`),
 which the **admin** tests use to drive the SDK admin clients themselves:
 
-- **Node.js** and **Python** `ServiceBusAdministrationClient` speak HTTPS to the endpoint host and
-  port, so — pointed at `Endpoint=sb://localhost:5301;…` and told to trust the emulator CA — they
-  work end-to-end. `admin.mjs` / `admin.py` cover queue/topic/subscription/rule CRUD plus usage.
+- **Python** `ServiceBusAdministrationClient` speaks HTTPS to the endpoint host and port, so —
+  pointed at `Endpoint=sb://localhost:5301;…` and told to trust the emulator CA — it works
+  end-to-end. `admin.py` covers queue/topic/subscription/rule CRUD plus usage.
+- **Node.js** `ServiceBusAdministrationClient` 7.10.0+ honours `UseDevelopmentEmulator=true` and
+  switches to plain HTTP, so `admin.mjs` runs against port 5300 with no certificate. With that flag
+  it never speaks TLS, so it can't reach 5301; drop the flag if you want TLS on purpose.
 - **Java** `ServiceBusAdministrationClientBuilder` strips the port and always dials the namespace
   host on 443, ignoring both the connection-string port and an explicit `.endpoint()` override. So
   `AdminSmoke` runs the SDK admin client against the TLS endpoint bound on **port 443** (privileged)
   with a **portless** connection string — see [../../certs/java.md](../../certs/java.md).
 
 This supersedes an earlier note (and CLAUDE.md decision #10) that no non-.NET admin client could
-reach the emulator: all three SDK admin clients now can over the TLS endpoint — Node and Python on
-5301, Java on 443. If you cannot bind 443, call the REST API directly (over HTTP on 5300 or HTTPS
+reach the emulator: all three SDK admin clients now can — Node over plain HTTP on 5300, Python over TLS
+on 5301, Java over TLS on 443. If you cannot bind 443, call the REST API directly (over HTTP on 5300 or HTTPS
 on 5301) from Java instead.
 
 ## Things these tests taught us about the emulator
