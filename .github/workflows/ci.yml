@@ -131,7 +131,8 @@ jobs:
       # directly needs privileges the emulator process lacks (setcap can't help: `dotnet run`
       # binds from the unprivileged apphost, not the muxer). So the emulator always listens on
       # 5301 and the Java job adds a loopback NAT redirect 443→5301 — transparent at the TCP
-      # layer, so TLS still sees `localhost` (a cert SAN). Node/Python target 5301 directly.
+      # layer, so TLS still sees `localhost` (a cert SAN). Python targets 5301 directly; Node
+      # uses plain HTTP on 5300.
       - name: Start emulator (AMQP 5672, admin HTTP 5300, admin HTTPS 5301)
         run: |
           dotnet run --project src/AlmostServiceBus.Host --no-build \
@@ -195,15 +196,15 @@ jobs:
           npm ci --no-audit --no-fund
           node smoke.mjs
 
-      # Exercises the SDK's ServiceBusAdministrationClient against the HTTPS admin endpoint
-      # (5301), trusting the emitted CA via NODE_EXTRA_CA_CERTS (node ignores the OS store).
-      - name: Run Node.js SDK admin test (HTTPS)
+      # Exercises the SDK's ServiceBusAdministrationClient against the plain-HTTP admin endpoint
+      # (5300). Since @azure/service-bus 7.10.0 the Node admin client honours
+      # UseDevelopmentEmulator=true and drops TLS, the same as .NET — so no CA is needed.
+      - name: Run Node.js SDK admin test (HTTP)
         if: matrix.sdk == 'node'
         timeout-minutes: 5
         working-directory: tests/client-sdk-smoke/node
         env:
-          NODE_EXTRA_CA_CERTS: ${{ env.ASB_CERT_DIR }}/emulator-ca.crt
-          ASB_ADMIN_CONNECTION_STRING: Endpoint=sb://localhost:5301;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true
+          ASB_ADMIN_CONNECTION_STRING: Endpoint=sb://localhost:5300;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true
         run: node admin.mjs
 
       # Regression guard for the coalesced sasl-outcome + AMQP header hang (rhea parks the
