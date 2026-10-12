@@ -106,4 +106,39 @@ public class TopicEntityTests
         Assert.NotNull(msgInTarget);
         Assert.Null(msgInOwn);
     }
+
+    [Fact]
+    public void Publish_SessionlessMessage_DeadLettersOnlyOnSessionSubscription()
+    {
+        var ns = new NamespaceContext("test-ns");
+        var topic = ns.CreateTopic("my-topic");
+        var plainA = topic.AddSubscription("a");
+        var session = topic.AddSubscription("b");
+        session.RequiresSession = true;
+        var plainC = topic.AddSubscription("c");
+
+        topic.Publish(CreateMessage("no-session"));
+
+        Assert.Equal(1, plainA.Queue.MessageCount);
+        Assert.Equal(1, plainC.Queue.MessageCount);
+        Assert.Equal(0, session.Queue.MessageCount);
+        var dead = session.Queue.DeadLetterQueue.TryDequeueImmediate();
+        Assert.Equal("Session id is null.", dead?.DeadLetterReason);
+    }
+
+    [Fact]
+    public void Publish_MessageWithSession_ReachesSessionSubscription()
+    {
+        var ns = new NamespaceContext("test-ns");
+        var topic = ns.CreateTopic("my-topic");
+        var session = topic.AddSubscription("b");
+        session.RequiresSession = true;
+
+        var message = CreateMessage("with-session");
+        message.SessionId = "s1";
+        topic.Publish(message);
+
+        Assert.Equal(1, session.Queue.MessageCount);
+        Assert.Equal(0, session.Queue.DeadLetterQueue.MessageCount);
+    }
 }

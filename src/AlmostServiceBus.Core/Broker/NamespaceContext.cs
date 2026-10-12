@@ -125,20 +125,20 @@ public sealed class NamespaceContext
 
         if (queue is null && topic is null)
         {
-            source.DeadLetterUnforwardable(message,
+            source.DeadLetterOnArrival(message,
                 $"The transfer destination entity does not exist. Transfer Destination Entity Details:- Name: {target}");
             return;
         }
 
         if (message.ForwardHopCount >= MaxForwardHops)
         {
-            source.DeadLetterUnforwardable(message, "Maximum transfer hop count is exceeded.");
+            source.DeadLetterOnArrival(message, "Maximum transfer hop count is exceeded.");
             return;
         }
 
         if (queue is { RequiresSession: true } && string.IsNullOrEmpty(message.SessionId))
         {
-            source.DeadLetterUnforwardable(message,
+            source.DeadLetterOnArrival(message,
                 "The SessionId was not set on a message, and it cannot be sent to the entity. Entities that have session support enabled can only receive messages that have the SessionId set to a valid value.");
             return;
         }

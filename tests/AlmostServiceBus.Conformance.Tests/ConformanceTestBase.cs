@@ -1925,4 +1925,33 @@ public abstract class ConformanceTestBase : IAsyncLifetime
         Assert.True(await EventuallyAsync(async () =>
             (await AdminClient.GetQueueRuntimePropertiesAsync(target)).Value.ActiveMessageCount == 1));
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Topic with a session subscription, message without a session id
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task TopicPublish_SessionlessMessage_DeadLettersOnSessionSubscriptionOnly()
+    {
+        ThrowIfSkipped();
+        var topic = await CreateTestTopicAsync();
+        await CreateTestSubscriptionAsync(topic, "a-plain");
+        await AdminClient.CreateSubscriptionAsync(new CreateSubscriptionOptions(topic, "b-session") { RequiresSession = true });
+        await CreateTestSubscriptionAsync(topic, "c-plain");
+
+        await using var sender = Client.CreateSender(topic);
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "no-session" });
+
+        foreach (var plain in new[] { "a-plain", "c-plain" })
+        {
+            Assert.True(await EventuallyAsync(async () =>
+                (await AdminClient.GetSubscriptionRuntimePropertiesAsync(topic, plain)).Value.ActiveMessageCount == 1));
+        }
+
+        await using var dlq = Client.CreateReceiver(topic, "b-session", new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+        var dead = await dlq.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("no-session", dead?.MessageId);
+        Assert.Equal("Session id is null.", dead!.DeadLetterReason);
+        Assert.Equal("Session enabled entity doesn't allow a message whose session identifier is null.", dead.DeadLetterErrorDescription);
+    }
 }
