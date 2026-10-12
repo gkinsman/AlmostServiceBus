@@ -23,7 +23,7 @@ index 85d2071..02ea9e6 100644
  }
 \ No newline at end of file
 diff --git a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/AzureServiceBusTesting.cs b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/AzureServiceBusTesting.cs
-index 5b9d4c0..4d30da8 100644
+index 5b9d4c0..0aeffe5 100644
 --- a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/AzureServiceBusTesting.cs
 +++ b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/AzureServiceBusTesting.cs
 @@ -5,16 +5,12 @@ namespace Wolverine.AzureServiceBus.Tests;
@@ -47,7 +47,7 @@ index 5b9d4c0..4d30da8 100644
          var config = options.UseAzureServiceBus(Servers.AzureServiceBusConnectionString);
  
          var transport = options.Transports.GetOrCreate<AzureServiceBusTransport>();
-@@ -23,9 +19,53 @@ public static class AzureServiceBusTesting
+@@ -23,9 +19,54 @@ public static class AzureServiceBusTesting
          return config.AutoProvision();
      }
  
@@ -65,8 +65,9 @@ index 5b9d4c0..4d30da8 100644
 +    /// <summary>
 +    /// Configure Azure Service Bus testing with a specific namespace.
 +    /// Useful when sender and receiver hosts in the same test must share a namespace.
++    /// Pass autoProvision: false for tests that check missing resources are reported.
 +    /// </summary>
-+    public static AzureServiceBusConfiguration UseAzureServiceBusTestingWithNamespace(this WolverineOptions options, string ns)
++    public static AzureServiceBusConfiguration UseAzureServiceBusTestingWithNamespace(this WolverineOptions options, string ns, bool autoProvision = true)
 +    {
 +        var connStr = Servers.AzureServiceBusConnectionStringForNamespace(ns);
 +        var mgmtConnStr = Servers.AzureServiceBusManagementConnectionStringForNamespace(ns);
@@ -76,7 +77,7 @@ index 5b9d4c0..4d30da8 100644
 +        var transport = options.Transports.GetOrCreate<AzureServiceBusTransport>();
 +        transport.ManagementConnectionString = mgmtConnStr;
 +
-+        return config.AutoProvision();
++        return autoProvision ? config.AutoProvision() : config;
 +    }
 +
 +    /// <summary>
@@ -571,7 +572,7 @@ index b1fa884..7f5e399 100644
 +[assembly: CollectionBehavior(CollectionBehavior.CollectionPerClass, MaxParallelThreads = 4)]
 \ No newline at end of file
 diff --git a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/StatefulResourceSmokeTests.cs b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/StatefulResourceSmokeTests.cs
-index 4faa17f..29fa1e4 100644
+index 4faa17f..268fcd1 100644
 --- a/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/StatefulResourceSmokeTests.cs
 +++ b/src/Transports/Azure/Wolverine.AzureServiceBus.Tests/StatefulResourceSmokeTests.cs
 @@ -9,9 +9,15 @@ namespace Wolverine.AzureServiceBus.Tests;
@@ -602,7 +603,7 @@ index 4faa17f..29fa1e4 100644
                  else
                  {
 -                    opts.UseAzureServiceBusTesting();
-+                    opts.UseAzureServiceBusTestingWithNamespace(_ns);
++                    opts.UseAzureServiceBusTestingWithNamespace(_ns, autoProvision: false);
                  }
  
                  opts.PublishMessage<SRMessage1>()
