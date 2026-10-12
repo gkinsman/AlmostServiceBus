@@ -191,7 +191,19 @@ public class ManagementLinkEndpoint : IRequestProcessor
 
                         Log.LogDebug("schedule-message: address={Address}, SessionId={SessionId}, MessageId={MessageId}, Subject={Subject}",
                             address, brokered.SessionId, brokered.MessageId, brokered.Subject);
-                        var seqNo = _scheduledProcessor.Schedule(address, brokered, scheduleContext);
+                        long seqNo;
+                        try
+                        {
+                            seqNo = _scheduledProcessor.Schedule(address, brokered, scheduleContext);
+                        }
+                        catch (SessionRequiredException ex)
+                        {
+                            // The request fails as a whole, so undo the messages already scheduled from it.
+                            foreach (var scheduled in sequenceNumbers)
+                                _scheduledProcessor.CancelScheduled(scheduled, scheduleContext);
+                            SendErrorResponse(requestContext, 400, ex.Message, "amqp:not-allowed");
+                            return;
+                        }
                         sequenceNumbers.Add(seqNo);
                     }
                 }

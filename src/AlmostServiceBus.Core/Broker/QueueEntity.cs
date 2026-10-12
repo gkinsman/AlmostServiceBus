@@ -202,8 +202,7 @@ public sealed class QueueEntity : IDisposable
                 // a non-session message to a session-required entity. The SDK propagates
                 // this back to the caller; previously we silently dropped, which masked
                 // application bugs.
-                throw new InvalidOperationException(
-                    $"Cannot send a message without a SessionId to session-required queue '{Name}'.");
+                throw new SessionRequiredException(Name);
             }
             // Assign sequence number and lock token BEFORE enqueuing to the
             // SessionManager so the PriorityQueue can order by SequenceNumber.
@@ -939,5 +938,14 @@ public sealed class MessageLockLostException : Exception
         : base($"The lock on message with lock token '{lockToken}' has expired.")
     {
         LockToken = lockToken;
+    }
+}
+
+// Real Service Bus refuses these with amqp:not-allowed, which the SDK surfaces as InvalidOperationException.
+public sealed class SessionRequiredException : InvalidOperationException
+{
+    public SessionRequiredException(string entityName)
+        : base($"Cannot send a message without a SessionId to session-required queue '{entityName}'.")
+    {
     }
 }

@@ -169,4 +169,117 @@ public class ScheduledMessageProcessorTests
         var result = processor.CancelScheduled(seqNo);
         Assert.False(result);
     }
+    // The queue only becomes session-required after scheduling, which is how a message that
+    // would now be refused at schedule time can still be sitting in the store when it falls due.
+    private static (QueueEntity Good, ScheduledMessageProcessor Processor) ArrangeUndeliverableAndDeliverable()
+    {
+        var ns = CreateNamespace();
+        var bad = ns.CreateQueue("session-queue");
+        var good = ns.CreateQueue("plain-queue");
+        var processor = new ScheduledMessageProcessor(ns);
+
+        var pastTime = DateTimeOffset.UtcNow.AddHours(-1);
+        processor.Schedule("session-queue", CreateMessage(pastTime));
+        bad.RequiresSession = true;
+        processor.Schedule("plain-queue", CreateMessage(pastTime));
+
+        return (good, processor);
+    }
+
+    [Fact]
+    public void ProcessDueMessages_UndeliverableMessage_DoesNotStopOtherDeliveries()
+    {
+        var (good, processor) = ArrangeUndeliverableAndDeliverable();
+
+        processor.ProcessDueMessages();
+
+        Assert.NotNull(good.TryDequeueImmediate());
+        Assert.Empty(processor.GetScheduledForEntity("test-ns", "session-queue"));
+    }
+
+    [Fact]
+    public async Task Background_UndeliverableMessage_LaterScheduledMessagesStillDelivered()
+    {
+        var ns = CreateNamespace();
+        var bad = ns.CreateQueue("session-queue");
+        var good = ns.CreateQueue("plain-queue");
+        using var processor = new ScheduledMessageProcessor(ns);
+
+        processor.Schedule("session-queue", CreateMessage(DateTimeOffset.UtcNow.AddHours(-1)));
+        bad.RequiresSession = true;
+        processor.StartBackground(TimeSpan.FromMilliseconds(10));
+
+        await WaitUntilAsync(() => !processor.GetScheduledForEntity("test-ns", "session-queue").Any());
+
+        processor.Schedule("plain-queue", CreateMessage(DateTimeOffset.UtcNow.AddMilliseconds(50)));
+
+        BrokeredMessage? delivered = null;
+        await WaitUntilAsync(() => (delivered = good.TryDequeueImmediate()) is not null);
+        Assert.NotNull(delivered);
+    }
+
+    [Fact]
+    public void ProcessDueMessages_TopicWithSessionSubscription_NonSessionMessage_DoesNotThrow()
+    {
+        var ns = CreateNamespace();
+        ns.CreateSubscription("my-topic", "plain");
+        var sessionSub = ns.CreateSubscription("my-topic", "sessions");
+        sessionSub.Queue.RequiresSession = true;
+        var processor = new ScheduledMessageProcessor(ns);
+
+        processor.Schedule("my-topic", CreateMessage(DateTimeOffset.UtcNow.AddHours(-1)));
+
+        processor.ProcessDueMessages();
+    }
+
+    [Fact]
+    public void ProcessDueMessages_TargetDeleted_DropsMessage()
+    {
+        var ns = CreateNamespace();
+        ns.CreateQueue("my-queue");
+        var processor = new ScheduledMessageProcessor(ns);
+        processor.Schedule("my-queue", CreateMessage(DateTimeOffset.UtcNow.AddHours(-1)));
+        ns.DeleteQueue("my-queue");
+
+        processor.ProcessDueMessages();
+
+        Assert.Empty(processor.GetScheduledForEntity("test-ns", "my-queue"));
+    }
+
+    [Fact]
+    public void Schedule_NonSessionMessageToSessionQueue_Throws()
+    {
+        var ns = CreateNamespace();
+        ns.CreateQueue("session-queue").RequiresSession = true;
+        var processor = new ScheduledMessageProcessor(ns);
+
+        Assert.Throws<SessionRequiredException>(() =>
+            processor.Schedule("session-queue", CreateMessage(DateTimeOffset.UtcNow.AddHours(1))));
+        Assert.Empty(processor.GetScheduledForEntity("test-ns", "session-queue"));
+    }
+
+    [Fact]
+    public void Schedule_SessionMessageToSessionQueue_Succeeds()
+    {
+        var ns = CreateNamespace();
+        ns.CreateQueue("session-queue").RequiresSession = true;
+        var processor = new ScheduledMessageProcessor(ns);
+        var message = CreateMessage(DateTimeOffset.UtcNow.AddHours(1));
+        message.SessionId = "s1";
+
+        processor.Schedule("session-queue", message);
+
+        Assert.Single(processor.GetScheduledForEntity("test-ns", "session-queue"));
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline)
+                throw new TimeoutException("Condition not met within 5 seconds.");
+            await Task.Delay(10);
+        }
+    }
 }
