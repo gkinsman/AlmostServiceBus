@@ -96,4 +96,27 @@ public class EmulatorNetworkTests
             Environment.SetEnvironmentVariable(EmulatorNetwork.HostEnvironmentVariable, original);
         }
     }
+
+    [Theory]
+    [InlineData("localhost", "127.0.0.1")]
+    [InlineData("LOCALHOST", "127.0.0.1")]
+    [InlineData("0.0.0.0", "0.0.0.0")]
+    [InlineData("127.0.0.1", "127.0.0.1")]
+    [InlineData("::", "::")]
+    public void ToBindAddress_ParsesBindHost(string host, string expected)
+    {
+        Assert.Equal(System.Net.IPAddress.Parse(expected), EmulatorNetwork.ToBindAddress(host));
+    }
+
+    [Fact]
+    public void GetBindAddress_OutsideAContainer_IsLoopback()
+    {
+        // Only meaningful with the default, non-container configuration.
+        if (Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true"
+            || Environment.GetEnvironmentVariable("ASB_RUNNING_IN_CONTAINER") == "true"
+            || Environment.GetEnvironmentVariable("ASB_BIND_HOST") is not null)
+            return;
+
+        Assert.Equal(System.Net.IPAddress.Loopback, EmulatorNetwork.GetBindAddress());
+    }
 }

@@ -230,7 +230,7 @@ Mostly useful when running in a container. All are optional.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ASB_HOST` | container hostname (in a container), else `localhost` | The host clients use to reach the emulator (for example a Docker service name). Advertised as the public host and treated as the `default` namespace, so `RootManageSharedAccessKey` resolves to `default`. |
-| `ASB_BIND_HOST` | `0.0.0.0` (in a container), else `localhost` | Network interface the listener binds to. |
+| `ASB_BIND_HOST` | `0.0.0.0` (in a container), else `localhost` | Network interface every listener (AMQP/HTTP port, 5300, 5301 and the dashboard) binds to. Outside a container the emulator is reachable from this machine only; set `0.0.0.0` to accept connections from other machines or from containers via `host.docker.internal`. |
 | `ASB_DEFAULT_NAMESPACE_HOSTS` | — | Extra comma/space-separated hostnames that should also map to the `default` namespace. |
 | `ASB_RUNNING_IN_CONTAINER` | — | Set to `true` to force container mode when the standard `DOTNET_RUNNING_IN_CONTAINER` flag isn't present (for example on a non–.NET base image). |
 

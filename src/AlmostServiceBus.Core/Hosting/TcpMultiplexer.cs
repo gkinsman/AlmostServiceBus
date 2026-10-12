@@ -34,12 +34,14 @@ public class TcpMultiplexer
         0x48 or // H (HEAD)
         0x4F;   // O (OPTIONS)
 
+    private readonly IPAddress _listenAddress;
     private readonly int _listenPort;
     private readonly int _amqpPort;
     private readonly int _httpPort;
 
-    public TcpMultiplexer(int listenPort, int amqpPort, int httpPort)
+    public TcpMultiplexer(int listenPort, int amqpPort, int httpPort, IPAddress? listenAddress = null)
     {
+        _listenAddress = listenAddress ?? EmulatorNetwork.GetBindAddress();
         _listenPort = listenPort;
         _amqpPort = amqpPort;
         _httpPort = httpPort;
@@ -47,7 +49,7 @@ public class TcpMultiplexer
 
     public async Task StartAsync(CancellationToken ct)
     {
-        var listener = new TcpListener(IPAddress.Any, _listenPort);
+        var listener = new TcpListener(_listenAddress, _listenPort);
         listener.Start(512);
 
         using var reg = ct.Register(() => listener.Stop());
