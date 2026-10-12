@@ -63,8 +63,8 @@ public static class AtomXmlWriter
             queue.AutoDeleteOnIdle.HasValue ? Elem("AutoDeleteOnIdle", FormatTimeSpan(queue.AutoDeleteOnIdle.Value)) : null,
             Elem("RequiresDuplicateDetection", queue.RequiresDuplicateDetection),
             Elem("DuplicateDetectionHistoryTimeWindow", FormatTimeSpan(queue.DuplicateDetectionHistoryTimeWindow)),
-            Elem("MessageCount", active + deadLetter + scheduled + queue.TransferDeadLetterMessageCount),
-            CountDetails(active, deadLetter, scheduled, queue.TransferDeadLetterMessageCount));
+            Elem("MessageCount", active + deadLetter + scheduled),
+            CountDetails(active, deadLetter, scheduled));
 
         return BuildEntry(queue.Name, queue.Name, desc, baseUrl);
     }
@@ -129,8 +129,8 @@ public static class AtomXmlWriter
             // these fields to be present, can deserialize the entry.
             Elem("AutoDeleteOnIdle", FormatTimeSpan(sub.AutoDeleteOnIdle ?? TimeSpan.MaxValue)),
             Elem("EntityAvailabilityStatus", "Available"),
-            Elem("MessageCount", active + deadLetter + sub.Queue.TransferDeadLetterMessageCount),
-            CountDetails(active, deadLetter, 0, sub.Queue.TransferDeadLetterMessageCount));
+            Elem("MessageCount", active + deadLetter),
+            CountDetails(active, deadLetter, 0));
 
         // The SDK admin clients derive the topic and subscription names from the entry id path,
         // so it must be the full "{topic}/Subscriptions/{sub}" resource path, not just the leaf name.
@@ -242,14 +242,14 @@ public static class AtomXmlWriter
     private static XElement Elem(string localName, object value) =>
         new(Sb + localName, value is bool b ? b.ToString().ToLowerInvariant() : value);
 
-    private static XElement CountDetails(int active, int deadLetter, int scheduled, int transferDeadLetter = 0) =>
+    private static XElement CountDetails(int active, int deadLetter, int scheduled) =>
         new(Sb + "CountDetails",
             new XAttribute(XNamespace.Xmlns + "d2p1", SbCounts.NamespaceName),
             new XElement(SbCounts + "ActiveMessageCount", active),
             new XElement(SbCounts + "DeadLetterMessageCount", deadLetter),
             new XElement(SbCounts + "ScheduledMessageCount", scheduled),
             new XElement(SbCounts + "TransferMessageCount", 0),
-            new XElement(SbCounts + "TransferDeadLetterMessageCount", transferDeadLetter));
+            new XElement(SbCounts + "TransferDeadLetterMessageCount", 0));
 
     private static XElement? OptElem(string localName, string? value) =>
         value is null ? null : new XElement(Sb + localName, value);

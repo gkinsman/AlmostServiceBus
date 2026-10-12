@@ -40,7 +40,6 @@ public sealed class QueueEntity : IDisposable
     private readonly ConcurrentDictionary<string, byte> _sweptLockTokens = new();
     private readonly bool _isDeadLetterQueue;
     private QueueEntity? _deadLetterQueue;
-    private QueueEntity? _transferDeadLetterQueue;
     private NamespaceContext? _namespace;
     private SessionManager? _sessionManager;
     private int _messageCount;
@@ -79,7 +78,6 @@ public sealed class QueueEntity : IDisposable
         _lockExpiryTimer?.Dispose();
         _lockExpiryTimer = null;
         _deadLetterQueue?.Dispose();
-        _transferDeadLetterQueue?.Dispose();
     }
 
     // --- Configuration properties ---
@@ -154,8 +152,6 @@ public sealed class QueueEntity : IDisposable
     /// </summary>
     public int ConsumedCount => _consumedCount;
 
-    public int TransferDeadLetterMessageCount => _transferDeadLetterQueue?.ActiveMessageCount ?? 0;
-
     // ForwardTo is resolved by name on every delivery, so the target can be created after this
     // entity, or deleted and recreated, without re-wiring.
     internal void SetNamespace(NamespaceContext ns) => _namespace = ns;
@@ -185,28 +181,6 @@ public sealed class QueueEntity : IDisposable
             if (Interlocked.CompareExchange(ref _deadLetterQueue, dlq, null) != null)
                 dlq.Dispose(); // lost the race — dispose the duplicate (has a Timer)
             return _deadLetterQueue;
-        }
-    }
-
-    /// <summary>
-    /// Holds messages this entity could not auto-forward (missing destination, hop limit,
-    /// session mismatch). Real ASB keeps these apart from <see cref="DeadLetterQueue"/>, at
-    /// <c>{entity}/$Transfer/$DeadLetterQueue</c>.
-    /// </summary>
-    public QueueEntity TransferDeadLetterQueue
-    {
-        get
-        {
-            if (_isDeadLetterQueue)
-                return this;
-
-            if (_transferDeadLetterQueue is not null)
-                return _transferDeadLetterQueue;
-
-            var tdlq = new QueueEntity($"{Name}/$Transfer/$deadletterqueue", isDeadLetterQueue: true);
-            if (Interlocked.CompareExchange(ref _transferDeadLetterQueue, tdlq, null) != null)
-                tdlq.Dispose();
-            return _transferDeadLetterQueue;
         }
     }
 
@@ -280,10 +254,12 @@ public sealed class QueueEntity : IDisposable
         PublishEnqueued(message);
     }
 
-    internal void TransferDeadLetter(BrokeredMessage message, string reason, string description)
+    // Real Service Bus puts messages it can't auto-forward in the source's ordinary dead-letter
+    // queue, with only a reason, not in the transfer dead-letter queue the docs describe.
+    internal void DeadLetterUnforwardable(BrokeredMessage message, string reason)
     {
         message.DeadLetterReason = reason;
-        message.DeadLetterErrorDescription = description;
+        message.DeadLetterErrorDescription = null;
         message.LockToken = null;
         message.State = MessageState.Active;
 
@@ -292,7 +268,7 @@ public sealed class QueueEntity : IDisposable
             message.MessageId, message.SequenceNumber, message.ContentType,
             null, null, DateTimeOffset.UtcNow));
 
-        TransferDeadLetterQueue.Enqueue(message);
+        DeadLetterQueue.Enqueue(message);
     }
 
     private void PublishEnqueued(BrokeredMessage message)

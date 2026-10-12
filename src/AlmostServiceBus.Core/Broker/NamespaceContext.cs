@@ -114,7 +114,8 @@ public sealed class NamespaceContext
     // ── Auto-forwarding ──────────────────────────────────────────────────────
 
     // Real ASB dead-letters a message on the 5th hop, and on the source entity
-    // (not the destination) whenever it can't be forwarded.
+    // (not the destination) whenever it can't be forwarded. The reasons are the ones a
+    // real namespace sets; they differ from the codes in Microsoft's documentation.
     private const int MaxForwardHops = 4;
 
     internal void Forward(QueueEntity source, BrokeredMessage message)
@@ -124,22 +125,21 @@ public sealed class NamespaceContext
 
         if (queue is null && topic is null)
         {
-            source.TransferDeadLetter(message, "ForwardToEntityNotFound",
-                $"The auto-forward destination '{target}' does not exist.");
+            source.DeadLetterUnforwardable(message,
+                $"The transfer destination entity does not exist. Transfer Destination Entity Details:- Name: {target}");
             return;
         }
 
         if (message.ForwardHopCount >= MaxForwardHops)
         {
-            source.TransferDeadLetter(message, "MaxTransferHopCountExceeded",
-                "The maximum number of allowed hops when forwarding between queues exceeded the limit. This value is set to 4.");
+            source.DeadLetterUnforwardable(message, "Maximum transfer hop count is exceeded.");
             return;
         }
 
         if (queue is { RequiresSession: true } && string.IsNullOrEmpty(message.SessionId))
         {
-            source.TransferDeadLetter(message, "Session ID is null",
-                "Session enabled entity doesn't allow a message whose session identifier is null.");
+            source.DeadLetterUnforwardable(message,
+                "The SessionId was not set on a message, and it cannot be sent to the entity. Entities that have session support enabled can only receive messages that have the SessionId set to a valid value.");
             return;
         }
 
@@ -163,7 +163,6 @@ public sealed class NamespaceContext
     ///   <item>Dead letter queue: <c>myQueue/$DeadLetterQueue</c></item>
     ///   <item>Subscription path: <c>topicName/Subscriptions/subName</c></item>
     ///   <item>Subscription DLQ: <c>topicName/Subscriptions/subName/$DeadLetterQueue</c></item>
-    ///   <item>Transfer DLQ of either: <c>.../$Transfer/$DeadLetterQueue</c></item>
     /// </list>
     /// Returns <see langword="null"/> when no match is found.
     /// </summary>
@@ -171,10 +170,6 @@ public sealed class NamespaceContext
     {
         if (_queues.TryGetValue(address, out var queue))
             return queue;
-
-        const string transferDlqSuffix = "/$Transfer/$DeadLetterQueue";
-        if (address.EndsWith(transferDlqSuffix, StringComparison.OrdinalIgnoreCase))
-            return ResolveQueue(address[..^transferDlqSuffix.Length])?.TransferDeadLetterQueue;
 
         // Check for $DeadLetterQueue suffix on a direct queue
         const string dlqSuffix = "/$DeadLetterQueue";

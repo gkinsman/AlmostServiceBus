@@ -90,6 +90,9 @@ public static class ManagementApiEndpoints
                 if (topic is null)
                     return ManagementApiErrors.EntityNotFound(topicName);
 
+                if (MissingForwardTarget(ns, () => AtomXmlReader.ReadSubscriptionProperties(body).ForwardTo) is { } badSub)
+                    return badSub;
+
                 SubscriptionEntity sub;
                 if (isUpdate)
                 {
@@ -137,6 +140,9 @@ public static class ManagementApiEndpoints
             }
             else
             {
+                if (MissingForwardTarget(ns, () => AtomXmlReader.ReadQueueProperties(body).ForwardTo) is { } badQueue)
+                    return badQueue;
+
                 QueueEntity entity;
                 if (isUpdate)
                 {
@@ -488,6 +494,20 @@ public static class ManagementApiEndpoints
         {
             // Malformed XML — leave defaults
         }
+    }
+
+    // Real Service Bus refuses to create or update an entity whose ForwardTo names nothing,
+    // and the admin client surfaces the 400 as ArgumentException.
+    private static IResult? MissingForwardTarget(NamespaceContext ns, Func<string?> readForwardTo)
+    {
+        string? forwardTo;
+        try { forwardTo = readForwardTo(); }
+        catch { return null; }
+
+        if (forwardTo is null || ns.ResolveSendTarget(forwardTo) is not (null, null))
+            return null;
+
+        return ManagementApiErrors.BadRequest($"The auto forwarding destination entity {forwardTo} does not exist.");
     }
 
     private static void ApplySubscriptionProperties(SubscriptionEntity entity, string body)

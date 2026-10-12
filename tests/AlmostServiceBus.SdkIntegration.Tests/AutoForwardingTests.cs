@@ -59,8 +59,8 @@ public class AutoForwardingTests : IAsyncLifetime
         Assert.NotNull(delivered);
         Assert.Equal("x", delivered!.Body.ToString());
 
-        var stuck = await _client.CreateReceiver("fwd/source", "fwd").ReceiveMessageAsync(TimeSpan.FromSeconds(1));
-        Assert.Null(stuck);
+        var source = await _admin.GetSubscriptionRuntimePropertiesAsync("fwd/source", "fwd");
+        Assert.Equal(0, source.Value.ActiveMessageCount);
     }
 
     [Fact]
@@ -77,7 +77,7 @@ public class AutoForwardingTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DeletedDestination_LandsInTheSourcesTransferDeadLetterQueue()
+    public async Task DeletedDestination_LandsInTheSourcesDeadLetterQueue()
     {
         await _admin.CreateQueueAsync("tdlq-target");
         await _admin.CreateTopicAsync("tdlq-source");
@@ -86,15 +86,15 @@ public class AutoForwardingTests : IAsyncLifetime
 
         await _client.CreateSender("tdlq-source").SendMessageAsync(new ServiceBusMessage("x") { MessageId = "lost" });
 
+        var props = await _admin.GetSubscriptionRuntimePropertiesAsync("tdlq-source", "fwd");
+        Assert.Equal(1, props.Value.DeadLetterMessageCount);
+
         var receiver = _client.CreateReceiver("tdlq-source", "fwd",
-            new ServiceBusReceiverOptions { SubQueue = SubQueue.TransferDeadLetter });
+            new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
         var dead = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
         Assert.NotNull(dead);
         Assert.Equal("lost", dead!.MessageId);
-        Assert.Equal("ForwardToEntityNotFound", dead.DeadLetterReason);
-
-        var props = await _admin.GetSubscriptionRuntimePropertiesAsync("tdlq-source", "fwd");
-        Assert.Equal(1, props.Value.TransferDeadLetterMessageCount);
+        Assert.StartsWith("The transfer destination entity does not exist.", dead.DeadLetterReason);
     }
 
     [Fact]

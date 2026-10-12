@@ -82,7 +82,7 @@ public class AutoForwardingTests
     }
 
     [Fact]
-    public void ForwardTarget_Deleted_TransferDeadLettersOnSource()
+    public void ForwardTarget_Deleted_DeadLettersOnSource()
     {
         var ns = new NamespaceContext("ns");
         ns.CreateQueue("target");
@@ -92,10 +92,10 @@ public class AutoForwardingTests
         ns.GetTopic("source")!.Publish(Message());
 
         Assert.Equal(0, forwarder.Queue.MessageCount);
-        Assert.Equal(0, forwarder.Queue.DeadLetterQueue.MessageCount);
-        var dead = forwarder.Queue.TransferDeadLetterQueue.TryDequeueImmediate();
+        var dead = forwarder.Queue.DeadLetterQueue.TryDequeueImmediate();
         Assert.NotNull(dead);
-        Assert.Equal("ForwardToEntityNotFound", dead!.DeadLetterReason);
+        Assert.StartsWith("The transfer destination entity does not exist.", dead!.DeadLetterReason);
+        Assert.Null(dead.DeadLetterErrorDescription);
     }
 
     [Fact]
@@ -112,7 +112,7 @@ public class AutoForwardingTests
     }
 
     [Fact]
-    public void ChainOfFiveHops_TransferDeadLettersOnTheFifthSource()
+    public void ChainOfFiveHops_DeadLettersOnTheFifthSource()
     {
         var ns = new NamespaceContext("ns");
         var end = ns.CreateQueue("q5");
@@ -122,9 +122,9 @@ public class AutoForwardingTests
         ns.GetQueue("q0")!.Enqueue(Message());
 
         Assert.Equal(0, end.MessageCount);
-        var dead = ns.GetQueue("q4")!.TransferDeadLetterQueue.TryDequeueImmediate();
+        var dead = ns.GetQueue("q4")!.DeadLetterQueue.TryDequeueImmediate();
         Assert.NotNull(dead);
-        Assert.Equal("MaxTransferHopCountExceeded", dead!.DeadLetterReason);
+        Assert.Equal("Maximum transfer hop count is exceeded.", dead!.DeadLetterReason);
     }
 
     [Fact]
@@ -136,11 +136,11 @@ public class AutoForwardingTests
 
         ns.GetTopic("topic")!.Publish(Message());
 
-        Assert.Equal(1, loop.Queue.TransferDeadLetterMessageCount);
+        Assert.Equal(1, loop.Queue.DeadLetterQueue.MessageCount);
     }
 
     [Fact]
-    public void SessionlessMessage_ForwardedToSessionQueue_TransferDeadLetters()
+    public void SessionlessMessage_ForwardedToSessionQueue_DeadLettersOnSource()
     {
         var ns = new NamespaceContext("ns");
         var target = ns.CreateQueue("sessions");
@@ -152,7 +152,7 @@ public class AutoForwardingTests
         source.Enqueue(Message(sessionId: "s1"));
 
         Assert.Equal(1, target.MessageCount);
-        Assert.Equal("Session ID is null", source.TransferDeadLetterQueue.TryDequeueImmediate()?.DeadLetterReason);
+        Assert.StartsWith("The SessionId was not set on a message", source.DeadLetterQueue.TryDequeueImmediate()?.DeadLetterReason);
     }
 
     [Fact]
@@ -167,20 +167,5 @@ public class AutoForwardingTests
 
         Assert.Equal(1, sub.Queue.MessageCount);
         Assert.Equal(0, target.MessageCount);
-    }
-
-    [Theory]
-    [InlineData("source/$Transfer/$DeadLetterQueue")]
-    [InlineData("topic/Subscriptions/fwd/$Transfer/$DeadLetterQueue")]
-    public void TransferDeadLetterQueue_IsAddressable(string address)
-    {
-        var ns = new NamespaceContext("ns");
-        var queue = ns.CreateQueue("source");
-        var sub = ns.CreateSubscription("topic", "fwd");
-
-        var resolved = ns.ResolveQueue(address);
-
-        var expected = address.StartsWith("topic") ? sub.Queue : queue;
-        Assert.Same(expected.TransferDeadLetterQueue, resolved);
     }
 }
