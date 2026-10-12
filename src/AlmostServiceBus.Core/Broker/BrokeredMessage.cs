@@ -61,6 +61,8 @@ public sealed class BrokeredMessage
 
     public string? DeadLetterSource { get; set; }
 
+    public int ForwardHopCount { get; set; }
+
     public DateTimeOffset EnqueuedTimeUtc { get; set; } = DateTimeOffset.UtcNow;
 
     public string? LockToken { get; set; }
@@ -110,6 +112,7 @@ public sealed class BrokeredMessage
             DeadLetterReason = DeadLetterReason,
             DeadLetterErrorDescription = DeadLetterErrorDescription,
             EnqueuedTimeUtc = EnqueuedTimeUtc,
+            ForwardHopCount = ForwardHopCount,
             // Reset tracking state
             SequenceNumber = 0,
             DeliveryCount = 0,

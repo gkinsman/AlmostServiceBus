@@ -40,34 +40,14 @@ public sealed class NamespaceContext
     public QueueEntity CreateQueue(string name)
     {
         Touch();
-        var created = false;
-        var result = _queues.GetOrAdd(name, n =>
+        return _queues.GetOrAdd(name, n =>
         {
             var queue = new QueueEntity(n);
+            queue.SetNamespace(this);
             if (_eventBus is not null)
                 queue.SetEventBus(_eventBus, Name, n);
-            created = true;
             return queue;
         });
-
-        // Resolve any subscriptions that reference this queue as ForwardTo
-        // but couldn't resolve it at creation time (race: subscription created before queue).
-        if (created)
-        {
-            foreach (var topic in _topics.Values)
-            {
-                foreach (var sub in topic.GetSubscriptions())
-                {
-                    if (sub.ResolvedForwardToQueue is null
-                        && string.Equals(sub.ForwardTo, name, StringComparison.OrdinalIgnoreCase))
-                    {
-                        sub.ResolvedForwardToQueue = result;
-                    }
-                }
-            }
-        }
-
-        return result;
     }
 
     public QueueEntity? GetQueue(string name) =>
@@ -94,6 +74,7 @@ public sealed class NamespaceContext
     private TopicEntity NewTopic(string name)
     {
         var topic = new TopicEntity(name);
+        topic.SetNamespace(this);
         if (_eventBus is not null)
             topic.SetEventBus(_eventBus, Name);
         return topic;
@@ -112,9 +93,8 @@ public sealed class NamespaceContext
 
     /// <summary>
     /// Ensures the topic exists, then adds (or returns) a subscription on it.
-    /// When <paramref name="forwardTo"/> is provided the subscription's
-    /// <see cref="SubscriptionEntity.ForwardTo"/> and
-    /// <see cref="SubscriptionEntity.ResolvedForwardToQueue"/> are wired up.
+    /// When <paramref name="forwardTo"/> names neither a queue nor a topic, a queue of
+    /// that name is created: real ASB refuses a ForwardTo whose target doesn't exist.
     /// </summary>
     public SubscriptionEntity CreateSubscription(string topicName, string subName, string? forwardTo = null)
     {
@@ -123,13 +103,51 @@ public sealed class NamespaceContext
 
         if (forwardTo is not null)
         {
+            if (ResolveSendTarget(forwardTo) is (null, null))
+                CreateQueue(forwardTo);
             sub.ForwardTo = forwardTo;
-            // Auto-create the target queue if it doesn't exist — real ASB requires
-            // ForwardTo targets to exist, and the management plane ensures they do.
-            sub.ResolvedForwardToQueue = CreateQueue(forwardTo);
         }
 
         return sub;
+    }
+
+    // ── Auto-forwarding ──────────────────────────────────────────────────────
+
+    // Real ASB dead-letters a message on the 5th hop, and on the source entity
+    // (not the destination) whenever it can't be forwarded. The reasons are the ones a
+    // real namespace sets; they differ from the codes in Microsoft's documentation.
+    private const int MaxForwardHops = 4;
+
+    internal void Forward(QueueEntity source, BrokeredMessage message)
+    {
+        var target = source.ForwardTo!;
+        var (queue, topic) = ResolveSendTarget(target);
+
+        if (queue is null && topic is null)
+        {
+            source.DeadLetterUnforwardable(message,
+                $"The transfer destination entity does not exist. Transfer Destination Entity Details:- Name: {target}");
+            return;
+        }
+
+        if (message.ForwardHopCount >= MaxForwardHops)
+        {
+            source.DeadLetterUnforwardable(message, "Maximum transfer hop count is exceeded.");
+            return;
+        }
+
+        if (queue is { RequiresSession: true } && string.IsNullOrEmpty(message.SessionId))
+        {
+            source.DeadLetterUnforwardable(message,
+                "The SessionId was not set on a message, and it cannot be sent to the entity. Entities that have session support enabled can only receive messages that have the SessionId set to a valid value.");
+            return;
+        }
+
+        message.ForwardHopCount++;
+        if (queue is not null)
+            queue.Enqueue(message);
+        else
+            topic!.Publish(message);
     }
 
     public SubscriptionEntity? GetSubscription(string topicName, string subName) =>

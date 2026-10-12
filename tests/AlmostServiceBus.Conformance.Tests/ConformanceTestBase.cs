@@ -1795,4 +1795,134 @@ public abstract class ConformanceTestBase : IAsyncLifetime
 
         Assert.Contains("multiple top-level entities", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Auto-forwarding. Expected values come from a Standard namespace (12 Oct 2026);
+    // several differ from Microsoft's documentation.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private static async Task<bool> EventuallyAsync(Func<Task<bool>> condition, TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(20));
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition())
+                return true;
+            await Task.Delay(250);
+        }
+        return await condition();
+    }
+
+    [Fact]
+    public async Task AutoForward_SubscriptionToTopic_DeliversToTargetSubscriptions()
+    {
+        ThrowIfSkipped();
+        var target = await CreateTestTopicAsync();
+        await CreateTestSubscriptionAsync(target, "counter");
+        var source = await CreateTestTopicAsync();
+        await CreateTestSubscriptionAsync(source, "fwd", forwardTo: target);
+
+        await using var sender = Client.CreateSender(source);
+        await sender.SendMessageAsync(new ServiceBusMessage("x"));
+
+        await using var receiver = Client.CreateReceiver(target, "counter");
+        Assert.NotNull(await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task AutoForward_ToMissingEntity_IsRefusedAtCreation()
+    {
+        ThrowIfSkipped();
+        var source = await CreateTestTopicAsync();
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            AdminClient.CreateSubscriptionAsync(new CreateSubscriptionOptions(source, "fwd") { ForwardTo = $"{source}-missing" }));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            CreateTestQueueAsync(new CreateQueueOptions("unused") { ForwardTo = $"{source}-missing" }));
+    }
+
+    [Fact]
+    public async Task AutoForward_ReceiveOrPeekOnForwardingEntity_IsRefused()
+    {
+        ThrowIfSkipped();
+        var target = await CreateTestQueueAsync();
+        var source = await CreateTestQueueAsync(new CreateQueueOptions("unused") { ForwardTo = target });
+
+        await using var receiver = Client.CreateReceiver(source);
+        var receive = await Assert.ThrowsAsync<InvalidOperationException>(() => receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(3)));
+        Assert.Contains("auto-forwarding enabled", receive.Message);
+
+        await using var browser = Client.CreateReceiver(source);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => browser.PeekMessageAsync());
+
+        // The forwarding entity's own dead-letter queue stays readable.
+        await using var dlq = Client.CreateReceiver(source, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+        Assert.Null(await dlq.ReceiveMessageAsync(TimeSpan.FromSeconds(1)));
+    }
+
+    [Fact]
+    public async Task AutoForward_DestinationDeleted_DeadLettersOnSource()
+    {
+        ThrowIfSkipped();
+        var target = await CreateTestQueueAsync();
+        var source = await CreateTestTopicAsync();
+        await CreateTestSubscriptionAsync(source, "fwd", forwardTo: target);
+        await AdminClient.DeleteQueueAsync(target);
+
+        await using var sender = Client.CreateSender(source);
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "lost" });
+
+        await using var dlq = Client.CreateReceiver(source, "fwd", new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+        var dead = await dlq.ReceiveMessageAsync(TimeSpan.FromSeconds(15));
+        Assert.NotNull(dead);
+        Assert.Equal("lost", dead!.MessageId);
+        Assert.StartsWith("The transfer destination entity does not exist.", dead.DeadLetterReason);
+        Assert.Null(dead.DeadLetterErrorDescription);
+    }
+
+    [Theory]
+    [InlineData(4, true)]
+    [InlineData(5, false)]
+    public async Task AutoForward_HopLimit(int forwards, bool delivered)
+    {
+        ThrowIfSkipped();
+        var names = new string[forwards + 1];
+        names[forwards] = await CreateTestQueueAsync();
+        for (var i = forwards - 1; i >= 0; i--)
+            names[i] = await CreateTestQueueAsync(new CreateQueueOptions("unused") { ForwardTo = names[i + 1] });
+
+        await using var sender = Client.CreateSender(names[0]);
+        await sender.SendMessageAsync(new ServiceBusMessage("x"));
+
+        await using var end = Client.CreateReceiver(names[forwards]);
+        var received = await end.ReceiveMessageAsync(TimeSpan.FromSeconds(delivered ? 15 : 5));
+        Assert.Equal(delivered, received is not null);
+
+        if (!delivered)
+        {
+            await using var dlq = Client.CreateReceiver(names[forwards - 1], new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+            var dead = await dlq.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal("Maximum transfer hop count is exceeded.", dead?.DeadLetterReason);
+        }
+    }
+
+    [Fact]
+    public async Task AutoForward_SessionlessMessageToSessionQueue_DeadLettersOnSource()
+    {
+        ThrowIfSkipped();
+        var target = await CreateTestQueueAsync(new CreateQueueOptions("unused") { RequiresSession = true });
+        var source = await CreateTestQueueAsync(new CreateQueueOptions("unused") { ForwardTo = target });
+
+        await using var sender = Client.CreateSender(source);
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "no-session" });
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "with-session", SessionId = "s1" });
+
+        await using var dlq = Client.CreateReceiver(source, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+        var dead = await dlq.ReceiveMessageAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal("no-session", dead?.MessageId);
+        Assert.StartsWith("The SessionId was not set on a message", dead!.DeadLetterReason);
+
+        Assert.True(await EventuallyAsync(async () =>
+            (await AdminClient.GetQueueRuntimePropertiesAsync(target)).Value.ActiveMessageCount == 1));
+    }
 }

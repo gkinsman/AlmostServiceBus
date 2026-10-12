@@ -14,6 +14,7 @@ public sealed class TopicEntity
 
     private MessageEventBus? _eventBus;
     private string? _namespaceName;
+    private NamespaceContext? _namespace;
 
     public TopicEntity(string name)
     {
@@ -31,13 +32,22 @@ public sealed class TopicEntity
         _eventBus = bus;
         _namespaceName = namespaceName;
         foreach (var sub in _subscriptions.Values)
-            WireEvents(sub);
+            Wire(sub);
     }
 
-    private void WireEvents(SubscriptionEntity sub)
+    internal void SetNamespace(NamespaceContext ns)
+    {
+        _namespace = ns;
+        foreach (var sub in _subscriptions.Values)
+            Wire(sub);
+    }
+
+    private void Wire(SubscriptionEntity sub)
     {
         if (_eventBus is not null)
             sub.Queue.SetEventBus(_eventBus, _namespaceName ?? "", $"{Name}/subscriptions/{sub.Name}");
+        if (_namespace is not null)
+            sub.Queue.SetNamespace(_namespace);
     }
 
     // --- Configuration ---
@@ -75,7 +85,7 @@ public sealed class TopicEntity
         _subscriptions.GetOrAdd(name, n =>
         {
             var sub = new SubscriptionEntity(n, Name);
-            WireEvents(sub);
+            Wire(sub);
             return sub;
         });
 

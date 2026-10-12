@@ -90,6 +90,9 @@ public static class ManagementApiEndpoints
                 if (topic is null)
                     return ManagementApiErrors.EntityNotFound(topicName);
 
+                if (MissingForwardTarget(ns, () => AtomXmlReader.ReadSubscriptionProperties(body).ForwardTo) is { } badSub)
+                    return badSub;
+
                 SubscriptionEntity sub;
                 if (isUpdate)
                 {
@@ -103,7 +106,7 @@ public static class ManagementApiEndpoints
                     sub = topic.AddSubscription(subName);
                 }
 
-                ApplySubscriptionProperties(sub, body, ns);
+                ApplySubscriptionProperties(sub, body);
 
                 var xml = AtomXmlWriter.WriteSubscriptionEntry(sub, baseUrl);
                 return Results.Content(xml, AtomXmlContentType,
@@ -137,6 +140,9 @@ public static class ManagementApiEndpoints
             }
             else
             {
+                if (MissingForwardTarget(ns, () => AtomXmlReader.ReadQueueProperties(body).ForwardTo) is { } badQueue)
+                    return badQueue;
+
                 QueueEntity entity;
                 if (isUpdate)
                 {
@@ -490,7 +496,21 @@ public static class ManagementApiEndpoints
         }
     }
 
-    private static void ApplySubscriptionProperties(SubscriptionEntity entity, string body, NamespaceContext ns)
+    // Real Service Bus refuses to create or update an entity whose ForwardTo names nothing,
+    // and the admin client surfaces the 400 as ArgumentException.
+    private static IResult? MissingForwardTarget(NamespaceContext ns, Func<string?> readForwardTo)
+    {
+        string? forwardTo;
+        try { forwardTo = readForwardTo(); }
+        catch { return null; }
+
+        if (forwardTo is null || ns.ResolveSendTarget(forwardTo) is not (null, null))
+            return null;
+
+        return ManagementApiErrors.BadRequest($"The auto forwarding destination entity {forwardTo} does not exist.");
+    }
+
+    private static void ApplySubscriptionProperties(SubscriptionEntity entity, string body)
     {
         try
         {
@@ -505,11 +525,7 @@ public static class ManagementApiEndpoints
             entity.DeadLetteringOnFilterEvaluationExceptions = props.DeadLetteringOnFilterEvaluationExceptions;
             entity.AutoDeleteOnIdle = props.AutoDeleteOnIdle;
 
-            if (props.ForwardTo is not null)
-            {
-                entity.ForwardTo = props.ForwardTo;
-                entity.ResolvedForwardToQueue = ns.GetQueue(props.ForwardTo);
-            }
+            entity.ForwardTo = props.ForwardTo;
 
             // If the request embeds a DefaultRuleDescription, replace the $Default rule
             // with the specified rule.  This is how the Azure SDK implements

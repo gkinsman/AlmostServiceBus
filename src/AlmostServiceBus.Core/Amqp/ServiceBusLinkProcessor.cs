@@ -169,6 +169,15 @@ public class ServiceBusLinkProcessor : ILinkProcessor
                 return;
             }
 
+            if (queue.ForwardTo is not null)
+            {
+                attachContext.Complete(new Error(new Symbol("amqp:not-allowed"))
+                {
+                    Description = "Cannot create a message receiver on an entity with auto-forwarding enabled."
+                });
+                return;
+            }
+
             // Reject non-session receiver attaches against session-required queues — real
             // Service Bus returns an error and the SDK propagates this as
             // InvalidOperationException ("entity does not allow non-session receiver").

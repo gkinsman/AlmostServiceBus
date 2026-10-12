@@ -33,16 +33,15 @@ public sealed class SubscriptionEntity
 
     public QueueEntity Queue { get; }
 
-    // --- Forwarding ---
-
-    public string? ForwardTo { get; set; }
-
-    /// <summary>Resolved reference to the target queue when <see cref="ForwardTo"/> is set.</summary>
-    public QueueEntity? ResolvedForwardToQueue { get; set; }
-
     // --- Configuration ---
     // These properties forward to the underlying Queue so that the
     // AMQP layer (which works directly with QueueEntity) picks them up.
+
+    public string? ForwardTo
+    {
+        get => Queue.ForwardTo;
+        set => Queue.ForwardTo = value;
+    }
 
     public int MaxDeliveryCount
     {
@@ -101,16 +100,14 @@ public sealed class SubscriptionEntity
         _rules.Values.Any(r => r.Matches(message));
 
     /// <summary>
-    /// Delivers the message to the appropriate destination.
-    /// If <see cref="ResolvedForwardToQueue"/> is set the message is routed there;
-    /// otherwise it is enqueued in the subscription's own <see cref="Queue"/>.
+    /// Enqueues the message if a rule matches. When <see cref="ForwardTo"/> is set the
+    /// subscription's queue passes it on to that queue or topic instead of holding it.
     /// </summary>
     public void DeliverMessage(BrokeredMessage message)
     {
         if (!ShouldDeliver(message))
             return;
 
-        var destination = ResolvedForwardToQueue ?? Queue;
-        destination.Enqueue(message);
+        Queue.Enqueue(message);
     }
 }

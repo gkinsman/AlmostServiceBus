@@ -73,10 +73,9 @@ public class SubscriptionEntityTests
     [Fact]
     public void DeliverMessage_WithForwardTo_RoutesToTargetQueue()
     {
-        var sub = new SubscriptionEntity("my-sub", "my-topic");
-        var targetQueue = new QueueEntity("target-queue");
-        sub.ForwardTo = "target-queue";
-        sub.ResolvedForwardToQueue = targetQueue;
+        var ns = new NamespaceContext("test-ns");
+        var targetQueue = ns.CreateQueue("target-queue");
+        var sub = ns.CreateSubscription("my-topic", "my-sub", forwardTo: "target-queue");
 
         sub.DeliverMessage(CreateMessage("forward-me"));
 

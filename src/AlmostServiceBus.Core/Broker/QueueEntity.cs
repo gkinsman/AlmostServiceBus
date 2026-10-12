@@ -40,6 +40,7 @@ public sealed class QueueEntity : IDisposable
     private readonly ConcurrentDictionary<string, byte> _sweptLockTokens = new();
     private readonly bool _isDeadLetterQueue;
     private QueueEntity? _deadLetterQueue;
+    private NamespaceContext? _namespace;
     private SessionManager? _sessionManager;
     private int _messageCount;
     private int _totalMessageCount;
@@ -151,6 +152,10 @@ public sealed class QueueEntity : IDisposable
     /// </summary>
     public int ConsumedCount => _consumedCount;
 
+    // ForwardTo is resolved by name on every delivery, so the target can be created after this
+    // entity, or deleted and recreated, without re-wiring.
+    internal void SetNamespace(NamespaceContext ns) => _namespace = ns;
+
     public void SetEventBus(MessageEventBus bus, string namespaceName, string entityName)
     {
         _eventBus = bus;
@@ -230,6 +235,12 @@ public sealed class QueueEntity : IDisposable
             }
         }
 
+        if (ForwardTo is not null && _namespace is not null)
+        {
+            _namespace.Forward(this, message);
+            return;
+        }
+
         message.LockToken ??= Guid.NewGuid().ToString();
         // Ensure every message has a unique sequence number — the Azure SDK uses this
         // as the transport message ID for deduplication. Clone() resets SequenceNumber
@@ -241,6 +252,23 @@ public sealed class QueueEntity : IDisposable
         Interlocked.Increment(ref _messageCount);
         Interlocked.Increment(ref _totalMessageCount);
         PublishEnqueued(message);
+    }
+
+    // Real Service Bus puts messages it can't auto-forward in the source's ordinary dead-letter
+    // queue, with only a reason, not in the transfer dead-letter queue the docs describe.
+    internal void DeadLetterUnforwardable(BrokeredMessage message, string reason)
+    {
+        message.DeadLetterReason = reason;
+        message.DeadLetterErrorDescription = null;
+        message.LockToken = null;
+        message.State = MessageState.Active;
+
+        _eventBus?.Publish(new MessageEvent(
+            MessageEventType.DeadLettered, _namespaceName ?? "", _entityName ?? "",
+            message.MessageId, message.SequenceNumber, message.ContentType,
+            null, null, DateTimeOffset.UtcNow));
+
+        DeadLetterQueue.Enqueue(message);
     }
 
     private void PublishEnqueued(BrokeredMessage message)
