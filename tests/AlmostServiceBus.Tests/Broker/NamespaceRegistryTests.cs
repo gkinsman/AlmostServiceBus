@@ -116,8 +116,28 @@ public class NamespaceRegistryTests
 
         Assert.NotNull(sub);
         Assert.Equal("target-queue", sub.ForwardTo);
-        Assert.NotNull(sub.ResolvedForwardToQueue);
-        Assert.Equal("target-queue", sub.ResolvedForwardToQueue!.Name);
+        Assert.Null(ctx.GetTopic("target-queue"));
+    }
+
+    [Fact]
+    public void NamespaceContext_CreateSubscription_ForwardToExistingTopic_DoesNotCreateQueue()
+    {
+        var ctx = new NamespaceContext("test-ns");
+        ctx.CreateTopic("target-topic");
+
+        ctx.CreateSubscription("orders", "sub-1", forwardTo: "target-topic");
+
+        Assert.Null(ctx.GetQueue("target-topic"));
+    }
+
+    [Fact]
+    public void NamespaceContext_CreateSubscription_ForwardToMissingEntity_CreatesQueue()
+    {
+        var ctx = new NamespaceContext("test-ns");
+
+        ctx.CreateSubscription("orders", "sub-1", forwardTo: "target-queue");
+
+        Assert.NotNull(ctx.GetQueue("target-queue"));
     }
 
     // ── NamespaceContext — sequence numbers ─────────────────────────────────

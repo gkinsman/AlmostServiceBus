@@ -40,34 +40,14 @@ public sealed class NamespaceContext
     public QueueEntity CreateQueue(string name)
     {
         Touch();
-        var created = false;
-        var result = _queues.GetOrAdd(name, n =>
+        return _queues.GetOrAdd(name, n =>
         {
             var queue = new QueueEntity(n);
+            queue.SetNamespace(this);
             if (_eventBus is not null)
                 queue.SetEventBus(_eventBus, Name, n);
-            created = true;
             return queue;
         });
-
-        // Resolve any subscriptions that reference this queue as ForwardTo
-        // but couldn't resolve it at creation time (race: subscription created before queue).
-        if (created)
-        {
-            foreach (var topic in _topics.Values)
-            {
-                foreach (var sub in topic.GetSubscriptions())
-                {
-                    if (sub.ResolvedForwardToQueue is null
-                        && string.Equals(sub.ForwardTo, name, StringComparison.OrdinalIgnoreCase))
-                    {
-                        sub.ResolvedForwardToQueue = result;
-                    }
-                }
-            }
-        }
-
-        return result;
     }
 
     public QueueEntity? GetQueue(string name) =>
@@ -94,6 +74,7 @@ public sealed class NamespaceContext
     private TopicEntity NewTopic(string name)
     {
         var topic = new TopicEntity(name);
+        topic.SetNamespace(this);
         if (_eventBus is not null)
             topic.SetEventBus(_eventBus, Name);
         return topic;
@@ -112,9 +93,8 @@ public sealed class NamespaceContext
 
     /// <summary>
     /// Ensures the topic exists, then adds (or returns) a subscription on it.
-    /// When <paramref name="forwardTo"/> is provided the subscription's
-    /// <see cref="SubscriptionEntity.ForwardTo"/> and
-    /// <see cref="SubscriptionEntity.ResolvedForwardToQueue"/> are wired up.
+    /// When <paramref name="forwardTo"/> names neither a queue nor a topic, a queue of
+    /// that name is created: real ASB refuses a ForwardTo whose target doesn't exist.
     /// </summary>
     public SubscriptionEntity CreateSubscription(string topicName, string subName, string? forwardTo = null)
     {
@@ -123,13 +103,51 @@ public sealed class NamespaceContext
 
         if (forwardTo is not null)
         {
+            if (ResolveSendTarget(forwardTo) is (null, null))
+                CreateQueue(forwardTo);
             sub.ForwardTo = forwardTo;
-            // Auto-create the target queue if it doesn't exist — real ASB requires
-            // ForwardTo targets to exist, and the management plane ensures they do.
-            sub.ResolvedForwardToQueue = CreateQueue(forwardTo);
         }
 
         return sub;
+    }
+
+    // ── Auto-forwarding ──────────────────────────────────────────────────────
+
+    // Real ASB dead-letters a message on the 5th hop, and on the source entity
+    // (not the destination) whenever it can't be forwarded.
+    private const int MaxForwardHops = 4;
+
+    internal void Forward(QueueEntity source, BrokeredMessage message)
+    {
+        var target = source.ForwardTo!;
+        var (queue, topic) = ResolveSendTarget(target);
+
+        if (queue is null && topic is null)
+        {
+            source.TransferDeadLetter(message, "ForwardToEntityNotFound",
+                $"The auto-forward destination '{target}' does not exist.");
+            return;
+        }
+
+        if (message.ForwardHopCount >= MaxForwardHops)
+        {
+            source.TransferDeadLetter(message, "MaxTransferHopCountExceeded",
+                "The maximum number of allowed hops when forwarding between queues exceeded the limit. This value is set to 4.");
+            return;
+        }
+
+        if (queue is { RequiresSession: true } && string.IsNullOrEmpty(message.SessionId))
+        {
+            source.TransferDeadLetter(message, "Session ID is null",
+                "Session enabled entity doesn't allow a message whose session identifier is null.");
+            return;
+        }
+
+        message.ForwardHopCount++;
+        if (queue is not null)
+            queue.Enqueue(message);
+        else
+            topic!.Publish(message);
     }
 
     public SubscriptionEntity? GetSubscription(string topicName, string subName) =>
@@ -145,6 +163,7 @@ public sealed class NamespaceContext
     ///   <item>Dead letter queue: <c>myQueue/$DeadLetterQueue</c></item>
     ///   <item>Subscription path: <c>topicName/Subscriptions/subName</c></item>
     ///   <item>Subscription DLQ: <c>topicName/Subscriptions/subName/$DeadLetterQueue</c></item>
+    ///   <item>Transfer DLQ of either: <c>.../$Transfer/$DeadLetterQueue</c></item>
     /// </list>
     /// Returns <see langword="null"/> when no match is found.
     /// </summary>
@@ -152,6 +171,10 @@ public sealed class NamespaceContext
     {
         if (_queues.TryGetValue(address, out var queue))
             return queue;
+
+        const string transferDlqSuffix = "/$Transfer/$DeadLetterQueue";
+        if (address.EndsWith(transferDlqSuffix, StringComparison.OrdinalIgnoreCase))
+            return ResolveQueue(address[..^transferDlqSuffix.Length])?.TransferDeadLetterQueue;
 
         // Check for $DeadLetterQueue suffix on a direct queue
         const string dlqSuffix = "/$DeadLetterQueue";

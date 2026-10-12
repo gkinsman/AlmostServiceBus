@@ -40,6 +40,8 @@ public sealed class QueueEntity : IDisposable
     private readonly ConcurrentDictionary<string, byte> _sweptLockTokens = new();
     private readonly bool _isDeadLetterQueue;
     private QueueEntity? _deadLetterQueue;
+    private QueueEntity? _transferDeadLetterQueue;
+    private NamespaceContext? _namespace;
     private SessionManager? _sessionManager;
     private int _messageCount;
     private int _totalMessageCount;
@@ -77,6 +79,7 @@ public sealed class QueueEntity : IDisposable
         _lockExpiryTimer?.Dispose();
         _lockExpiryTimer = null;
         _deadLetterQueue?.Dispose();
+        _transferDeadLetterQueue?.Dispose();
     }
 
     // --- Configuration properties ---
@@ -151,6 +154,12 @@ public sealed class QueueEntity : IDisposable
     /// </summary>
     public int ConsumedCount => _consumedCount;
 
+    public int TransferDeadLetterMessageCount => _transferDeadLetterQueue?.ActiveMessageCount ?? 0;
+
+    // ForwardTo is resolved by name on every delivery, so the target can be created after this
+    // entity, or deleted and recreated, without re-wiring.
+    internal void SetNamespace(NamespaceContext ns) => _namespace = ns;
+
     public void SetEventBus(MessageEventBus bus, string namespaceName, string entityName)
     {
         _eventBus = bus;
@@ -176,6 +185,28 @@ public sealed class QueueEntity : IDisposable
             if (Interlocked.CompareExchange(ref _deadLetterQueue, dlq, null) != null)
                 dlq.Dispose(); // lost the race — dispose the duplicate (has a Timer)
             return _deadLetterQueue;
+        }
+    }
+
+    /// <summary>
+    /// Holds messages this entity could not auto-forward (missing destination, hop limit,
+    /// session mismatch). Real ASB keeps these apart from <see cref="DeadLetterQueue"/>, at
+    /// <c>{entity}/$Transfer/$DeadLetterQueue</c>.
+    /// </summary>
+    public QueueEntity TransferDeadLetterQueue
+    {
+        get
+        {
+            if (_isDeadLetterQueue)
+                return this;
+
+            if (_transferDeadLetterQueue is not null)
+                return _transferDeadLetterQueue;
+
+            var tdlq = new QueueEntity($"{Name}/$Transfer/$deadletterqueue", isDeadLetterQueue: true);
+            if (Interlocked.CompareExchange(ref _transferDeadLetterQueue, tdlq, null) != null)
+                tdlq.Dispose();
+            return _transferDeadLetterQueue;
         }
     }
 
@@ -230,6 +261,12 @@ public sealed class QueueEntity : IDisposable
             }
         }
 
+        if (ForwardTo is not null && _namespace is not null)
+        {
+            _namespace.Forward(this, message);
+            return;
+        }
+
         message.LockToken ??= Guid.NewGuid().ToString();
         // Ensure every message has a unique sequence number — the Azure SDK uses this
         // as the transport message ID for deduplication. Clone() resets SequenceNumber
@@ -241,6 +278,21 @@ public sealed class QueueEntity : IDisposable
         Interlocked.Increment(ref _messageCount);
         Interlocked.Increment(ref _totalMessageCount);
         PublishEnqueued(message);
+    }
+
+    internal void TransferDeadLetter(BrokeredMessage message, string reason, string description)
+    {
+        message.DeadLetterReason = reason;
+        message.DeadLetterErrorDescription = description;
+        message.LockToken = null;
+        message.State = MessageState.Active;
+
+        _eventBus?.Publish(new MessageEvent(
+            MessageEventType.DeadLettered, _namespaceName ?? "", _entityName ?? "",
+            message.MessageId, message.SequenceNumber, message.ContentType,
+            null, null, DateTimeOffset.UtcNow));
+
+        TransferDeadLetterQueue.Enqueue(message);
     }
 
     private void PublishEnqueued(BrokeredMessage message)

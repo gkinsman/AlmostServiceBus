@@ -103,7 +103,7 @@ public static class ManagementApiEndpoints
                     sub = topic.AddSubscription(subName);
                 }
 
-                ApplySubscriptionProperties(sub, body, ns);
+                ApplySubscriptionProperties(sub, body);
 
                 var xml = AtomXmlWriter.WriteSubscriptionEntry(sub, baseUrl);
                 return Results.Content(xml, AtomXmlContentType,
@@ -490,7 +490,7 @@ public static class ManagementApiEndpoints
         }
     }
 
-    private static void ApplySubscriptionProperties(SubscriptionEntity entity, string body, NamespaceContext ns)
+    private static void ApplySubscriptionProperties(SubscriptionEntity entity, string body)
     {
         try
         {
@@ -505,11 +505,7 @@ public static class ManagementApiEndpoints
             entity.DeadLetteringOnFilterEvaluationExceptions = props.DeadLetteringOnFilterEvaluationExceptions;
             entity.AutoDeleteOnIdle = props.AutoDeleteOnIdle;
 
-            if (props.ForwardTo is not null)
-            {
-                entity.ForwardTo = props.ForwardTo;
-                entity.ResolvedForwardToQueue = ns.GetQueue(props.ForwardTo);
-            }
+            entity.ForwardTo = props.ForwardTo;
 
             // If the request embeds a DefaultRuleDescription, replace the $Default rule
             // with the specified rule.  This is how the Azure SDK implements

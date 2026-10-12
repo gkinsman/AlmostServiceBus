@@ -94,7 +94,7 @@ public static class DashboardApiEndpoints
                 t.Name,
                 t.GetSubscriptions().Select(s => new SubscriptionInfo(
                     s.Name, s.ForwardTo,
-                    (s.ResolvedForwardToQueue ?? s.Queue).MessageCount,
+                    s.Queue.MessageCount,
                     s.Queue.DeadLetterQueue.MessageCount,
                     s.GetRules().Count)).ToList()
             )).ToList();

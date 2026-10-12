@@ -92,11 +92,11 @@ public class TopicEntityTests
     [Fact]
     public void Publish_WithForwardTo_RoutesToTargetQueue()
     {
-        var topic = new TopicEntity("my-topic");
-        var targetQueue = new QueueEntity("target-queue");
+        var ns = new NamespaceContext("test-ns");
+        var topic = ns.CreateTopic("my-topic");
+        var targetQueue = ns.CreateQueue("target-queue");
         var sub = topic.AddSubscription("sub1");
         sub.ForwardTo = "target-queue";
-        sub.ResolvedForwardToQueue = targetQueue;
 
         topic.Publish(CreateMessage("forwarded"));
 

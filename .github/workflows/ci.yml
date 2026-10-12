@@ -509,8 +509,6 @@ jobs:
           FILTER="$FILTER&FullyQualifiedName!~Using_a_message_session_as_a_saga_repository"
           # Delayed redelivery via dead-letter queue — not yet supported.
           FILTER="$FILTER&FullyQualifiedName!~Using_delayed_redelivery_with_dead_letter_queue"
-          # Complex publish topology — intermittently times out under emulator load.
-          FILTER="$FILTER&FullyQualifiedName!~Publish_with_complex_hierarchy"
           # Hardcodes real Azure endpoint, bypasses MT_ASB_ENDPOINT emulator override.
           FILTER="$FILTER&FullyQualifiedName!~Should_not_fail_when_slash_is_missing"
           # Session-based saga container test — requires full session support.
