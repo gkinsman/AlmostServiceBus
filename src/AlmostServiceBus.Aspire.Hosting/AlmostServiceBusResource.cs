@@ -33,12 +33,10 @@ public class AlmostServiceBusResource : ExecutableResource, IResourceWithConnect
         _serviceBusEndpoint = new EndpointReference(this, "servicebus");
     }
 
-    /// <summary>
-    /// Gets the connection string expression for the emulator. Uses the allocated
-    /// service-bus endpoint port so Aspire port allocation is honoured, and carries
-    /// <c>UseDevelopmentEmulator=true</c> so the Azure SDK connects over plain AMQP.
-    /// </summary>
+    // HostAndPort resolves per consumer: host processes get localhost, containers get the
+    // Aspire container tunnel host (aspire.dev.internal), or host.docker.internal with the
+    // tunnel disabled. A literal localhost would point a container at itself.
     public ReferenceExpression ConnectionStringExpression =>
         ReferenceExpression.Create(
-            $"Endpoint=sb://localhost:{_serviceBusEndpoint.Property(EndpointProperty.Port)};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true");
+            $"Endpoint=sb://{_serviceBusEndpoint.Property(EndpointProperty.HostAndPort)};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true");
 }

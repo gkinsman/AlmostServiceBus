@@ -107,6 +107,13 @@ var builder = DistributedApplication.CreateBuilder(args);
 var serviceBus = builder.AddServiceBusEmulator("servicebus");
 ```
 
+`WithReference(serviceBus)` works from projects and containers alike. The connection string's host
+resolves per consumer: projects get `localhost`, containers get Aspire's container tunnel host
+(`aspire.dev.internal`), or `host.docker.internal` if the tunnel is turned off
+(`ASPIRE_ENABLE_CONTAINER_TUNNEL=false`). The emulator still listens on loopback only, because the
+tunnel connects to it over loopback. If containers can't reach it without the tunnel (native Docker
+on Linux, for example), widen the bind address with `.WithEnvironment("ASB_BIND_HOST", "0.0.0.0")`.
+
 Need the HTTPS admin endpoint (for the Node.js/Python/Java admin SDKs)? Chain `WithAdminTls()`. It
 enables the endpoint and serves it with the **ASP.NET Core HTTPS development certificate** — the same
 cert Aspire uses for its own HTTPS endpoints — so there is nothing extra to generate:

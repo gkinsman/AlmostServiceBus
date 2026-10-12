@@ -11,6 +11,8 @@ public class EmulatorNetworkTests
     [InlineData("0.0.0.0")]
     [InlineData("::1")]
     [InlineData("host.docker.internal")]
+    [InlineData("aspire.dev.internal")]
+    [InlineData("aspire.dev.internal:5672")]
     [InlineData("localhost:5672")]
     [InlineData("localhost.")]
     [InlineData(" localhost ")]

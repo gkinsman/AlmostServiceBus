@@ -75,6 +75,10 @@ public static class EmulatorNetwork
         // Docker Desktop's host gateway.
         yield return "host.docker.internal";
 
+        // Aspire's container tunnel (KnownHostNames.DefaultContainerTunnelHostName), which is how
+        // containers in an Aspire app reach the emulator when it runs as a host executable.
+        yield return "aspire.dev.internal";
+
         // The configured public host, plus any extra comma/space-separated aliases.
         foreach (var alias in SplitAliases(Environment.GetEnvironmentVariable(HostEnvironmentVariable)))
             yield return alias;
