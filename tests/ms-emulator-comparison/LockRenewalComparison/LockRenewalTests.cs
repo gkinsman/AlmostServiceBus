@@ -15,8 +15,8 @@ namespace LockRenewalComparison;
 ///  - Session-lock renewal (RenewSessionLockAsync)
 ///  - Error modes: MessageLockLost, SessionLockLost, MessageNotFound
 ///
-/// Queues expected to exist (see Config.json for MS emulator, or auto-created
-/// for ours): "lock-renewal-queue" (no sessions, 10s lock) and
+/// Queues expected to exist (see Config.json for MS emulator, or
+/// run-lock-renewal-comparison.sh for ours): "lock-renewal-queue" (no sessions, 10s lock) and
 /// "session-renewal-queue" (sessions, 10s lock).
 /// </summary>
 public class LockRenewalTests : IAsyncLifetime
