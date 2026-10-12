@@ -193,6 +193,8 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
                 _queue.Complete(lockToken);
                 break;
             case Released:
+                // Not QueueEntity.Release: re-enqueueing straight into the still-locked session
+                // stalls MassTransitSessionLoadTests (0/500 consumed).
                 _queue.Abandon(lockToken);
                 break;
             case Rejected rejected:

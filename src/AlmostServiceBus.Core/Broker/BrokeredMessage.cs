@@ -55,6 +55,8 @@ public sealed class BrokeredMessage
     /// </summary>
     public int IncrementDeliveryCount() => Interlocked.Increment(ref _deliveryCount);
 
+    public int DecrementDeliveryCount() => Interlocked.Decrement(ref _deliveryCount);
+
     public string? DeadLetterReason { get; set; }
 
     public string? DeadLetterErrorDescription { get; set; }

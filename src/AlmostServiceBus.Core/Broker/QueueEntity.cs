@@ -296,7 +296,7 @@ public sealed class QueueEntity : IDisposable
     /// Writes to <see cref="_redeliveryChannel"/> so that re-enqueued messages are
     /// delivered before newly published ones, matching real ASB behavior.
     /// </summary>
-    private void ReEnqueue(BrokeredMessage message)
+    private void ReEnqueue(BrokeredMessage message, bool immediate = false)
     {
         message.LockToken ??= Guid.NewGuid().ToString();
         if (message.SequenceNumber == 0)
@@ -310,12 +310,20 @@ public sealed class QueueEntity : IDisposable
         // completion of the faulted dispatch from the redelivered message arriving.
         // Without this delay, the emulator's in-process redelivery races with
         // MassTransit's ConsumerAgent cleanup, causing spurious R-DUPE detection.
-        _ = DelayedReEnqueue(message);
+        if (immediate)
+            MakeAvailable(message);
+        else
+            _ = DelayedReEnqueue(message);
     }
 
     private async Task DelayedReEnqueue(BrokeredMessage message)
     {
         await Task.Delay(TimeSpan.FromSeconds(1));
+        MakeAvailable(message);
+    }
+
+    private void MakeAvailable(BrokeredMessage message)
+    {
         if (RequiresSession)
             Sessions!.Enqueue(message);
         else
@@ -519,6 +527,41 @@ public sealed class QueueEntity : IDisposable
             message.LockToken = null;
             ReEnqueue(message);
         }
+    }
+
+    /// <summary>
+    /// Returns a pending message that the client never handed to the application (AMQP
+    /// <c>released</c> outcome) to the queue straight away, without counting the delivery.
+    /// </summary>
+    /// <remarks>
+    /// AMQP 1.0 (3.4.4) defines released as "not (and will not be) acted upon"; only a
+    /// <c>modified</c> outcome with delivery-failed counts as a failed delivery. The Azure SDK
+    /// sends released for messages that reached an idle receiver link, which is why it must
+    /// neither wait out <see cref="Abandon(string)"/>'s redelivery delay nor creep towards
+    /// <see cref="MaxDeliveryCount"/>: a message bouncing off a few idle links (for example a
+    /// framework's undisposed purge receivers) otherwise arrives seconds late or dead-letters.
+    /// The SDK's own AbandonMessageAsync sends <c>modified</c> and still goes through Abandon.
+    /// </remarks>
+    public void Release(string lockToken)
+    {
+        if (!_pending.TryRemove(lockToken, out var message))
+        {
+            if (_sweptLockTokens.TryRemove(lockToken, out _))
+                throw new MessageLockLostException(lockToken);
+            return;
+        }
+
+        message.DecrementDeliveryCount();
+
+        _eventBus?.Publish(new MessageEvent(
+            MessageEventType.Abandoned, _namespaceName ?? "", _entityName ?? "",
+            message.MessageId, message.SequenceNumber, message.ContentType,
+            null, null, DateTimeOffset.UtcNow));
+
+        _allMessages.TryRemove(lockToken, out _);
+        // Fresh lock token for a distinct delivery tag, as in Abandon.
+        message.LockToken = null;
+        ReEnqueue(message, immediate: true);
     }
 
     /// <summary>
