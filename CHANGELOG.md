@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Auto-forwarding to a topic.** A queue or subscription whose `ForwardTo`
+  named a topic kept every message instead of forwarding it, and queue
+  `ForwardTo` was ignored entirely. MassTransit builds its publish topology
+  from subscription-to-topic forwards, so consumers of a base type or
+  interface received nothing published as a derived type. `ForwardTo` now
+  delivers to a queue or a topic, resolved by name on each delivery, so a
+  destination created later or recreated is picked up. (#158, #159)
+- **Auto-forwarding edge cases now match a real namespace**, checked against a
+  Standard tier namespace rather than the documentation, which differs:
+  - A message that can't be forwarded goes to the source's dead-letter queue,
+    not the transfer dead-letter queue. This happens when the destination no
+    longer exists, on a fifth forward, or when a message without a session id
+    is forwarded to a session queue. The dead-letter reasons are the ones
+    Service Bus sets, e.g. `Maximum transfer hop count is exceeded.`
+  - Creating or updating a queue or subscription whose `ForwardTo`
+    destination doesn't exist fails with `ArgumentException`.
+  - Receiving from or peeking an entity with `ForwardTo` fails with
+    `InvalidOperationException`. Its dead-letter queue is still readable.
+  - Updating a subscription without `ForwardTo` now clears it.
+
+  The dashboard shows a forwarding subscription's own message count rather
+  than its destination's. MassTransit's `Publish_with_complex_hierarchy` test
+  runs in CI again. (#159)
+
 ## [0.6.2] - 2026-09-30
 
 ### Added
