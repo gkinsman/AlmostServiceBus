@@ -509,6 +509,10 @@ jobs:
           FILTER="$FILTER&FullyQualifiedName!~Using_a_message_session_as_a_saga_repository"
           # Delayed redelivery via dead-letter queue — not yet supported.
           FILTER="$FILTER&FullyQualifiedName!~Using_delayed_redelivery_with_dead_letter_queue"
+          # Publishes a ThirdInterface with DeployTopologyOnly and never consumes it. The message
+          # auto-forwards into the shared input queue, where Publish_with_complex_hierarchy then
+          # counts it (3 instead of 2). Real Service Bus behaves the same; the test isn't isolated.
+          FILTER="$FILTER&FullyQualifiedName!~Configuring_a_topology"
           # Hardcodes real Azure endpoint, bypasses MT_ASB_ENDPOINT emulator override.
           FILTER="$FILTER&FullyQualifiedName!~Should_not_fail_when_slash_is_missing"
           # Session-based saga container test — requires full session support.
