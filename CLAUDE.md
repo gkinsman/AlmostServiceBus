@@ -53,8 +53,8 @@ Namespace is extracted from `SharedAccessKeyName` in the connection string (NOT 
 | Emulator internal | 154 | 154 |
 | SDK integration | 36 | 36 |
 | Conformance (emulator) | 34 | 34 |
-| MassTransit own ASB tests | 26 | 27 |
-| Wolverine ASB tests | 149 | 155 |
+| MassTransit own ASB tests (CI filter) | 101 | 101 |
+| Wolverine ASB tests (CI filter) | 103 | 103 |
 | NServiceBus emulator acceptance tests | 3 | 3 |
 
 NServiceBus `Emulator.AcceptanceTests` need the emulator to own port 5300 as well as the AMQP port: the transport rewrites any `UseDevelopmentEmulator=true` connection string to admin port 5300 (`InjectEmulatorAdminPort`). If 5300 belongs to another process, the installers create the topology there and the publish test fails with `MessagingEntityNotFound`.
@@ -88,7 +88,8 @@ SDK's `TransactionScope` works end-to-end, including cross-entity transactions
 
 ## Known Gaps
 
-- **Wolverine tracking** — `tracking_correlation_id_on_everything` compliance tests time out. Standalone tests confirm correct AMQP behavior; the timeout is in Wolverine's handler pipeline. See `tests/ms-emulator-comparison/` to verify against Microsoft's official emulator.
+- **Forwarding to a session-required queue** — a topic subscription that auto-forwards to a `RequiresSession` queue makes the emulator reject the *publish* of any message without a `SessionId` (`QueueEntity.Enqueue` throws inside `TopicEntity.Publish`, which also skips the remaining subscriptions). This is why MassTransit's `Sending_a_message_to_a_session` stays excluded in CI: the subscription it leaves behind breaks later `PingMessage` publishers.
+- **Wolverine `BufferedSendingAndReceivingCompliance`** — upstream marks it `Flaky` and it is still intermittent here (two of five runs each failed one test), so CI keeps it excluded via `Category!=Flaky`.
 
 ## Running
 
