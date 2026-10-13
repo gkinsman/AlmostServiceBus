@@ -436,6 +436,68 @@ jobs:
         if: always()
         run: python3 .github/scripts/summarize_trx.py "NServiceBus Tests" artifacts/test-results/nservicebus
 
+  # ── NServiceBus emulator acceptance tests ───────────────────────────────────
+  # Runs the transport's Emulator.AcceptanceTests (send, batched send, publish)
+  # against the emulator, the same way Particular's CI runs them against
+  # Microsoft's emulator (Particular/setup-azureservicebus-action, which starts
+  # it with no pre-declared entities). Endpoints run installers, so queues,
+  # topics and subscriptions are created through the admin API. The transport
+  # hard-codes the emulator admin port to 5300 for any UseDevelopmentEmulator
+  # connection string (AzureServiceBusTransport.InjectEmulatorAdminPort), so the
+  # emulator must own both 5672 and 5300 — admin on another port silently
+  # creates the topology somewhere else.
+  nservicebus-emulator-acceptance:
+    name: NServiceBus Emulator Acceptance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+          submodules: false
+
+      - name: Checkout NServiceBus submodule
+        run: git submodule update --init --depth 1 external/NServiceBus.Transport.AzureServiceBus
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.x"
+
+      - name: Build emulator host
+        run: dotnet build src/AlmostServiceBus.Host
+
+      - name: Start emulator (AMQP 5672, admin HTTP 5300)
+        run: |
+          dotnet run --project src/AlmostServiceBus.Host --no-build             -- --Port 5672 --DashboardPort 0 > emulator.log 2>&1 &
+          echo "EMULATOR_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            nc -z localhost 5672 2>/dev/null && nc -z localhost 5300 2>/dev/null               && echo "Emulator ready" && break
+            sleep 1
+          done
+          nc -z localhost 5672 && nc -z localhost 5300             || (echo "ERROR: emulator did not start" && cat emulator.log && exit 1)
+
+      - name: Build NServiceBus emulator acceptance tests
+        # NU1901: see the NServiceBus Tests job.
+        run: |
+          dotnet build             external/NServiceBus.Transport.AzureServiceBus/src/Emulator.AcceptanceTests             -p:WarningsNotAsErrors=NU1901
+
+      - name: Run NServiceBus emulator acceptance tests
+        env:
+          # Without this the tests are ignored (RunOnlyWithEmulatorAttribute) and the job passes vacuously.
+          AzureServiceBus_Emulator_ConnectionString: "Endpoint=sb://localhost:5672;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true"
+        run: |
+          dotnet test             external/NServiceBus.Transport.AzureServiceBus/src/Emulator.AcceptanceTests             --no-build             --results-directory artifacts/test-results/nservicebus-emulator             --logger "console;verbosity=normal"             --logger "trx"
+
+      - name: Summarize test results
+        if: always()
+        run: python3 .github/scripts/summarize_trx.py "NServiceBus Emulator Acceptance" artifacts/test-results/nservicebus-emulator
+
+      - name: Stop emulator
+        if: always()
+        run: kill "$EMULATOR_PID" 2>/dev/null || true
+
   # ── MassTransit conformance ─────────────────────────────────────────────────
   # Runs MassTransit's own Azure Service Bus test suite against the emulator.
   # The submodule is checked out at the upstream commit and a patch is applied
@@ -545,6 +607,7 @@ jobs:
       - client-sdk-smoke
       - wolverine-conformance
       - nservicebus-tests
+      - nservicebus-emulator-acceptance
       - masstransit-conformance
     runs-on: ubuntu-latest
     permissions:

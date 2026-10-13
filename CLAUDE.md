@@ -55,7 +55,9 @@ Namespace is extracted from `SharedAccessKeyName` in the connection string (NOT 
 | Conformance (emulator) | 34 | 34 |
 | MassTransit own ASB tests | 26 | 27 |
 | Wolverine ASB tests | 149 | 155 |
-| NServiceBus emulator tests | 2 | 3 |
+| NServiceBus emulator acceptance tests | 3 | 3 |
+
+NServiceBus `Emulator.AcceptanceTests` need the emulator to own port 5300 as well as the AMQP port: the transport rewrites any `UseDevelopmentEmulator=true` connection string to admin port 5300 (`InjectEmulatorAdminPort`). If 5300 belongs to another process, the installers create the topology there and the publish test fails with `MessagingEntityNotFound`.
 
 ## Sessions
 
