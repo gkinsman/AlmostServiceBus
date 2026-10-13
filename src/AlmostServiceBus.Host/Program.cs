@@ -172,7 +172,8 @@ Console.WriteLine();
 // Prints a boxed connection string for the given endpoint port under a titled frame.
 void Listen(KestrelServerOptions k, int port, Action<ListenOptions>? configure = null)
 {
-    if (bindAddress.Equals(System.Net.IPAddress.Loopback))
+    // ListenLocalhost covers IPv4 and IPv6 loopback but refuses port 0 (pick a free port).
+    if (bindAddress.Equals(System.Net.IPAddress.Loopback) && port > 0)
         k.ListenLocalhost(port, configure ?? (_ => { }));
     else
         k.Listen(bindAddress, port, configure ?? (_ => { }));
