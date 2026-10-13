@@ -3,6 +3,7 @@ using AlmostServiceBus.Core.Broker;
 using AlmostServiceBus.Core.Dashboard;
 using AlmostServiceBus.Core.Hosting;
 using AlmostServiceBus.Core.Management;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Vite.AspNetCore;
 
 // The startup banner uses Unicode box-drawing/block characters. Force UTF-8 output
@@ -41,6 +42,7 @@ var publicPort = mgmtBuilder.Configuration.GetValue("Port", 5672);
 var dashboardPort = mgmtBuilder.Configuration.GetValue("DashboardPort", 15672);
 var publicHost = EmulatorNetwork.GetPublicHost();
 var bindHost = EmulatorNetwork.GetBindHost();
+var bindAddress = EmulatorNetwork.GetBindAddress();
 // Microsoft emulator compatibility: admin HTTP on port 5300.
 const int mgmtApiPort = 5300;
 // TLS admin endpoint for clients that hard-code HTTPS (Node/Java/Python). Opt-in: off unless
@@ -83,7 +85,7 @@ mgmtBuilder.WebHost.ConfigureKestrel(k =>
 {
     k.ListenLocalhost(internalHttpPort);
     if (tlsBundle is not null)
-        k.ListenAnyIP(adminTlsPort, lo => lo.UseHttps(tlsBundle.ServerCertificate));
+        Listen(k, adminTlsPort, lo => lo.UseHttps(tlsBundle.ServerCertificate));
 });
 
 // Created before the management API, which reports its scheduled message counts.
@@ -109,7 +111,7 @@ dashBuilder.Services.AddCors();
 
 dashBuilder.WebHost.ConfigureKestrel(k =>
 {
-    k.ListenAnyIP(dashboardPort);
+    Listen(k, dashboardPort);
 });
 
 var dashApp = dashBuilder.Build();
@@ -140,11 +142,11 @@ amqpServer.Start();
 
 var multiplexerCts = new CancellationTokenSource();
 
-var multiplexer = new TcpMultiplexer(publicPort, internalAmqpPort, internalHttpPort);
+var multiplexer = new TcpMultiplexer(publicPort, internalAmqpPort, internalHttpPort, bindAddress);
 _ = multiplexer.StartAsync(multiplexerCts.Token);
 
 // Microsoft emulator compatibility: admin HTTP on port 5300 (mgmtApiPort declared above)
-var mgmtMultiplexer = new TcpMultiplexer(mgmtApiPort, internalAmqpPort, internalHttpPort);
+var mgmtMultiplexer = new TcpMultiplexer(mgmtApiPort, internalAmqpPort, internalHttpPort, bindAddress);
 _ = mgmtMultiplexer.StartAsync(multiplexerCts.Token);
 
 // ── Startup banner ──
@@ -168,6 +170,15 @@ Console.WriteLine($"{bold}        S E R V I C E   B U S   E M U L A T O R{reset}
 Console.WriteLine();
 
 // Prints a boxed connection string for the given endpoint port under a titled frame.
+void Listen(KestrelServerOptions k, int port, Action<ListenOptions>? configure = null)
+{
+    // ListenLocalhost covers IPv4 and IPv6 loopback but refuses port 0 (pick a free port).
+    if (bindAddress.Equals(System.Net.IPAddress.Loopback) && port > 0)
+        k.ListenLocalhost(port, configure ?? (_ => { }));
+    else
+        k.Listen(bindAddress, port, configure ?? (_ => { }));
+}
+
 void PrintConnStringBox(string title, int port)
 {
     var cs = $"Endpoint=sb://{publicHost}:{port};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";

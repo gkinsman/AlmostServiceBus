@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace AlmostServiceBus.Core.Hosting;
 
 public static class EmulatorNetwork
@@ -26,6 +28,18 @@ public static class EmulatorNetwork
             return configured.Trim();
 
         return IsRunningInContainer() ? "0.0.0.0" : "localhost";
+    }
+
+    // Listening on every interface outside a container makes Windows Firewall prompt for
+    // admin rights each time a newly built Host or test binary starts.
+    public static IPAddress GetBindAddress() => ToBindAddress(GetBindHost());
+
+    internal static IPAddress ToBindAddress(string host)
+    {
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+            return IPAddress.Loopback;
+
+        return IPAddress.TryParse(host, out var address) ? address : Dns.GetHostAddresses(host)[0];
     }
 
     public static bool IsDefaultNamespaceHost(string? host)
@@ -60,6 +74,10 @@ public static class EmulatorNetwork
 
         // Docker Desktop's host gateway.
         yield return "host.docker.internal";
+
+        // Aspire's container tunnel (KnownHostNames.DefaultContainerTunnelHostName), which is how
+        // containers in an Aspire app reach the emulator when it runs as a host executable.
+        yield return "aspire.dev.internal";
 
         // The configured public host, plus any extra comma/space-separated aliases.
         foreach (var alias in SplitAliases(Environment.GetEnvironmentVariable(HostEnvironmentVariable)))

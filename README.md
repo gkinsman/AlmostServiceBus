@@ -107,6 +107,13 @@ var builder = DistributedApplication.CreateBuilder(args);
 var serviceBus = builder.AddServiceBusEmulator("servicebus");
 ```
 
+`WithReference(serviceBus)` works from projects and containers alike. The connection string's host
+resolves per consumer: projects get `localhost`, containers get Aspire's container tunnel host
+(`aspire.dev.internal`), or `host.docker.internal` if the tunnel is turned off
+(`ASPIRE_ENABLE_CONTAINER_TUNNEL=false`). The emulator still listens on loopback only, because the
+tunnel connects to it over loopback. If containers can't reach it without the tunnel (native Docker
+on Linux, for example), widen the bind address with `.WithEnvironment("ASB_BIND_HOST", "0.0.0.0")`.
+
 Need the HTTPS admin endpoint (for the Node.js/Python/Java admin SDKs)? Chain `WithAdminTls()`. It
 enables the endpoint and serves it with the **ASP.NET Core HTTPS development certificate** — the same
 cert Aspire uses for its own HTTPS endpoints — so there is nothing extra to generate:
@@ -230,7 +237,7 @@ Mostly useful when running in a container. All are optional.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ASB_HOST` | container hostname (in a container), else `localhost` | The host clients use to reach the emulator (for example a Docker service name). Advertised as the public host and treated as the `default` namespace, so `RootManageSharedAccessKey` resolves to `default`. |
-| `ASB_BIND_HOST` | `0.0.0.0` (in a container), else `localhost` | Network interface the listener binds to. |
+| `ASB_BIND_HOST` | `0.0.0.0` (in a container), else `localhost` | Network interface every listener (AMQP/HTTP port, 5300, 5301 and the dashboard) binds to. Outside a container the emulator is reachable from this machine only; set `0.0.0.0` to accept connections from other machines or from containers via `host.docker.internal`. |
 | `ASB_DEFAULT_NAMESPACE_HOSTS` | — | Extra comma/space-separated hostnames that should also map to the `default` namespace. |
 | `ASB_RUNNING_IN_CONTAINER` | — | Set to `true` to force container mode when the standard `DOTNET_RUNNING_IN_CONTAINER` flag isn't present (for example on a non–.NET base image). |
 
