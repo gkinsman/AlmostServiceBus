@@ -254,12 +254,13 @@ public sealed class QueueEntity : IDisposable
         PublishEnqueued(message);
     }
 
-    // Real Service Bus puts messages it can't auto-forward in the source's ordinary dead-letter
-    // queue, with only a reason, not in the transfer dead-letter queue the docs describe.
-    internal void DeadLetterUnforwardable(BrokeredMessage message, string reason)
+    // For messages the broker itself refuses on the way in. Real Service Bus puts those it can't
+    // auto-forward in the source's ordinary dead-letter queue, with only a reason, not in the
+    // transfer dead-letter queue the docs describe.
+    internal void DeadLetterOnArrival(BrokeredMessage message, string reason, string? description = null)
     {
         message.DeadLetterReason = reason;
-        message.DeadLetterErrorDescription = null;
+        message.DeadLetterErrorDescription = description;
         message.LockToken = null;
         message.State = MessageState.Active;
 

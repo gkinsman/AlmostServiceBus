@@ -108,6 +108,15 @@ public sealed class SubscriptionEntity
         if (!ShouldDeliver(message))
             return;
 
+        // A direct send to a session queue is refused, but a topic accepts the message and only
+        // the session subscription dead-letters its copy; the other subscriptions still get theirs.
+        if (RequiresSession && string.IsNullOrEmpty(message.SessionId))
+        {
+            Queue.DeadLetterOnArrival(message, "Session id is null.",
+                "Session enabled entity doesn't allow a message whose session identifier is null.");
+            return;
+        }
+
         Queue.Enqueue(message);
     }
 }
