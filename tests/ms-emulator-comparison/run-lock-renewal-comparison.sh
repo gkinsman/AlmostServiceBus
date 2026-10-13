@@ -136,9 +136,8 @@ for i in $(seq 1 30); do
 done
 
 if [ "$OUR_READY" = "1" ]; then
-    # Our emulator auto-creates queues via AMQP attach, but we need to be sure
-    # the session queue has RequiresSession=true. Do that via the management
-    # API before running the harness.
+    # Like real Service Bus, our emulator rejects links to entities that don't
+    # exist, so create both queues via the management API first.
     curl -s -X PUT http://localhost:5300/lock-renewal-queue \
         -H "Content-Type: application/atom+xml;type=entry;charset=utf-8" \
         -d '<entry xmlns="http://www.w3.org/2005/Atom"><content type="application/xml"><QueueDescription xmlns="http://schemas.microsoft.com/netservices/2010/10/servicebus/connect"><LockDuration>PT10S</LockDuration><RequiresSession>false</RequiresSession></QueueDescription></content></entry>' \

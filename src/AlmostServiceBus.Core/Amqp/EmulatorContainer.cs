@@ -221,6 +221,7 @@ public class EmulatorContainer : IContainer
         if (address != null)
         {
             RequestProcessorEntry? entry;
+            string? missingEntity = null;
             lock (_requestProcessors)
             {
                 var processorKey = address;
@@ -231,29 +232,37 @@ public class EmulatorContainer : IContainer
 
                 _requestProcessors.TryGetValue(processorKey, out entry);
 
-                // Entity-scoped $management links (e.g. "my-queue/$management")
-                // Create an entity-specific management endpoint if possible, otherwise
-                // fall back to the global $management request processor.
+                // Entity-scoped $management links (e.g. "my-queue/$management"). Real Service Bus
+                // refuses the attach when the entity doesn't exist; the SDK surfaces that as
+                // MessagingEntityNotFound (e.g. ScheduleMessageAsync to a missing queue).
                 if (entry is null && address.EndsWith("/$management", StringComparison.OrdinalIgnoreCase))
                 {
                     var entityName = address[..^"/$management".Length].TrimStart('/');
                     var entityEntry = TryCreateEntityManagementEntry(entityName, ResolveNamespace(listenerLink.Session.Connection));
-                    if (entityEntry is not null)
+                    if (entityEntry is null)
+                    {
+                        missingEntity = entityName;
+                    }
+                    else
                     {
                         _requestProcessors[processorKey] = entityEntry;
                         entry = entityEntry;
                         Log.LogDebug("AttachLink REQUEST: created entity management entry for '{Address}', key='{Key}'", address, processorKey);
-                    }
-                    else
-                    {
-                        _requestProcessors.TryGetValue("$management", out entry);
-                        Log.LogDebug("AttachLink REQUEST: fell back to global $management for '{Address}', key='{Key}'", address, processorKey);
                     }
                 }
                 else if (entry is not null && address.EndsWith("/$management", StringComparison.OrdinalIgnoreCase))
                 {
                     Log.LogDebug("AttachLink REQUEST: reused existing entry for '{Address}', key='{Key}'", address, processorKey);
                 }
+            }
+
+            if (missingEntity is not null)
+            {
+                listenerLink.CompleteAttach(attach, new Error(new Symbol("amqp:not-found"))
+                {
+                    Description = $"The messaging entity '{missingEntity}' could not be found."
+                });
+                return false;
             }
 
             if (entry != null)

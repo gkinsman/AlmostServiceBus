@@ -86,8 +86,16 @@ public class ServiceBusLinkProcessor : ILinkProcessor
 
         if (isServerReceiver)
         {
-            // Client is sending messages to us -- auto-create entity if needed
-            EnsureEntityExists(context, address);
+            var (sendQueue, sendTopic) = context.ResolveSendTarget(address);
+            if (sendQueue is null && sendTopic is null)
+            {
+                attachContext.Complete(new Error(new Symbol("amqp:not-found"))
+                {
+                    Description = $"The messaging entity '{address}' could not be found."
+                });
+                return;
+            }
+
             var endpoint = new SenderLinkEndpoint(context, address, _scheduledProcessor, _transactions);
             attachContext.Complete(endpoint, 300);
         }
@@ -535,9 +543,7 @@ public class ServiceBusLinkProcessor : ILinkProcessor
     /// The .NET client sends the entity path, with or without a leading '/'. The Python client sends
     /// the whole address it connected to, such as
     /// "amqps://localhost:5673/my-topic/Subscriptions/my-subscription". Without this, a Python
-    /// receiver is answered "not found", and a Python sender is worse off still: the send target is
-    /// created on demand, so the URI became a queue of its own and every published message went into
-    /// it instead of the topic, with no error on either side.
+    /// receiver or sender is answered "not found".
     /// </remarks>
     internal static string? NormaliseAddress(string? address)
     {
@@ -553,15 +559,5 @@ public class ServiceBusLinkProcessor : ILinkProcessor
         }
 
         return address.TrimStart('/');
-    }
-
-    private static void EnsureEntityExists(NamespaceContext context, string address)
-    {
-        // If neither a queue nor topic exists for this address, create a queue
-        var (queue, topic) = context.ResolveSendTarget(address);
-        if (queue is null && topic is null)
-        {
-            context.CreateQueue(address);
-        }
     }
 }
