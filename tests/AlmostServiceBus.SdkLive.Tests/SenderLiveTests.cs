@@ -158,13 +158,7 @@ public class SenderLiveTests : SdkLiveTestBase
     {
         var queueName = await CreateQueueAsync(enableSession: true);
         await using var sender = Client.CreateSender(queueName);
-        // Real Service Bus throws InvalidOperationException; the emulator currently
-        // returns the rejection as a ServiceBusException. Both indicate the message
-        // was rejected because the queue requires sessions.
-        var ex = await Record.ExceptionAsync(() => sender.SendMessageAsync(GetMessage()));
-        Assert.NotNull(ex);
-        Assert.True(ex is InvalidOperationException || ex is Azure.Messaging.ServiceBus.ServiceBusException,
-            $"Expected InvalidOperationException or ServiceBusException, got {ex.GetType().Name}");
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => sender.SendMessageAsync(GetMessage()));
     }
 
     [Fact]

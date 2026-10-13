@@ -82,6 +82,14 @@ public class SenderLinkEndpoint : LinkEndpoint
 
             messageContext.Complete();
         }
+        catch (SessionRequiredException ex)
+        {
+            Log.LogDebug("RECV rejected on '{Address}': {Reason}", _address, ex.Message);
+            messageContext.Complete(new global::Amqp.Framing.Error(new Symbol("amqp:not-allowed"))
+            {
+                Description = ex.Message
+            });
+        }
         catch (Exception ex)
         {
             Log.LogWarning(ex, "RECV ERROR on '{Address}'", _address);

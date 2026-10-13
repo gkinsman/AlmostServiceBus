@@ -1403,6 +1403,60 @@ public abstract class ConformanceTestBase : IAsyncLifetime
     }
 
     // ══════════════════════════════════════════════════════════════════════════
+    // Test: Non-session messages to a session-required queue are refused up front
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private Task<string> CreateSessionQueueAsync() =>
+        CreateTestQueueAsync(new CreateQueueOptions("session-queue") { RequiresSession = true });
+
+    [Fact]
+    public async Task Session_SendWithoutSessionId_ThrowsInvalidOperation()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateSessionQueueAsync();
+        await using var sender = Client.CreateSender(queue);
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
+            sender.SendMessageAsync(new ServiceBusMessage("no-session")));
+    }
+
+    [Fact]
+    public async Task Session_ScheduledEnqueueTimeWithoutSessionId_ThrowsInvalidOperation()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateSessionQueueAsync();
+        await using var sender = Client.CreateSender(queue);
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
+            sender.SendMessageAsync(new ServiceBusMessage("no-session")
+            {
+                ScheduledEnqueueTime = DateTimeOffset.UtcNow.AddMinutes(5)
+            }));
+
+        await using var receiver = Client.CreateReceiver(queue);
+        Assert.Null(await receiver.PeekMessageAsync());
+    }
+
+    [Fact]
+    public async Task Session_ScheduleMessageAsyncWithoutSessionId_ThrowsInvalidOperation()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateSessionQueueAsync();
+        await using var sender = Client.CreateSender(queue);
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
+            sender.ScheduleMessageAsync(new ServiceBusMessage("no-session"), DateTimeOffset.UtcNow.AddMinutes(5)));
+
+        await using var receiver = Client.CreateReceiver(queue);
+        Assert.Null(await receiver.PeekMessageAsync());
+
+        // The sender link must still be usable after the refusal.
+        var seqNo = await sender.ScheduleMessageAsync(
+            new ServiceBusMessage("with-session") { SessionId = "s1" }, DateTimeOffset.UtcNow.AddMinutes(5));
+        await sender.CancelScheduledMessageAsync(seqNo);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
     // Test: Multiple sessions — isolated delivery
     // ══════════════════════════════════════════════════════════════════════════
 

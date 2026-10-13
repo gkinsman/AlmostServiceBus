@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using AlmostServiceBus.Core.Amqp;
+using Microsoft.Extensions.Logging;
 
 namespace AlmostServiceBus.Core.Broker;
 
@@ -9,6 +11,7 @@ namespace AlmostServiceBus.Core.Broker;
 /// </summary>
 public sealed class ScheduledMessageProcessor : IDisposable
 {
+    private static readonly ILogger Log = AmqpLog.CreateLogger<ScheduledMessageProcessor>();
     private readonly record struct ScheduledKey(string NamespaceName, long SequenceNumber);
     private record ScheduledEntry(string EntityName, BrokeredMessage Message, NamespaceContext Namespace);
 
@@ -40,6 +43,12 @@ public sealed class ScheduledMessageProcessor : IDisposable
     /// </summary>
     public long Schedule(string entityName, BrokeredMessage message, NamespaceContext namespaceContext)
     {
+        // Real Service Bus refuses a scheduled non-session message to a session-required queue at
+        // schedule time, the same as a plain send; accepting it here would only fail when it falls due.
+        var (queue, _) = namespaceContext.ResolveSendTarget(entityName);
+        if (queue is { RequiresSession: true } && string.IsNullOrEmpty(message.SessionId))
+            throw new SessionRequiredException(queue.Name);
+
         var seqNo = namespaceContext.NextSequenceNumber();
         message.SequenceNumber = seqNo;
         _scheduled[new ScheduledKey(namespaceContext.Name, seqNo)] = new ScheduledEntry(entityName, message, namespaceContext);
@@ -113,13 +122,29 @@ public sealed class ScheduledMessageProcessor : IDisposable
             // Clear the scheduled time before delivery
             entry.Message.ScheduledEnqueueTimeUtc = null;
 
-            // Deliver to the resolved target using the namespace stored at schedule time
-            var (queue, topic) = entry.Namespace.ResolveSendTarget(entry.EntityName);
+            Deliver(entry);
+        }
+    }
 
+    // A message that can no longer be delivered is dropped, not put back: retrying would fail on
+    // every tick. Real Service Bus deletes scheduled messages along with their entity.
+    private static void Deliver(ScheduledEntry entry)
+    {
+        var (queue, topic) = entry.Namespace.ResolveSendTarget(entry.EntityName);
+        try
+        {
             if (queue is not null)
                 queue.Enqueue(entry.Message);
             else if (topic is not null)
                 topic.Publish(entry.Message);
+            else
+                Log.LogWarning("Scheduled message {MessageId} (seq {SequenceNumber}) dropped: entity '{Entity}' in namespace '{Namespace}' no longer exists.",
+                    entry.Message.MessageId, entry.Message.SequenceNumber, entry.EntityName, entry.Namespace.Name);
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Scheduled message {MessageId} (seq {SequenceNumber}) could not be delivered to '{Entity}' in namespace '{Namespace}' and was dropped.",
+                entry.Message.MessageId, entry.Message.SequenceNumber, entry.EntityName, entry.Namespace.Name);
         }
     }
 
@@ -145,7 +170,15 @@ public sealed class ScheduledMessageProcessor : IDisposable
                 {
                     while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
                     {
-                        ProcessDueMessages();
+                        try
+                        {
+                            ProcessDueMessages();
+                        }
+                        catch (Exception ex)
+                        {
+                            // An escaped exception would end this loop and silently stop all scheduled delivery.
+                            Log.LogError(ex, "Scheduled message processing failed; retrying on the next tick.");
+                        }
                     }
                 }
                 catch (OperationCanceledException)
