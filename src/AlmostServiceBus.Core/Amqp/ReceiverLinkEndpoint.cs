@@ -381,7 +381,7 @@ public class ReceiverLinkEndpoint : LinkEndpoint
                 _queue.Complete(lockToken);
                 break;
             case Released:
-                _queue.Abandon(lockToken);
+                _queue.Release(lockToken);
                 break;
             case Rejected rejected:
                 var (dlReason, dlDescription) = ExtractDeadLetterInfoStatic(rejected);

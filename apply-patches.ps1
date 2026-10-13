@@ -9,9 +9,22 @@ function Apply-Patch($submodule, $patchFile) {
     $patchName = Split-Path $patchFile -Leaf
     $submodulePath = Join-Path $root $submodule
 
-    if (-not (Test-Path $submodulePath)) {
+    # An uninitialised submodule is an empty directory; git apply there would
+    # silently target the parent repo and report success.
+    if (-not (Test-Path (Join-Path $submodulePath ".git"))) {
         Write-Host "  Skipped: $patchName ($submodule not checked out)" -ForegroundColor DarkGray
         return
+    }
+
+    # Clones made before .gitattributes pinned patches/** to LF may still have
+    # CRLF copies, which git apply rejects as corrupt.
+    $bytes = [System.IO.File]::ReadAllBytes($patchFile)
+    $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+    $tempPatch = $null
+    if ($text.Contains("`r`n")) {
+        $tempPatch = [System.IO.Path]::GetTempFileName()
+        [System.IO.File]::WriteAllText($tempPatch, $text.Replace("`r`n", "`n"), (New-Object System.Text.UTF8Encoding $false))
+        $patchFile = $tempPatch
     }
 
     Push-Location $submodulePath
@@ -33,6 +46,7 @@ function Apply-Patch($submodule, $patchFile) {
         }
     } finally {
         Pop-Location
+        if ($tempPatch) { Remove-Item $tempPatch -ErrorAction SilentlyContinue }
     }
 }
 

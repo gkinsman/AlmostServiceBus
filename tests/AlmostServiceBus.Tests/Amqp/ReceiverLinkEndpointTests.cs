@@ -80,11 +80,58 @@ public class ReceiverLinkEndpointTests
         var endpoint = new ReceiverLinkEndpoint(queue);
         endpoint.SettleMessage(lockToken, new Released());
 
-        // Message should be re-enqueued (after 1s redelivery delay)
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var reDequeued = await queue.DequeueAsync(cts.Token);
         Assert.NotNull(reDequeued);
         Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(reDequeued.Body));
+    }
+
+    [Fact]
+    public void ReleasedMessage_IsRedeliveredImmediately_WithoutCountingTheDelivery()
+    {
+        var queue = new QueueEntity("test-queue");
+        queue.Enqueue(new BrokeredMessage { Body = System.Text.Encoding.UTF8.GetBytes("hello") });
+        var endpoint = new ReceiverLinkEndpoint(queue);
+
+        var first = queue.TryDequeueImmediate()!;
+        Assert.Equal(1, first.DeliveryCount);
+        var firstLockToken = first.LockToken!;
+        endpoint.SettleMessage(firstLockToken, new Released());
+
+        var again = queue.TryDequeueImmediate();
+        Assert.NotNull(again);
+        Assert.Equal(1, again.DeliveryCount);
+        Assert.NotEqual(firstLockToken, again.LockToken);
+    }
+
+    [Fact]
+    public void ReleasedMessage_BouncingOffManyLinks_IsNotDeadLettered()
+    {
+        var queue = new QueueEntity("test-queue") { MaxDeliveryCount = 3 };
+        queue.Enqueue(new BrokeredMessage { Body = System.Text.Encoding.UTF8.GetBytes("hello") });
+        var endpoint = new ReceiverLinkEndpoint(queue);
+
+        for (var i = 0; i < 10; i++)
+        {
+            var delivered = queue.TryDequeueImmediate()!;
+            endpoint.SettleMessage(delivered.LockToken!, new Released());
+        }
+
+        Assert.NotNull(queue.TryDequeueImmediate());
+        Assert.Null(queue.DeadLetterQueue.TryDequeueImmediate());
+    }
+
+    [Fact]
+    public void ModifiedAbandon_StillWaitsOutTheRedeliveryDelay()
+    {
+        var queue = new QueueEntity("test-queue");
+        queue.Enqueue(new BrokeredMessage { Body = System.Text.Encoding.UTF8.GetBytes("hello") });
+        var endpoint = new ReceiverLinkEndpoint(queue);
+
+        var delivered = queue.TryDequeueImmediate()!;
+        endpoint.SettleMessage(delivered.LockToken!, new Modified { DeliveryFailed = true });
+
+        Assert.Null(queue.TryDequeueImmediate());
     }
 
     [Fact]

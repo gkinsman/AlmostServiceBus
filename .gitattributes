@@ -1,0 +1,3 @@
+# Patches must keep their LF bytes: git apply rejects CRLF patches whose blank
+# context lines lack the leading space ("corrupt patch").
+patches/** -text
