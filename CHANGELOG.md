@@ -4,7 +4,40 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.7.0] - 2026-10-13
+
+### Changed
+These bring the emulator closer to a real namespace, but they can surface
+errors that used to be hidden.
+
+- **Sending to an entity that doesn't exist fails with
+  `MessagingEntityNotFound`.**
+  - This used to create a queue of that name, which hid mistakes such as
+    publishing to a topic that was never created.
+  - Receiving from, and scheduling to, a missing entity fail the same way.
+  - Create entities before using them, through the admin client or, in tests,
+    the TestHost `NamespaceContext`. (#161)
+- **The emulator listens on loopback unless it runs in a container.**
+  - Its public listeners used to bind every interface: the AMQP/HTTP port,
+    `5300`, the dashboard and the TLS admin endpoint. On Windows each newly
+    built Host or test binary then prompted for a firewall exception.
+  - They now bind `ASB_BIND_HOST`, which defaults to `localhost` outside a
+    container and `0.0.0.0` inside one, as the README already described.
+  - Container mode is detected from `DOTNET_RUNNING_IN_CONTAINER`, which the
+    official .NET images (including ours) set, or from
+    `ASB_RUNNING_IN_CONTAINER`.
+  - To accept connections from other machines, set `ASB_BIND_HOST=0.0.0.0`.
+    (#163)
+- **Scheduling a message without a session id to a session queue is refused**
+  with `InvalidOperationException` when it is scheduled, as on a real
+  namespace. (#162)
+- **The Aspire integration gives containers a host they can reach.**
+  - The connection string used to hard-code `localhost`, so a container
+    resource referencing the emulator could never connect.
+  - Each consumer now gets the emulator's per-consumer host: projects get
+    `localhost`, and containers get `aspire.dev.internal`, through Aspire's
+    container tunnel.
+  - `aspire.dev.internal` maps to the default namespace. (#163)
 
 ### Fixed
 - **Auto-forwarding to a topic.** A queue or subscription whose `ForwardTo`
@@ -30,6 +63,35 @@ All notable changes to this project are documented here. The format is based on
   The dashboard shows a forwarding subscription's own message count rather
   than its destination's. MassTransit's `Publish_with_complex_hierarchy` test
   runs in CI again. (#159)
+- **A topic with a session subscription no longer rejects messages without a
+  session id.**
+  - The publish used to throw, and the subscriptions after the session one got
+    nothing.
+  - As on a real namespace, the publish now succeeds, the other subscriptions
+    get their copies, and the session subscription dead-letters its copy with
+    `Session id is null.`
+  - A direct send to a session queue is still refused. (#160)
+- **One bad scheduled message no longer stops all scheduled delivery.**
+  - A due message that couldn't be enqueued ended the background loop, so
+    nothing scheduled was delivered again until restart, and that message was
+    lost.
+  - Each due message is now delivered on its own. One that fails, or whose
+    target has been deleted, is logged and dropped. (#162)
+- **Released messages come straight back.**
+  - A receiver that hands a message back unprocessed (AMQP `released`) used to
+    trigger the same 1 s delay and delivery-count increase as an abandon.
+  - With idle receivers holding credit, as Wolverine leaves them, request-reply
+    could then miss its timeout.
+  - On non-session queues, released messages are now redelivered at once and
+    don't count as a delivery. (#164)
+- **Test-only:**
+  - The NServiceBus emulator acceptance tests now run in CI. (#166)
+  - 9 MassTransit and 15 Wolverine tests that used to be excluded run again.
+    (#167)
+  - Wolverine's `check_negative` smoke test is fixed, and the framework
+    patches now apply on Windows checkouts. (#164)
+  - Duplicate detection of scheduled and auto-forwarded messages is pinned to
+    real Service Bus behaviour by new tests. (#165)
 
 ## [0.6.2] - 2026-09-30
 
