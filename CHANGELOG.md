@@ -16,6 +16,12 @@ All notable changes to this project are documented here. The format is based on
     nothing waited on.
   - The Host now also shuts down when either web app is asked to stop.
 
+## [0.7.1] - 2026-10-13
+
+### Changed
+- **Dependency updates.** `System.Security.Cryptography.Pkcs` 10.0.13 (#171)
+  and the dashboard's Vue 3.5.44 (#170). No behaviour changes.
+
 ## [0.7.0] - 2026-10-13
 
 ### Changed
