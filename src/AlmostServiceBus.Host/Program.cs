@@ -240,6 +240,11 @@ Console.WriteLine();
 var shutdownCts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; shutdownCts.Cancel(); };
 AppDomain.CurrentDomain.ProcessExit += (_, _) => { shutdownCts.Cancel(); };
+// SIGTERM never reaches ProcessExit: each WebApplication's ConsoleLifetime cancels the signal and
+// only requests a stop, which nothing awaits since the apps are started with StartAsync. Aspire
+// stops resources with SIGTERM on Linux and macOS, so ignoring it left the emulator running.
+mgmtApp.Lifetime.ApplicationStopping.Register(shutdownCts.Cancel);
+dashApp.Lifetime.ApplicationStopping.Register(shutdownCts.Cancel);
 
 try { await Task.Delay(Timeout.Infinite, shutdownCts.Token); } catch (OperationCanceledException) { }
 

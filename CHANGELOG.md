@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.2] - 2026-10-15
+
+### Fixed
+- **The emulator exits on SIGTERM.**
+  - Aspire stops executable resources with SIGTERM on Linux and macOS, so
+    when an AppHost shut down, the emulator it launched kept running,
+    holding its ports and memory until it was killed by hand.
+  - The Host only shut down on Ctrl+C or process exit. The console lifetime
+    of its two web apps swallowed SIGTERM and only requested a stop, which
+    nothing waited on.
+  - The Host now also shuts down when either web app is asked to stop.
+
 ## [0.7.0] - 2026-10-13
 
 ### Changed
