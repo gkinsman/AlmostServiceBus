@@ -48,8 +48,7 @@ public class ReceiverLinkEndpoint : LinkEndpoint
                 // consumer before doing anything else. If we delay (e.g. waiting for
                 // the pump to stop), the link may start detaching and CompleteDrain's
                 // internal SendFlow becomes a no-op (it checks !IsDetaching).
-                flowContext.Link.CompleteDrain();
-                _credit.Reset();
+                CompleteDrain(flowContext, _credit);
                 _pumpCts?.Cancel();
                 return;
             }
@@ -331,6 +330,31 @@ public class ReceiverLinkEndpoint : LinkEndpoint
         }
 
         public void Reset() => _credit = 0;
+    }
+
+    /// <summary>
+    /// Answers a client's drain request the way the AMQP spec (2.6.7) and real Service Bus do:
+    /// the remaining credit is consumed (delivery-count advanced by it), credit goes to zero, and
+    /// the reply flow echoes <c>drain=true</c>.
+    /// </summary>
+    /// <remarks>
+    /// <c>ListenerLink.CompleteDrain</c> gets two things wrong. Its reply always says
+    /// <c>drain=false</c>, and rhea (Node.js SDK) only signals "drained" on a flow with
+    /// <c>drain=true</c>: the SDK times out the drain after 200ms and detaches the link, which on a
+    /// session receiver releases the session — every later settle or renew failed with
+    /// SessionLockLost (issue #178). And a drain flow that restates the current limit (the usual
+    /// case: the client drains the credit it already granted) is a zero delta that AMQPNetLite
+    /// treats as "credit withdrawn", so nothing is left to consume and delivery-count never moves.
+    /// The shadow restores the credit first; <c>SetCredit(0, drain: true)</c> then sends the echo.
+    /// </remarks>
+    internal static void CompleteDrain(FlowContext flowContext, CreditShadow credit)
+    {
+        var link = flowContext.Link;
+        credit.OnFlow(flowContext);
+        link.CompleteDrain();
+        credit.Reset();
+        try { link.SetCredit(0, drain: true); }
+        catch (Exception ex) { Log.LogDebug(ex, "Drain echo skipped: link is detaching"); }
     }
 
     private static void SetLinkCredit(ListenerLink link, uint credit)

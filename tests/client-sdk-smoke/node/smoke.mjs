@@ -140,6 +140,14 @@ async function main() {
     check(batch[2].subject === "OrderShipped" && batch[2].applicationProperties?.n === 3, "each message keeps its own subject and properties");
     for (const m of batch) await receiver.completeMessage(m);
 
+    step("batch send of a single message");
+    // A one-entry array is still sent as a batch envelope; its single Data section used to be
+    // delivered as the raw AMQP encoding of the inner message (issue #176).
+    await sender.sendMessages([{ body: { shape: "array of one" } }]);
+    const solo = await receiveOne(receiver);
+    check(solo.body?.shape === "array of one", `body decoded (${Buffer.isBuffer(solo.body) ? "raw bytes" : JSON.stringify(solo.body)})`);
+    await receiver.completeMessage(solo);
+
     step("abandon -> redelivery bumps deliveryCount");
     await sender.sendMessages({ body: "retry-me" });
     const first = await receiveOne(receiver);
@@ -181,12 +189,16 @@ async function main() {
     await sessionSender.close();
     const s1 = await client.acceptSession(SESSION_QUEUE, "s1");
     check(s1.sessionId === "s1", "accepted the requested session");
-    const held = await s1.receiveMessages(3, { maxWaitTimeInMs: WAIT_MS });
+    // Ask for more than the session holds, so the receive waits out its timeout and drains the
+    // link. The SDK detaches the link if the drain isn't answered with drain=true, which used to
+    // lose the session lock while the messages were still held (issue #178).
+    const held = await s1.receiveMessages(10, { maxWaitTimeInMs: 2000 });
     const got = held.map((x) => x.body);
     check(JSON.stringify(got) === JSON.stringify(["s1-0", "s1-1", "s1-2"]), `session messages arrive in order (${got})`);
     await s1.setSessionState("checkpoint-3");
     check((await s1.getSessionState()) === "checkpoint-3", "session state round-trips");
-    await s1.renewSessionLock();
+    const renewed = await s1.renewSessionLock().then(() => "OK", (e) => e.code);
+    check(renewed === "OK", `session lock still held after the receive drained the link (${renewed})`);
     for (const x of held) await s1.completeMessage(x);
     await s1.close();
     const next = await client.acceptNextSession(SESSION_QUEUE);

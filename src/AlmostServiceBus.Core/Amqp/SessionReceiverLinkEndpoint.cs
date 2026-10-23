@@ -38,8 +38,7 @@ public class SessionReceiverLinkEndpoint : LinkEndpoint
         {
             if (flowContext.Link.IsDraining)
             {
-                flowContext.Link.CompleteDrain();
-                _credit.Reset();
+                ReceiverLinkEndpoint.CompleteDrain(flowContext, _credit);
                 _pumpCts?.Cancel();
                 return;
             }
