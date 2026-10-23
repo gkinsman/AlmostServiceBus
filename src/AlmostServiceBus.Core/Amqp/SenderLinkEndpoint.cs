@@ -188,6 +188,9 @@ public class SenderLinkEndpoint : LinkEndpoint
     /// Node.js SDK copies the first message's properties (Subject included) onto it, and
     /// an envelope with a Subject was previously mistaken for a single message whose
     /// body was the raw encoded batch.
+    /// AMQPNetLite surfaces a body with a single Data section as its raw bytes rather than
+    /// a <see cref="Data"/>[], so a one-message batch (the Node.js SDK sends every array
+    /// and <c>ServiceBusMessageBatch</c> as a batch) is recognised by its format alone.
     /// </summary>
     internal static bool IsBatchTransfer(Message message, out Data[] sections)
     {
@@ -195,6 +198,12 @@ public class SenderLinkEndpoint : LinkEndpoint
         {
             sections = dataArray;
             return message.Format == BatchMessageFormat || message.Properties?.Subject is null;
+        }
+
+        if (message.BodySection is Data single && message.Format == BatchMessageFormat)
+        {
+            sections = [single];
+            return true;
         }
 
         sections = [];
