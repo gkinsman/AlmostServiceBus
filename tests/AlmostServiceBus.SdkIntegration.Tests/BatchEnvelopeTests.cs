@@ -63,4 +63,47 @@ public class BatchEnvelopeTests : IAsyncLifetime
         Assert.Equal(["b1", "b2", "b3"], received.Select(m => m.Body.ToString()).ToArray());
         Assert.Equal(["OrderPlaced", "OrderPlaced", "OrderShipped"], received.Select(m => m.Subject).ToArray());
     }
+
+    [Fact]
+    public async Task BatchEnvelopeWithOneMessage_IsUnpacked()
+    {
+        // The Node.js SDK sends sendMessages([msg]) and a one-message ServiceBusMessageBatch
+        // as a batch envelope holding a single Data section, which AMQPNetLite decodes as a
+        // lone Data body rather than Data[] (issue #176).
+        const string queue = "batch-envelope-single";
+        _fixture.GetDefaultNamespaceContext().CreateQueue(queue);
+
+        var address = new Address("localhost", _fixture.PublicPort, null, null, "/", "AMQP");
+        var factory = new ConnectionFactory();
+        factory.SASL.Profile = Amqp.Sasl.SaslProfile.Anonymous;
+        var connection = await factory.CreateAsync(address);
+        var session = new Session(connection);
+        var sender = new SenderLink(session, "batch-envelope-single-sender", queue);
+
+        var inner = new Message(new Data { Binary = System.Text.Encoding.UTF8.GetBytes("only") })
+        {
+            Properties = new Properties { MessageId = "only", Subject = "OrderPlaced" },
+        };
+        var encoded = inner.Encode();
+        var sections = new DataList();
+        sections.Add(new Data { Binary = encoded.Buffer.AsSpan(encoded.Offset, encoded.Length).ToArray() });
+
+        var envelope = new Message
+        {
+            Format = 0x80013700,
+            BodySection = sections,
+            Properties = new Properties { MessageId = "only", Subject = "OrderPlaced" },
+        };
+        await sender.SendAsync(envelope);
+        await connection.CloseAsync();
+
+        var cs = $"Endpoint=sb://localhost:{_fixture.PublicPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=emulator;UseDevelopmentEmulator=true";
+        await using var client = new ServiceBusClient(cs);
+        var receiver = client.CreateReceiver(queue);
+        var received = await receiver.ReceiveMessagesAsync(5, TimeSpan.FromSeconds(5));
+
+        var message = Assert.Single(received);
+        Assert.Equal("only", message.Body.ToString());
+        Assert.Equal("OrderPlaced", message.Subject);
+    }
 }

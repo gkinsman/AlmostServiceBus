@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.3] - 2026-10-23
+
+### Fixed
+- **A batch holding one message is delivered as that message.** (#176)
+  - The Node.js SDK sends every `sendMessages([...])` array and every
+    `ServiceBusMessageBatch` as a batch, even with a single entry. The
+    receiver got the raw AMQP encoding of the message as its body.
+  - Batches of two or more, and non-batched sends, were not affected.
+- **A session receive that waits past the last message keeps the session
+  lock.** (#178)
+  - When `receiveMessages(n)` asked for more than the session held, the
+    Node.js SDK drained the link at the timeout. The emulator's reply left out
+    `drain=true`, so the SDK gave up waiting and detached the link, which
+    released the session.
+  - Renewing the session lock, and settling the messages that receive
+    returned, then failed with `SessionLockLost`.
+  - The emulator now answers a drain the way Service Bus does, for session
+    and non-session receivers.
+
+### Changed
+- **Dependency updates.** Aspire.Hosting 13.6.3 (#179, #181) and the
+  dashboard's Vite 8.3.5 (#180). No behaviour changes.
+
 ## [0.7.2] - 2026-10-15
 
 ### Fixed
