@@ -110,32 +110,7 @@ cd external/MassTransit && MT_ASB_EMULATOR=1 MT_ASB_KEYNAME=RootManageSharedAcce
 
 ## Versioning & Releasing
 
-Versioning is fully automatic via [MinVer](https://github.com/clcrutch/MinVer). No version numbers in csproj files.
-
-- MinVer reads the version from **git tags** (prefix `v`, e.g. `v0.1.0`)
-- On a tagged commit: version is exactly the tag (e.g. `0.1.0`)
-- After a tag: version auto-bumps patch with pre-release suffix (e.g. `0.1.1-alpha.0.3` = 3 commits after `v0.1.0`)
-- No tags at all: version is `0.1.0-alpha.0.N` (floor set by `MinVerMinimumMajorMinor` in `Directory.Build.props`)
-
-### How to release
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-The `.github/workflows/ci.yml` workflow triggers on `v*` tags and:
-1. Runs the normal test matrix once
-2. Packs three NuGet packages: `AlmostServiceBus`, `AlmostServiceBus.TestHost`, `AlmostServiceBus.Aspire.Hosting`
-3. Pushes to NuGet.org (requires `NUGET_USER` for OIDC login)
-
-### Version bumps
-
-- **Patch**: automatic (MinVer bumps patch between tags)
-- **Minor**: create tag `v0.2.0`
-- **Major**: create tag `v1.0.0`
-
-No csproj changes needed — just tag and push.
+See [RELEASING.md](RELEASING.md). In short: versions come from `v*` git tags via MinVer (no version numbers in csproj files); add the `CHANGELOG.md` section, tag `main`, push the tag, and CI tests and publishes the four NuGet packages.
 
 ## Key Design Decisions
 
