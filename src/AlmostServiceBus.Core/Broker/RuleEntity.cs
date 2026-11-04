@@ -44,6 +44,10 @@ public sealed class RuleEntity
 
     public string? ContentType { get; set; }
 
+    public string? MessageId { get; set; }
+
+    public string? ReplyToSessionId { get; set; }
+
     /// <summary>Custom properties to match against <see cref="BrokeredMessage.ApplicationProperties"/>.</summary>
     public Dictionary<string, object>? CorrelationFilterProperties { get; set; }
 
@@ -54,6 +58,8 @@ public sealed class RuleEntity
     public Dictionary<string, object?>? ActionParameters { get; set; }
 
     public bool HasAction => ActionExpression is not null;
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>
     /// Evaluates whether this rule matches the given message.
@@ -126,6 +132,10 @@ public sealed class RuleEntity
         if (SessionId is not null && !string.Equals(SessionId, message.SessionId, StringComparison.Ordinal))
             return false;
         if (ContentType is not null && !string.Equals(ContentType, message.ContentType, StringComparison.Ordinal))
+            return false;
+        if (MessageId is not null && !string.Equals(MessageId, message.MessageId, StringComparison.Ordinal))
+            return false;
+        if (ReplyToSessionId is not null && !string.Equals(ReplyToSessionId, message.ReplyToSessionId, StringComparison.Ordinal))
             return false;
 
         // Match custom properties

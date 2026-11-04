@@ -92,7 +92,20 @@ public class ManagementLinkEndpoint : IRequestProcessor
                     HandleUpdateDisposition(requestContext);
                     break;
 
+                case "com.microsoft:add-rule":
+                    SendReply(requestContext, RuleManagementHandler.AddRule(FindScopedSubscription(requestContext), RequestBody(requestContext)));
+                    break;
+
+                case "com.microsoft:remove-rule":
+                    SendReply(requestContext, RuleManagementHandler.RemoveRule(FindScopedSubscription(requestContext), RequestBody(requestContext)));
+                    break;
+
+                case "com.microsoft:enumerate-rules":
+                    SendReply(requestContext, RuleManagementHandler.EnumerateRules(FindScopedSubscription(requestContext), RequestBody(requestContext)));
+                    break;
+
                 default:
+                    // TODO(#192 follow-up): an unknown operation should fail rather than reply OK.
                     ReplyOk(requestContext);
                     break;
             }
@@ -803,6 +816,33 @@ public class ManagementLinkEndpoint : IRequestProcessor
             },
             Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
+    }
+
+    private static Map RequestBody(RequestContext requestContext) => requestContext.Message.Body as Map ?? new Map();
+
+    // A subscription's $management node is scoped to "{topic}/Subscriptions/{subscription}".
+    private SubscriptionEntity? FindScopedSubscription(RequestContext requestContext)
+    {
+        var parts = _scopedAddress?.Split('/');
+        if (parts is not { Length: 3 } || !parts[1].Equals("Subscriptions", StringComparison.OrdinalIgnoreCase))
+            return null;
+        return ResolveNamespace(requestContext).GetSubscription(parts[0], parts[2]);
+    }
+
+    private static void SendReply(RequestContext requestContext, ManagementReply reply)
+    {
+        var response = (reply.Body is null ? new Message() : new Message(reply.Body))
+        {
+            ApplicationProperties = new ApplicationProperties
+            {
+                ["statusCode"] = reply.StatusCode,
+                ["statusDescription"] = reply.Description
+            },
+            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
+        };
+        if (reply.ErrorCondition is not null)
+            response.ApplicationProperties["errorCondition"] = new Symbol(reply.ErrorCondition);
         AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 
