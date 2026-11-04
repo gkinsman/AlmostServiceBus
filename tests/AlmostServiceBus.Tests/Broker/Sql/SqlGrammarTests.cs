@@ -86,6 +86,25 @@ public class SqlGrammarTests
     }
 
     [Fact]
+    public void ParseFilter_DeepNesting_OnSmallStackThread_DoesNotOverflow()
+    {
+        // Thread-pool and test-host threads can have much smaller stacks than the main thread.
+        var text = new string('(', 500) + "a = 1" + new string(')', 500);
+        string? printed = null;
+        var thread = new Thread(() => printed = SqlAstPrinter.Print(SqlGrammar.ParseFilter(text)), 256 * 1024);
+        thread.Start();
+        thread.Join();
+        Assert.Equal("(Equal user:a 1L)", printed);
+    }
+
+    [Fact]
+    public void ParseAction_DeepNesting_DoesNotOverflow()
+    {
+        var text = "SET a = " + new string('(', 500) + "1" + new string(')', 500);
+        Assert.Equal("(Set user:a 1L)", SqlAstPrinter.Print(SqlGrammar.ParseAction(text)));
+    }
+
+    [Fact]
     public void ParseFilter_OverMaxLength_IsRejected()
     {
         var text = "a = '" + new string('x', 1019) + "'";

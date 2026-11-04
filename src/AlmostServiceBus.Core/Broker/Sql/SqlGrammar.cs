@@ -40,7 +40,7 @@ public static class SqlGrammar
                 throw SqlSyntaxException.Syntax(text, token.Position.Absolute, ";", "Unrecognized character. ';'");
         }
 
-        var result = Or(tokens);
+        var result = WithStackFor(tokens, () => Or(tokens));
         if (!result.HasValue)
             throw Error(text, result.Remainder, result.Expectations, Mode.Filter);
         if (!result.Remainder.IsAtEnd)
@@ -52,6 +52,11 @@ public static class SqlGrammar
     public static IReadOnlyList<SqlStatement> ParseAction(string text)
     {
         var tokens = Prepare(text);
+        return WithStackFor(tokens, () => ParseStatements(text, tokens));
+    }
+
+    private static List<SqlStatement> ParseStatements(string text, TokenList<SqlToken> tokens)
+    {
         var statements = new List<SqlStatement>();
 
         var first = Statement(tokens);
@@ -84,6 +89,37 @@ public static class SqlGrammar
         }
 
         return statements;
+    }
+
+    // Superpower spends a dozen or so frames per nesting level; a 1024-character expression can nest about 500
+    // deep, which overflows a thread-pool stack. Deeply nested input is parsed on a thread with a larger stack.
+    private const int InlineNestingLimit = 64;
+    private const int LargeStackBytes = 64 * 1024 * 1024;
+
+    private static T WithStackFor<T>(TokenList<SqlToken> tokens, Func<T> parse)
+    {
+        var depth = 0;
+        var maxDepth = 0;
+        foreach (var token in tokens)
+        {
+            if (token.Kind == SqlToken.LParen) maxDepth = Math.Max(maxDepth, ++depth);
+            else if (token.Kind == SqlToken.RParen) depth--;
+        }
+
+        if (maxDepth <= InlineNestingLimit)
+            return parse();
+
+        T result = default!;
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo? error = null;
+        var thread = new Thread(() =>
+        {
+            try { result = parse(); }
+            catch (Exception ex) { error = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex); }
+        }, LargeStackBytes);
+        thread.Start();
+        thread.Join();
+        error?.Throw();
+        return result;
     }
 
     private static TokenList<SqlToken> Prepare(string text)
