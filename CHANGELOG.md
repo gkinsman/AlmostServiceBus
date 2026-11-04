@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.8.0] - 2026-11-04
 
 ### Added
 - **Messages now expire.** `TimeToLive`, `DefaultMessageTimeToLive` and
@@ -31,56 +31,6 @@ All notable changes to this project are documented here. The format is based on
     destination.
   - The dashboard marks dropped messages as expired and leaves them out of the
     active count.
-
-### Fixed
-- **A scheduled message's enqueued time is when it activated**, not when it was
-  sent, as on a real namespace.
-- **`DeadLetterSource` reaches the SDK, and only on forwarded dead-letters.**
-  The emulator wrote it under `x-opt-dead-letter-source`, which no client
-  reads; the annotation is `x-opt-deadletter-source`. Like real Service Bus, it
-  is now set only on a dead-letter forwarded by `ForwardDeadLetteredMessagesTo`
-  (it names the source entity). A message in an entity's own dead-letter queue
-  has none.
-- **`ForwardDeadLetteredMessagesTo` is honoured on queues and subscriptions.**
-  (#193)
-  - The emulator used to ignore the setting: the management API did not read
-    or return it, and messages always stayed in the source's dead-letter queue.
-  - A message dead-lettered explicitly, or after `MaxDeliveryCount` (on
-    abandon or lock expiry), now goes to the configured queue or topic. It
-    keeps its `DeadLetterReason` and description.
-  - As with `ForwardTo`, creating or updating an entity whose dead-letter
-    destination doesn't exist is refused. If the destination is deleted later,
-    the message stays in the source's dead-letter queue. The transfer counts
-    towards the same four-hop limit as `ForwardTo`.
-  - The source's dead-letter queue refuses receivers and peeks while
-    forwarding is on, as Service Bus does.
-  - Checked against a real Service Bus namespace by new conformance tests.
-- **`DeadLetterSource` now reaches clients, and only when Service Bus sets it.**
-  - The emulator sent it under the wrong AMQP annotation name, so the SDK
-    always saw `null`.
-  - It is now set only on messages forwarded out of a dead-letter queue, as in
-    Service Bus. An ordinary dead-lettered message has none.
-- **Dead-letter descriptions match Service Bus.**
-  - Max-delivery dead-lettering now says "Message could not be consumed after
-    N delivery attempts.", the text Service Bus uses.
-  - When a forwarded dead-letter fails its next transfer, the hop-limit reason
-    replaces the original reason but the description is kept.
-- **SQL filters no longer match unrelated messages.** (#192)
-  - `IN`, `"quoted"` and `[bracketed]` property names, and combinations of
-    them, used to fall through to a catch-all that matched every message.
-  - The regex-based evaluator is replaced by a full parser for the Service
-    Bus SQL grammar, built with Superpower. It covers every operator,
-    `LIKE … ESCAPE`, `IN`, `IS [NOT] NULL`, `EXISTS`, arithmetic, `newid()`,
-    `property()`, the `sys.`/`user.` scopes and all three identifier forms.
-  - Behaviour matches real Azure. A table of 478 cases, recorded against a
-    real namespace, runs in CI against the emulator
-    (`tests/shared/sql-compat-cases.json`). This includes how values turn into
-    text in `LIKE` and concatenation: doubles to 15 digits, as Azure prints them.
-- **`ServiceBusRuleManager` works.** `add-rule`, `remove-rule` and
-  `enumerate-rules` on `$management` used to answer OK without doing
-  anything, so `CreateRuleAsync` "succeeded" without adding a rule.
-
-### Added
 - **SQL rule actions.** `SET` and `REMOVE` run on the copy a rule delivers,
   as on Azure:
   - The copy gets a `RuleName` property.
@@ -120,6 +70,48 @@ These match real Azure, but may change routing for existing rules.
 - **Creating a rule that already exists answers 409**
   (`MessagingEntityAlreadyExists`) instead of overwriting it. Updates with
   `If-Match` still replace it.
+
+### Fixed
+- **A scheduled message's enqueued time is when it activated**, not when it was
+  sent, as on a real namespace.
+- **`ForwardDeadLetteredMessagesTo` is honoured on queues and subscriptions.**
+  (#193)
+  - The emulator used to ignore the setting: the management API did not read
+    or return it, and messages always stayed in the source's dead-letter queue.
+  - A message dead-lettered explicitly, or after `MaxDeliveryCount` (on
+    abandon or lock expiry), now goes to the configured queue or topic. It
+    keeps its `DeadLetterReason` and description.
+  - As with `ForwardTo`, creating or updating an entity whose dead-letter
+    destination doesn't exist is refused. If the destination is deleted later,
+    the message stays in the source's dead-letter queue. The transfer counts
+    towards the same four-hop limit as `ForwardTo`.
+  - The source's dead-letter queue refuses receivers and peeks while
+    forwarding is on, as Service Bus does.
+  - Checked against a real Service Bus namespace by new conformance tests.
+- **`DeadLetterSource` now reaches clients, and only when Service Bus sets it.**
+  - The emulator sent it under the wrong AMQP annotation name, so the SDK
+    always saw `null`.
+  - It is now set only on messages forwarded out of a dead-letter queue, as in
+    Service Bus. An ordinary dead-lettered message has none.
+- **Dead-letter descriptions match Service Bus.**
+  - Max-delivery dead-lettering now says "Message could not be consumed after
+    N delivery attempts.", the text Service Bus uses.
+  - When a forwarded dead-letter fails its next transfer, the hop-limit reason
+    replaces the original reason but the description is kept.
+- **SQL filters no longer match unrelated messages.** (#192)
+  - `IN`, `"quoted"` and `[bracketed]` property names, and combinations of
+    them, used to fall through to a catch-all that matched every message.
+  - The regex-based evaluator is replaced by a full parser for the Service
+    Bus SQL grammar, built with Superpower. It covers every operator,
+    `LIKE … ESCAPE`, `IN`, `IS [NOT] NULL`, `EXISTS`, arithmetic, `newid()`,
+    `property()`, the `sys.`/`user.` scopes and all three identifier forms.
+  - Behaviour matches real Azure. A table of 478 cases, recorded against a
+    real namespace, runs in CI against the emulator
+    (`tests/shared/sql-compat-cases.json`). This includes how values turn into
+    text in `LIKE` and concatenation: doubles to 15 digits, as Azure prints them.
+- **`ServiceBusRuleManager` works.** `add-rule`, `remove-rule` and
+  `enumerate-rules` on `$management` used to answer OK without doing
+  anything, so `CreateRuleAsync` "succeeded" without adding a rule.
 
 ## [0.7.3] - 2026-10-23
 
