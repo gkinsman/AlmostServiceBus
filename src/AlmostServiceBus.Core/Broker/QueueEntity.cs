@@ -840,16 +840,10 @@ public sealed class QueueEntity : IDisposable
         message.LockToken = null;
         message.State = MessageState.Active;
 
-        // Real Service Bus names the source only on dead-letters it forwards elsewhere; a message
-        // in the entity's own dead-letter queue has none.
-        if (ForwardDeadLetteredMessagesTo is not null && _namespace is not null)
-        {
-            message.DeadLetterSource = Name;
-            if (_namespace.ForwardDeadLetter(this, message))
-                return;
-        }
+        if (ForwardDeadLetteredMessagesTo is not null && _namespace is not null
+            && _namespace.ForwardDeadLetter(this, message))
+            return;
 
-        message.DeadLetterSource = null;
         DeadLetterQueue.Enqueue(message);
     }
 
