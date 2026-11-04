@@ -80,7 +80,11 @@ public sealed class SubscriptionEntity
         set => Queue.RequiresSession = value;
     }
 
-    public TimeSpan DefaultMessageTimeToLive { get; set; } = TimeSpan.MaxValue;
+    public TimeSpan DefaultMessageTimeToLive
+    {
+        get => Queue.DefaultMessageTimeToLive;
+        set => Queue.DefaultMessageTimeToLive = value;
+    }
 
     public string? UserMetadata { get; set; }
 

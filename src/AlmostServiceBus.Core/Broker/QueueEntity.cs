@@ -111,6 +111,11 @@ public sealed class QueueEntity : IDisposable
 
     public TimeSpan DefaultMessageTimeToLive { get; set; } = TimeSpan.MaxValue;
 
+    /// <summary>
+    /// Clock for message expiry. Taken from the namespace; settable so tests can move time on.
+    /// </summary>
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
     public bool EnablePartitioning { get; set; } = false;
 
     public bool EnableExpress { get; set; } = false;
@@ -162,7 +167,11 @@ public sealed class QueueEntity : IDisposable
 
     // ForwardTo is resolved by name on every delivery, so the target can be created after this
     // entity, or deleted and recreated, without re-wiring.
-    internal void SetNamespace(NamespaceContext ns) => _namespace = ns;
+    internal void SetNamespace(NamespaceContext ns)
+    {
+        _namespace = ns;
+        TimeProvider = ns.TimeProvider;
+    }
 
     public void SetEventBus(MessageEventBus bus, string namespaceName, string entityName)
     {
@@ -201,6 +210,8 @@ public sealed class QueueEntity : IDisposable
     /// </summary>
     public void Enqueue(BrokeredMessage message)
     {
+        StampExpiry(message);
+
         // Session-enabled queues route messages to the SessionManager by SessionId.
         if (RequiresSession)
         {
@@ -269,6 +280,25 @@ public sealed class QueueEntity : IDisposable
     {
         if (message.SequenceNumber == 0)
             message.SequenceNumber = Interlocked.Increment(ref _sequenceNumber);
+    }
+
+    // Real Service Bus caps a message's time-to-live at the entity default (a message without one
+    // gets the default) and counts it from the enqueue time. Dead-letter queues never expire messages.
+    private void StampExpiry(BrokeredMessage message)
+    {
+        if (_isDeadLetterQueue)
+        {
+            message.ExpiresAtUtc = DateTimeOffset.MaxValue;
+            return;
+        }
+
+        var ttl = message.EffectiveTimeToLive < DefaultMessageTimeToLive
+            ? message.EffectiveTimeToLive
+            : DefaultMessageTimeToLive;
+        message.EffectiveTimeToLive = ttl;
+        message.ExpiresAtUtc = ttl >= DateTimeOffset.MaxValue - message.EnqueuedTimeUtc
+            ? DateTimeOffset.MaxValue
+            : message.EnqueuedTimeUtc + ttl;
     }
 
     // For messages the broker itself refuses on the way in. Real Service Bus puts those it can't

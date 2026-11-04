@@ -27,13 +27,17 @@ public sealed class NamespaceContext
 
     public void Touch() => Interlocked.Exchange(ref _lastActivityAtTicks, DateTimeOffset.UtcNow.UtcTicks);
 
-    public NamespaceContext(string name, MessageEventBus? eventBus = null)
+    public NamespaceContext(string name, MessageEventBus? eventBus = null, TimeProvider? timeProvider = null)
     {
         Name = name;
         _eventBus = eventBus;
+        TimeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public string Name { get; }
+
+    /// <summary>Clock the namespace's entities use for message expiry.</summary>
+    public TimeProvider TimeProvider { get; }
 
     // ── Queue methods ────────────────────────────────────────────────────────
 

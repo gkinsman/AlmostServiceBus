@@ -596,7 +596,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
         var messageList = new List();
         foreach (var brokered in matches)
         {
-            var amqpMessage = ReceiverLinkEndpoint.ConvertToAmqpMessage(brokered);
+            var amqpMessage = ReceiverLinkEndpoint.ConvertToAmqpMessage(brokered, peek: true);
             // Stamp the actual SequenceNumber via x-opt-sequence-number annotation
             // so PeekMessage can return the correct sequence info to the SDK.
             var encoded = amqpMessage.Encode();

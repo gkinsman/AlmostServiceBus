@@ -102,12 +102,16 @@ public sealed class TopicEntity
 
     /// <summary>
     /// Publishes a message to all subscriptions, cloning the message once per subscription.
+    /// The topic's default time-to-live caps the message's; each subscription then caps it again.
     /// </summary>
     public void Publish(BrokeredMessage message)
     {
         foreach (var subscription in _subscriptions.Values)
         {
-            subscription.DeliverMessage(message.Clone());
+            var copy = message.Clone();
+            if (DefaultMessageTimeToLive < copy.EffectiveTimeToLive)
+                copy.EffectiveTimeToLive = DefaultMessageTimeToLive;
+            subscription.DeliverMessage(copy);
         }
     }
 }

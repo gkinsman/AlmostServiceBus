@@ -36,7 +36,29 @@ public sealed class BrokeredMessage
 
     public DateTimeOffset? ScheduledEnqueueTimeUtc { get; set; }
 
+    /// <summary>The time-to-live the sender set. Peek reports this one, as real Service Bus does.</summary>
     public TimeSpan TimeToLive { get; set; } = TimeSpan.MaxValue;
+
+    private TimeSpan? _effectiveTimeToLive;
+
+    /// <summary>
+    /// <see cref="TimeToLive"/> capped by the default time-to-live of every entity the message has
+    /// been accepted by (topic, then subscription or queue). Received messages report this one.
+    /// </summary>
+    public TimeSpan EffectiveTimeToLive
+    {
+        get => _effectiveTimeToLive ?? TimeToLive;
+        set => _effectiveTimeToLive = value;
+    }
+
+    /// <summary>
+    /// When the broker expires the message: <see cref="EnqueuedTimeUtc"/> plus
+    /// <see cref="EffectiveTimeToLive"/>, stamped by the queue that accepts it. Never set on
+    /// dead-letter queues, whose messages don't expire.
+    /// </summary>
+    public DateTimeOffset ExpiresAtUtc { get; set; } = DateTimeOffset.MaxValue;
+
+    public bool IsExpired(DateTimeOffset now) => now >= ExpiresAtUtc;
 
     public Dictionary<string, object> ApplicationProperties { get; set; } = [];
 
@@ -108,6 +130,7 @@ public sealed class BrokeredMessage
             To = To,
             ScheduledEnqueueTimeUtc = ScheduledEnqueueTimeUtc,
             TimeToLive = TimeToLive,
+            _effectiveTimeToLive = _effectiveTimeToLive,
             // LockToken intentionally NOT copied — each queue assigns a fresh one on Enqueue.
             // Copying it causes duplicate delivery tags when the same message is cloned
             // to multiple subscriptions forwarding to the same queue.
