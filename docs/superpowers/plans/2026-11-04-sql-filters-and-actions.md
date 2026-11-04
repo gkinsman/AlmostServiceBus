@@ -2,609 +2,633 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the regex SQL handling in `RuleEntity` with a full Superpower-based implementation of the Service Bus SQL grammar for filters, rule actions and parameters. Validate rules on every creation path (in code, HTTP admin, AMQP rule manager), and prove behaviour against real Azure with a shared case table.
+**Goal:** Replace the regex SQL handling in `RuleEntity` with a Superpower-based implementation of the Service Bus SQL grammar for filters, rule actions and parameters. Rules are validated on every creation path (in code, HTTP admin, AMQP rule manager). Behaviour matches real Azure, as recorded on 2026-11-04.
 
-**Architecture:** A Superpower tokenizer and token-list grammar produce an immutable AST. `SqlFilter` and `SqlRuleAction` compile an expression plus its parameters once, and evaluate it against a `BrokeredMessage` using three-valued logic. Every behaviour that the docs leave ambiguous lives as a named constant in `SqlSemantics`, so the Azure compat run (Task 13) changes one file. A JSON case table, shared by the unit suite and the conformance suite, holds Azure's answers.
+**Architecture:**
+- A Superpower tokenizer and two token-list grammars (predicates for filters, scalar expressions for actions) produce an immutable AST.
+- A binder checks semantics at creation: system properties, parameters, functions and literals.
+- `SqlFilter` and `SqlRuleAction` evaluate lazily, left to right, over CLR values. They track a distinct *Missing* state, follow C# operator rules, and throw `SqlEvaluationException` with Azure's messages.
+- A JSON case table seeded from the Azure probe drives a broker-level unit runner and a conformance suite that re-checks Azure.
 
-**Tech Stack:** .NET 10, Superpower 3.2.1, AMQPNetLite 2.5.5, xUnit 2.9.3, Azure.Messaging.ServiceBus 7.21.0 (tests), Node `@azure/service-bus` and Java `azure-messaging-servicebus` (smoke scripts).
+**Tech Stack:** .NET 10, Superpower 3.2.1, AMQPNetLite 2.5.5, xUnit 2.9.3, Azure.Messaging.ServiceBus 7.21.0 (tests), Microsoft.Extensions.Configuration.UserSecrets (Conformance.Tests).
 
-**Spec:** `docs/superpowers/specs/2026-11-04-sql-filters-and-actions-design.md`. Read it before starting any task. Its "Questions the compat run settles" list is the source of every `SqlSemantics` constant.
+**Spec:** `docs/superpowers/specs/2026-11-04-sql-filters-and-actions-design.md`.
+- **Its "Decisions log — confirmed against real Azure" section is the authority for every behaviour.** Quote it; don't re-derive it.
+- The raw probe output is in `docs/superpowers/specs/sql-azure-probe/round1.md`–`round3.md`. The probe program is `probe-program.cs.txt` in the same folder.
 
 ## Global Constraints
 
-- Parser library: **Superpower 3.2.1**, added to `src/AlmostServiceBus.Core/AlmostServiceBus.Core.csproj`. No Sprache, and no hand-written parser.
-- **No fallback, ever.** No code path may turn an unparseable or unevaluable expression into a match, or into a silent no-match.
-- Parse errors carry the **position** (absolute index, line, column) and the **expected tokens**.
-- Filter and action expressions longer than **1024** characters are rejected at creation. This mirrors the SDK's `MaximumSqlRuleFilterStatementLength` / `MaximumSqlRuleActionStatementLength`.
-- **Azure connection string.** It is resolved by one shared helper: first the `ASB_CONNECTION_STRING` environment variable, then .NET user secrets with id `almostservicebus-conformance` and key `ASB_CONNECTION_STRING`. It never touches git. Record mode is turned on by `ASB_COMPAT_RECORD=1`.
-- `tests/client-sdk-smoke` must not change how it gets its connection: it reads `ASB_CONNECTION_STRING` to override the emulator, which is why the secret isn't a global environment variable.
-- Commit locally on `fleet/session-c54d42a2`. **Don't push, open a PR or comment on issue #192.**
-- `TreatWarningsAsErrors` is on, solution-wide. Match the surrounding comment density and naming.
-- Every commit message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- Test command for all suites (from CLAUDE.md): `dotnet test AlmostServiceBus.sln --filter "FullyQualifiedName!~RealAsbConformanceTests" --verbosity quiet`. The three `RealAsbTopicRequeueReproTest` cases show as failed without `ASB_CONNECTION_STRING`; that is pre-existing and expected.
+- **Parser library:** Superpower 3.2.1 in `src/AlmostServiceBus.Core/AlmostServiceBus.Core.csproj`. No Sprache, and no hand-written parser.
+- **No fallback, ever.** Every expression either is rejected at creation, evaluates to true / false / unknown, or raises `SqlEvaluationException`, which the broker turns into a dead-letter (or a drop) exactly as Azure does. Nothing becomes match-all.
+- **Error text copies Azure's wording** (decisions log, Q10), including position and expected tokens: `There was an error parsing the SQL expression. [Token line={l}, column={c}, Token in error={t}, Additional details={d}]`. The line is 1-based and the column is 0-based. End of input is `line=2, column=0`.
+- **Length limit:** expressions longer than **1024** characters are rejected at creation (the SDK's client-side limit).
+- **Azure connection string:** one helper, `RealAsbConnection.ConnectionString`. It checks the `ASB_CONNECTION_STRING` environment variable first, then user secrets id `almostservicebus-conformance` with key `ASB_CONNECTION_STRING`. Never print it or put it in git. Compat runs use a unique `sqlcompat-<random>` topic and delete it in `finally`. Record mode is `ASB_COMPAT_RECORD=1`.
+- **`tests/client-sdk-smoke`:** don't change how it obtains its connection string.
+- **Git:** commit locally on `fleet/session-c54d42a2`. **Don't push, open a PR or comment on #192.** Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- **Code style:** `TreatWarningsAsErrors` is on. Match the surrounding comment density and naming.
+- **Full test command:** `dotnet test AlmostServiceBus.sln --filter "FullyQualifiedName!~RealAsbConformanceTests" --verbosity quiet`. `RealAsbTopicRequeueReproTest` shows 3 failures without Azure; that is pre-existing. Once Task 12 lands, that test resolves Azure through `RealAsbConnection`, so it may run for real when the secret is present.
 
 ## Review Focus
 
-1. **Framework-generated filters must still work.** NServiceBus writes `[NServiceBus.EnclosedMessageTypes] LIKE '%Ns.MyEvent%'` (a bracketed name containing dots). Wolverine writes `NOT EXISTS(user.ignore) OR user.ignore NOT LIKE 'true'`. MassTransit passes user SQL straight through. These are table cases in Task 7, and the CI framework suites must stay green.
-2. **AMQP property values that aren't C# primitives.** A message property can arrive as `ulong`, `uint`, `ushort`, `sbyte`, `char`, `float`, `byte[]`, `Amqp.Types.Symbol`, or a `DateTime` with `Kind=Local`. Each must normalise to a defined SQL type, or be treated as an opaque value that compares unknown. It must never throw. The test lives in Task 4.
-3. **Culture.** Under `CultureInfo.CurrentCulture = de-DE`, the literal `1.5` parses as one and a half, and a numeric string property compares with invariant rules. The test lives in Task 2 and Task 4.
-4. **Deep nesting and length.** A 1024-character expression of nested parentheses parses without a stack overflow. A 1025-character expression is rejected at creation with a clear message. The test lives in Task 2.
-5. **A rule changed while messages are being published.** Replacing a rule with `AddOrUpdateRule` while another thread publishes must not throw, and must not evaluate a torn half-old/half-new rule. The compiled filter and action are immutable and swapped as one reference. The test lives in Task 6.
+1. **Framework filters.** NServiceBus `[NServiceBus.EnclosedMessageTypes] LIKE '%Ns.MyEvent%'`, Wolverine `NOT EXISTS(user.ignore) OR user.ignore NOT LIKE 'true'`, and MassTransit's pass-through SQL must keep routing exactly as on Azure. They are already confirmed table cases (`fw.*`); the CI framework suites must stay green (Task 13).
+2. **SDK-encoded property types arriving over AMQP.** The .NET SDK sends `TimeSpan`, `Uri` and `DateTimeOffset` application properties as AMQP described values (`com.microsoft:timespan`, `com.microsoft:uri`, `com.microsoft:datetime-offset`). Filters must see them as the CLR types, as Azure does (it reports `System.TimeSpan` and `System.Uri` in its errors). A `SET` that produces one of these types must be re-encoded the same way, so the message still serialises. Tests go in Task 4 (decode) and Task 6 (re-encode on delivery through the SDK).
+3. **Culture.** Under `de-DE`, the literal `1.5` is one and a half, and `ToString()` used by `LIKE` and string concatenation uses invariant formatting (`d LIKE '1.5'` matches `1.5d`). Tests go in Task 2 and Task 5.
+4. **Nesting and length.** 500 nested parentheses parse without a stack overflow. 1025 characters are rejected. Test in Task 2.
+5. **A rule replaced during a publish.** No exception, and no torn rule: the compiled form is one immutable reference. Test in Task 6.
 
 ---
 
 ## File Structure
 
-New, under `src/AlmostServiceBus.Core/Broker/Sql/` (namespace `AlmostServiceBus.Core.Broker.Sql`):
+New, in `src/AlmostServiceBus.Core/Broker/Sql/` (namespace `AlmostServiceBus.Core.Broker.Sql`):
 
 | File | Responsibility |
 |---|---|
 | `SqlToken.cs` | Token kinds |
-| `SqlTokenizer.cs` | Superpower tokenizer, from text to `TokenList<SqlToken>` |
-| `SqlAst.cs` | AST records for expressions and action statements |
-| `SqlGrammar.cs` | Combinators: `ParseFilter`, `ParseAction` |
-| `SqlSyntaxException.cs` | `SqlSyntaxException` (creation-time) and `SqlEvaluationException` (runtime) |
-| `SqlSemantics.cs` | Named constants for every compat-decided behaviour |
-| `SqlValues.cs` | Value normalisation, comparison, arithmetic, `LIKE` regex |
-| `SqlSystemProperties.cs` | `sys.` name → getter/setter on `BrokeredMessage` |
-| `SqlEvaluator.cs` | Evaluates the AST against a `SqlEvaluationContext` |
-| `SqlFilter.cs` | Compiled filter: parse, bind parameters, `Matches` |
-| `SqlRuleAction.cs` | Compiled action: parse, bind parameters, `Apply` |
+| `SqlTokenizer.cs` | Superpower tokenizer |
+| `SqlAst.cs` | AST records |
+| `SqlGrammar.cs` | `ParseFilter` (predicate grammar) and `ParseAction` (statements over scalar expressions) |
+| `SqlErrors.cs` | `SqlSyntaxException`, `SqlEvaluationException`, and Azure message builders |
+| `SqlBinder.cs` | Creation-time semantic checks: system properties, settable targets, parameters, functions, `LIKE` literal patterns |
+| `SqlSystemProperties.cs` | Readable and settable `sys.` names: getters, setters, the sender-preset list |
+| `SqlValues.cs` | Missing sentinel, C# operator table, conversions, `LIKE`, AMQP described-value decode/encode |
+| `SqlEvaluator.cs` | Lazy evaluation of AST nodes |
+| `SqlFilter.cs` | Compiled filter |
+| `SqlRuleAction.cs` | Compiled action |
 
 New elsewhere:
 
 | File | Responsibility |
 |---|---|
 | `src/AlmostServiceBus.Core/Amqp/RuleManagementHandler.cs` | AMQP `add-rule` / `remove-rule` / `enumerate-rules` |
-| `tests/shared/sql-compat-cases.json` | The shared case table (Azure's answers) |
-| `tests/shared/SqlCompatCases.cs` | Table model, loader, typed values and record-mode writer (no SDK or Core references) |
-| `tests/AlmostServiceBus.Tests/Broker/Sql/*Tests.cs` | Tokenizer/grammar, values, evaluator, table runner and issue-repro tests |
+| `tests/shared/sql-compat-cases.json` + `tests/shared/SqlCompatCases.cs` | Shared table (no SDK or Core references) |
+| `tests/AlmostServiceBus.Tests/Broker/Sql/*Tests.cs` | Unit tests |
 | `tests/AlmostServiceBus.SdkIntegration.Tests/SqlRuleTests.cs` | SDK end-to-end tests |
-| `tests/AlmostServiceBus.Conformance.Tests/SqlCompatTests.cs` | Table against emulator and Azure, diff, record mode |
+| `tests/AlmostServiceBus.Conformance.Tests/RealAsbConnection.cs` | The connection-string helper |
+| `tests/AlmostServiceBus.Conformance.Tests/SqlCompatTests.cs` | Table against emulator and Azure |
 
 Modified:
-- `Broker/RuleEntity.cs`, `Broker/SubscriptionEntity.cs`
+- `Broker/RuleEntity.cs`, `Broker/SubscriptionEntity.cs`, `Broker/QueueEntity.cs` (`DeadLetterOnArrival` gains a `source` argument)
 - `Management/AtomXmlReader.cs`, `Management/AtomXmlWriter.cs`, `Management/ManagementApiEndpoints.cs`
 - `Amqp/ManagementLinkEndpoint.cs`
-- `tests/client-sdk-smoke/node/smoke.mjs`, `tests/client-sdk-smoke/java/.../Smoke.java`
-- `CHANGELOG.md`, `CLAUDE.md`, and the spec's decisions log
+- `RealAsbConformanceTests.cs`, `TopicRequeueReproTest.cs`
+- `CHANGELOG.md`, `CLAUDE.md`, `README.md`
 
-Deleted: `Broker/SqlFilterExpression.cs` and `tests/AlmostServiceBus.Tests/Broker/SqlFilterExpressionTests.cs`, both from WIP commit `38a31bd`. Port that test file's cases into Task 7's table before deleting it.
+Deleted: `Broker/SqlFilterExpression.cs` and `tests/AlmostServiceBus.Tests/Broker/SqlFilterExpressionTests.cs` (WIP commit `38a31bd`).
 
 ---
 
-### Task 1: Tokenizer and syntax exception
+### Task 1: Tokenizer and error types
 
 **Files:**
-- Modify: `src/AlmostServiceBus.Core/AlmostServiceBus.Core.csproj` (add `<PackageReference Include="Superpower" Version="3.2.1" />`)
-- Create: `Broker/Sql/SqlToken.cs`, `Broker/Sql/SqlTokenizer.cs`, `Broker/Sql/SqlSyntaxException.cs`
+- Modify: `AlmostServiceBus.Core.csproj` (add `Superpower` 3.2.1)
+- Create: `Sql/SqlToken.cs`, `Sql/SqlTokenizer.cs`, `Sql/SqlErrors.cs`
 - Test: `tests/AlmostServiceBus.Tests/Broker/Sql/SqlTokenizerTests.cs`
 
 **Interfaces:**
 - Produces:
   - `public enum SqlToken { None, Identifier, QuotedIdentifier, BracketedIdentifier, Parameter, String, Integer, Decimal, Float, Dot, Comma, LParen, RParen, Semicolon, Equal, NotEqual, Less, LessOrEqual, Greater, GreaterOrEqual, Plus, Minus, Star, Slash, Percent }`
-    - Keywords are **not** separate tokens. They are `Identifier` tokens, matched case-insensitively by the grammar.
-    - `NotEqual` covers both `<>` and `!=`.
-  - `public static class SqlTokenizer { public static TokenList<SqlToken> Tokenize(string text); }`. It throws `SqlSyntaxException` on bad input.
-  - `public sealed class SqlSyntaxException : FormatException`
-    - Constructor: `(string message, int position, int line, int column, IReadOnlyList<string> expected)`.
-    - Properties: `int Position`, `int Line`, `int Column`, `IReadOnlyList<string> Expected`.
-    - `Message` includes `"at line {line}, column {column}"` and, when `Expected` is non-empty, `"expected {a}, {b} or {c}"`.
-  - `public sealed class SqlEvaluationException(string message) : Exception(message)`, in the same file.
+    - Keywords are `Identifier` tokens, matched case-insensitively by the grammar.
+    - Regular identifiers are a Unicode letter or `_`, then letters, digits or `_`.
+    - `Decimal` is `digits.digits` (no `.5`, no `1.`). `Float` has an exponent with digits (`1e1`, `1.5E-3`). `1e` is an error.
+  - `public static class SqlTokenizer { public static TokenList<SqlToken> Tokenize(string text); }`
+  - `public sealed class SqlSyntaxException : ArgumentException`
+    - Properties: `int Line` (1-based), `int Column` (0-based), `string TokenInError`, `string Details`, `IReadOnlyList<string> Expected`.
+    - `Message` is exactly `There was an error parsing the SQL expression. [Token line={Line}, column={Column}, Token in error={TokenInError}, Additional details={Details}]`.
+    - `static SqlSyntaxException Semantic(string message)` builds a creation-time semantic rejection whose `Message` is the given Azure text verbatim, with `Line`/`Column` set to `0`.
+  - `public sealed class SqlEvaluationException(string message) : Exception(message)`
+  - `internal static class SqlErrorText` holds message builders for every Azure string quoted in the decisions log. Examples:
+    - `OperatorNotApplicable(string op, Type left, Type right)` gives `Operator '==' cannot be applied to operands of type 'string' and 'long'`, using the C# keyword/full-name rule from Q5.
+    - `UnknownGettable(name)`, `UnknownSettable(name)`, `CannotRemoveSystem(name)`, `UnboundParameter(name)`, `UnusedParameter(name)`, `UnknownFunction(name)`, `FunctionArity(name, expected, actual)`, `ScopeNotSupported(scope)`, `Int64Overflow`.
+    - Multi-line Azure messages use `"\r\nParameter name: …"`, as received.
+- Tokenizer error details use Azure's wording: `Unrecognized character. '{c}'`, and `The string ({rest}) was not terminated properly.`, where `rest` is the remaining text after the opening quote.
 
-- [ ] **Step 1: Write the failing tests** in `SqlTokenizerTests`:
+- [ ] **Step 1: Write the failing tests.**
   - `Tokenize("user.[message-type] IN ('a''b', 1.5e3)")` yields these kinds: `Identifier, Dot, BracketedIdentifier, Identifier, LParen, String, Comma, Float, RParen`.
-  - `"\"a\"\"b\""` yields a single `QuotedIdentifier` whose span text is `"\"a\"\"b\""`. Unescaping happens in the grammar.
-  - `"@p1"` yields `Parameter`. `"<> != <= >= ="` yields `NotEqual, NotEqual, LessOrEqual, GreaterOrEqual, Equal`.
-  - `"42 4.2 .5 1E-3"` yields `Integer, Decimal, Decimal, Float`.
-  - `Tokenize("a = 'open")` throws `SqlSyntaxException` with `Column == 5`.
-  - `Tokenize("a = #")` throws with `Column == 5`.
-- [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.Tests --filter FullyQualifiedName~SqlTokenizerTests`. Expected: build fails (types missing).
-- [ ] **Step 3: Implement.** Use `TokenizerBuilder<SqlToken>` with `.Ignore(Span.WhiteSpace)`.
-  - Strings and delimited identifiers are custom `TextParser<TextSpan>`s: an opening delimiter, then a run of (doubled closer or any non-closer), then the closer.
-  - Identifiers are `[A-Za-z_][A-Za-z0-9_]*`. Match longest operators first.
-  - Convert Superpower's `Result` error into `SqlSyntaxException`, using `ErrorPosition` (1-based line and column) and `Expectations`.
-- [ ] **Step 4: Run** the same command. Expected: PASS.
-- [ ] **Step 5: Commit** with `feat(sql): Superpower tokenizer for Service Bus SQL`.
+  - `"café"` yields a single `Identifier`. `"@p1"` yields `Parameter`. `"<> != <= >= ="` yields `NotEqual, NotEqual, LessOrEqual, GreaterOrEqual, Equal`.
+  - `"--x"` yields `Minus, Minus, Identifier` (there are no comments).
+  - These throw `SqlSyntaxException`, each asserting `Line`, `Column` and `Details`:
+    - `"a = #"`: line 1, column 4, details `Unrecognized character. '#'`.
+    - `"a$b"`: column 1, `Unrecognized character. '$'`.
+    - `"a = 'red"`: line 2, column 0, details starting `The string (red`.
+    - `"n = .5"`, `"n = 1."`, `"n = 1e"`: each a syntax error at the offending token.
+- [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.Tests --filter FullyQualifiedName~SqlTokenizerTests`. Expected: build fails.
+- [ ] **Step 3: Implement** with `TokenizerBuilder<SqlToken>` and `.Ignore(Span.WhiteSpace)`.
+  - Strings and delimited identifiers use custom `TextParser<TextSpan>`s with doubled-closer escapes.
+  - Match the longest operator first.
+- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 5: Commit** with `feat(sql): Superpower tokenizer and Azure-shaped syntax errors`.
 
-### Task 2: AST and filter grammar
+### Task 2: AST and grammars
 
 **Files:**
-- Create: `Broker/Sql/SqlAst.cs`, `Broker/Sql/SqlGrammar.cs`
-- Test: `tests/AlmostServiceBus.Tests/Broker/Sql/SqlGrammarTests.cs`
+- Create: `Sql/SqlAst.cs`, `Sql/SqlGrammar.cs`
+- Test: `tests/AlmostServiceBus.Tests/Broker/Sql/SqlGrammarTests.cs`, `SqlGrammarErrorTests.cs`; add a test helper `SqlAstPrinter` in the test project
 
 **Interfaces:**
-- Consumes: `SqlTokenizer.Tokenize`, `SqlSyntaxException` (Task 1).
 - Produces (`SqlAst.cs`):
   ```csharp
-  public enum SqlScope { Unscoped, User, System }
+  public enum SqlScope { User, System }                                    // unprefixed => User (Q1)
   public abstract record SqlExpr;
-  public sealed record SqlLiteral(object? Value) : SqlExpr;            // long, double, string, bool, or null
+  public sealed record SqlLiteral(object? Value) : SqlExpr;                // long, double, string, bool, or null
   public sealed record SqlPropertyRef(SqlScope Scope, string Name) : SqlExpr;
-  public sealed record SqlParameterRef(string Name) : SqlExpr;         // name without '@'
+  public sealed record SqlParameterRef(string Name) : SqlExpr;             // includes the '@'
   public enum SqlUnaryOp { Not, Negate, Plus }
   public sealed record SqlUnary(SqlUnaryOp Op, SqlExpr Operand) : SqlExpr;
   public enum SqlBinaryOp { Or, And, Equal, NotEqual, Less, LessOrEqual, Greater, GreaterOrEqual, Add, Subtract, Multiply, Divide, Modulo }
   public sealed record SqlBinary(SqlBinaryOp Op, SqlExpr Left, SqlExpr Right) : SqlExpr;
   public sealed record SqlLike(SqlExpr Operand, SqlExpr Pattern, SqlExpr? Escape, bool Negated) : SqlExpr;
   public sealed record SqlIn(SqlExpr Operand, IReadOnlyList<SqlExpr> Items, bool Negated) : SqlExpr;
-  public sealed record SqlIsNull(SqlExpr Operand, bool Negated) : SqlExpr;
+  public sealed record SqlIsNull(SqlPropertyRef Property, bool Negated) : SqlExpr;  // property only
   public sealed record SqlExists(SqlPropertyRef Property) : SqlExpr;
-  public sealed record SqlFunctionCall(string Name, IReadOnlyList<SqlExpr> Arguments) : SqlExpr; // "newid" | "property", lower-case
+  public sealed record SqlFunctionCall(string Name, IReadOnlyList<SqlExpr> Arguments) : SqlExpr; // name lower-cased
   public abstract record SqlStatement;
   public sealed record SqlSet(SqlPropertyRef Target, SqlExpr Value) : SqlStatement;
   public sealed record SqlRemove(SqlPropertyRef Target) : SqlStatement;
   ```
 - Produces (`SqlGrammar.cs`):
-  - `public static class SqlGrammar { public static SqlExpr ParseFilter(string text); }`. It parses an expression to end of input, or throws `SqlSyntaxException`. It also throws for an empty or whitespace-only `text`, or for text longer than 1024 characters (message: `"SQL expression exceeds the maximum length of 1024 characters"`).
-  - Records use `IReadOnlyList`, so value equality on lists does not hold. Tests should compare with a helper that prints the AST (e.g. a `SqlAstPrinter.Print(SqlExpr) => string` in the test project), not with `Assert.Equal` on records.
+  - `public static SqlExpr ParseFilter(string text)`
+  - `public static IReadOnlyList<SqlStatement> ParseAction(string text)`
+- **Predicate grammar** (filters):
+  - `or := and (OR and)*`, `and := not (AND not)*`, `not := NOT not | primaryPredicate`.
+  - `primaryPredicate := '(' or ')' | EXISTS '(' identifier ')' | property IS [NOT] NULL | scalar compOp scalar | scalar [NOT] LIKE scalar [ESCAPE scalar] | scalar [NOT] IN '(' scalar (',' scalar)* ')'`.
+  - **A bare scalar is not a predicate** (Q5: `b`, `TRUE`, `NULL` and `NOT FALSE` are rejected).
+  - Parenthesised predicate versus parenthesised scalar: try the predicate form first, then backtrack (`.Try()`).
+- **Scalar grammar:**
+  - `additive := mult (('+'|'-') mult)*`, `mult := unary (('*'|'/'|'%') unary)*`, `unary := ('-'|'+') unary | primary`.
+  - `primary := literal | parameter | function '(' args ')' | property | '(' additive ')'`.
+- **Property:**
+  - `sys.` or `user.` followed by one regular or delimited identifier, or one unprefixed regular or delimited identifier.
+  - An unprefixed regular identifier followed by `.` is a syntax error with details `The specified scope ({first}) is not supported.` at the second part's position (decisions log, grammar facts).
+  - `user.a.b` is a syntax error at the second `.`.
+  - Reserved words (`AND OR NOT IN LIKE ESCAPE IS NULL EXISTS TRUE FALSE SET REMOVE`) can't be regular identifiers. `sys` and `user` alone are ordinary user names.
+- **Literals:**
+  - `Integer` is parsed as `long`. If it overflows, the error is a syntax error with details `Value was either too large or too small for an Int64.`
+  - `Decimal` and `Float` are parsed as `double` with `CultureInfo.InvariantCulture`.
+- **Action grammar:** `statement (';' statement)* ';'? EOF`, where `statement := SET property '=' scalar | REMOVE property`. Comparisons, `LIKE` and `IN` are not allowed in a scalar.
+- **Expected tokens.** Use `.Named(...)` names in Azure's style for "expecting" lists: `')'`, `AND`, `OR`, `LIKE`, `IN`, `NULL`, `NOT`, `'='`, `SET`, `REMOVE`, `EOF`, `IDENTIFIER`, `DELIMITED_IDENTIFIER`.
+  - Details format: `syntax error, unexpected {TOKENCLASS}[, expecting {a}, or {b}]`.
+  - `TOKENCLASS` is `EOF`, `IDENTIFIER`, `STRING`, `EQ`, `IN`, `IS`, `'.'`, `')'`, `'*'` or `'+'`. Use the token's quoted text for single characters, and an upper-case keyword name for keywords.
+  - Exact "expecting" lists only need to match Azure where the probe recorded them (assert those). Elsewhere, any accurate list is acceptable.
+- Both entry points reject empty or whitespace-only text (a syntax error at `line=2, column=0`, `unexpected EOF`) and text over 1024 characters (`SqlSyntaxException.Semantic("The SQL expression exceeds the maximum length of 1024 characters.")`).
 
-- [ ] **Step 1: Write the failing tests** in `SqlGrammarTests`, as a `[Theory]` of expression and the expected printed AST. Use a fully parenthesised print, e.g. `(Or (Equal user:a 1) (In unscoped:b ['x','y']))`. Cases:
-  - **Precedence:** `a = 1 OR b = 2 AND c = 3` gives OR at the top. `NOT a = 1 AND b = 2` gives `(And (Not (Equal ..)) ..)`. `1 + 2 * 3` gives Add at the top. `-a * 2` gives `(Multiply (Negate a) 2)`.
-  - **Every grammar element from the spec's "Grammar to support":**
-    - `sys.Label`, `user.x`, `"q""x"` (name `q"x`), `[b]]x]` (name `b]x`), `user.[a-b]`, `sys."Label"`.
-    - Dotted regular names: `NServiceBus.EnclosedMessageTypes` is `unscoped:NServiceBus.EnclosedMessageTypes`; `[NServiceBus.EnclosedMessageTypes]` gives the same name.
-    - Literals `'it''s'`, `42` (long), `4.2` and `1e3` (double), `TRUE`, `false`, `NULL`.
-    - Each comparison operator, `LIKE 'a%' ESCAPE '!'`, `NOT LIKE`, `IN (1, 2)`, `NOT IN ('a')`, `IS NULL`, `IS NOT NULL`, `EXISTS(user.x)`, `newid()`, `property('x')`, `@p`.
-  - **Case-insensitive keywords:** `a in ('x') and not b is null`.
-  - **`SqlGrammarErrorTests`**, a `[Theory]` of expression, column and an expected-token substring:
-    - `"a = "` → column 5, `expected` contains `"value"`, or whatever Superpower names the expression parser. Pin whatever names the grammar assigns with `.Named(...)`: name the expression parser `"expression"` and the property parser `"property name"`.
-    - `"a IN ('x'"` → expects `")"`. `"a IN ()"` → expects `"expression"`. `"a NOT 1"` → expects `"LIKE"` or `"IN"`. `"[] = 1"` → error. `"a = 1 b"` → expects end of input.
-    - `"sys. = 1"` → expects `"property name"`. `"foo(1)"` → message contains `"unknown function 'foo'"`. `"newid(1)"` → message contains `"takes 0 arguments"`.
-  - **Review Focus 4:** a nesting test (`new string('(', 500) + "1=1" + new string(')', 500)`, which is 1006 chars) parses. A 1025-char expression throws with `"1024"` in the message.
-  - **Review Focus 3:** under `CultureInfo.CurrentCulture = new("de-DE")`, `ParseFilter("a = 1.5")` yields the literal `1.5d`. Restore the culture in `finally`.
+- [ ] **Step 1: Write the failing tests.**
+  - **`SqlGrammarTests`** (printed AST):
+    - Precedence: `a = 1 OR b = 2 AND c = 3`; `NOT a = 1 AND b = 2`; `1 + 2 * 3 = 7`; `-a * 2 = 1`; `NOT NOT a = 1`.
+    - Each identifier form and scope: `sys.Label`, `SYS.label`, `user.[a-b]`, `user."a""b"`, `[a]]b]`, `[]`, `café`, `sys`, `user`, `[NServiceBus.EnclosedMessageTypes]`.
+    - Each operator. `LIKE` with a property pattern and a property escape. `IN` with arithmetic and property items. `IS NULL`, `EXISTS(sys.Label)`, `newid()`, `property(which)`, `@p`.
+    - Keywords in mixed case.
+    - Actions: `SET a = 1;`, `SET user.b = user.n * 2; REMOVE sys.Label`, `set [a b] = @v`.
+  - **`SqlGrammarErrorTests`**: one row per rejected case in round1–round3 whose expression is syntax-only, asserting Azure's `Details` text.
+    - Strip the probe's `user.caseId = '…' AND (` wrapper and recompute the column from the unwrapped text.
+    - Cases include: `b` (bare), `TRUE`, `NULL`, `NOT FALSE`, `missing + 1 IS NULL`, `newid() IS NOT NULL`, `a.b = 'x'` (`The specified scope (a) is not supported.`), `user.a.b = 'x'`, `color IN ()`, `color === 'red'`, `in = 1`, `color NOT 'red'` (`syntax error, unexpected STRING, expecting LIKE, or IN`), `color IS 'red'` (`… expecting NULL, or NOT`), `EXISTS('x')` (`… expecting IDENTIFIER, or DELIMITED_IDENTIFIER`), `EXISTS(n + 1)`, `color /* c */ = 'red'`, `1abc = 'x'`, `n = 0x10`, `n = 99999999999999999999`, `color = N'red'`, `.5 = 0.5`.
+    - Action cases: `SET user.a` (`syntax error, unexpected EOF, expecting '='`), `UPDATE user.a = 1` (`… unexpected IDENTIFIER, expecting SET, or REMOVE`), `;`, `SET user.a = 1;;` (`… expecting SET, or REMOVE, or EOF`), `; SET user.a = 1`, `SET user.x = 1 = 1`, `SET user.x = color IN ('red')`, `SET user.x = color LIKE 'r%'`.
+  - **Review Focus 4:** 500 nested parentheses around `a = 1` parse. A 1025-character expression is rejected.
+  - **Review Focus 3:** under `de-DE`, `n = 1.5` gives the literal `1.5d`.
 - [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.Tests --filter "FullyQualifiedName~SqlGrammar"`. Expected: build fails.
-- [ ] **Step 3: Implement.**
-  - Build the combinators bottom-up: `primary` (literal, parameter, function call, property, or parenthesised expression via `Parse.Ref`), then `unary`, `multiplicative` and `additive` via `Parse.Chain`, then `predicate` (additive followed by an optional comparison, LIKE, IN or IS tail; `EXISTS` is handled here too), then `not`, `and` and `or` (via `Parse.Chain`). Finish with `.AtEnd()`.
-  - Use `Token.EqualToValueIgnoreCase(SqlToken.Identifier, "AND")` and the like for keywords. A regular identifier equal to a reserved word (`AND OR NOT IN LIKE ESCAPE IS NULL EXISTS TRUE FALSE`) is not a property name.
-  - A scope applies only when the first part is the regular identifier `sys` or `user` (case-insensitive) followed by `Dot`.
-  - Convert parse failures into `SqlSyntaxException`, mapping the token-list error position back to text line and column.
-- [ ] **Step 4: Run** the same command. Expected: PASS.
-- [ ] **Step 5: Commit** with `feat(sql): filter grammar and AST`.
+- [ ] **Step 3: Implement** the combinators. Map Superpower failures to `SqlSyntaxException`, converting the failing token's absolute position to 1-based line and 0-based column.
+- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 5: Commit** with `feat(sql): predicate and action grammars`.
 
-### Task 3: Action grammar
+### Task 3: Binder and system properties
 
 **Files:**
-- Modify: `Broker/Sql/SqlGrammar.cs`
-- Test: `tests/AlmostServiceBus.Tests/Broker/Sql/SqlActionGrammarTests.cs`
+- Create: `Sql/SqlBinder.cs`, `Sql/SqlSystemProperties.cs`
+- Test: `tests/AlmostServiceBus.Tests/Broker/Sql/SqlBinderTests.cs`
 
 **Interfaces:**
-- Produces: `public static IReadOnlyList<SqlStatement> ParseAction(string text)` on `SqlGrammar`. It applies the same empty-input and 1024-character rules as `ParseFilter`.
+- Produces `internal static class SqlSystemProperties`:
+  - `bool IsReadable(string name)` and `bool IsSettable(string name)` (case-insensitive).
+  - `object? Get(BrokeredMessage m, string name)`. Mapping, from decisions log Q3:
+    - `MessageId`, `CorrelationId`, `To`, `ReplyTo`, `SessionId`, `ReplyToSessionId`, `ContentType`, `PartitionKey`: the field of the same name.
+    - `Label`: `Subject`.
+    - `ViaPartitionKey`: `null`.
+    - `SequenceNumber` and `EnqueuedSequenceNumber`: `long SequenceNumber`.
+    - `DeliveryCount`: `int`, `DeliveryCount + 1` (filters run before the first delivery).
+    - `EnqueuedTimeUtc`: `DateTime` (UTC).
+    - `ScheduledEnqueueTimeUtc`: the UTC `DateTime`, or `DateTime.MinValue` when unset.
+    - `ExpiresAtUtc`: `EnqueuedTimeUtc + TimeToLive`, saturating at `DateTime.MaxValue`.
+    - `TimeToLive`: `TimeSpan`.
+    - `Size`: `long Body.Length`.
+    - `LockToken`: `Guid.Empty`.
+    - `LockedUntilUtc`: `DateTime.MinValue`.
+    - `DeadLetterSource`: `null`.
+    - `State`: the `MessageState` enum.
+    - `ForcePersistence`: `false`.
+  - Settable: `Label`, `To`, `ReplyTo`, `CorrelationId`, `ContentType`, `ReplyToSessionId`, `SessionId`, `PartitionKey`, `TimeToLive`, `ScheduledEnqueueTimeUtc`, `MessageId`.
+  - `IReadOnlySet<string> SenderPresetWins`, containing `To`, `ReplyTo`, `CorrelationId`, `ReplyToSessionId`, `MessageId` and `SessionId` (the quirk).
+  - `void Set(BrokeredMessage m, string name, object value)`. It converts `value` to the property's type with `SqlValues.ConvertTo`. Setting `SessionId` also sets `PartitionKey`.
+  - `MessageState` needs no change; Azure's error names `Microsoft.ServiceBus.Messaging.MessageState`, so special-case that type name in `SqlErrorText`.
+- Produces `internal static class SqlBinder`:
+  - `static void BindFilter(SqlExpr expr, IReadOnlyDictionary<string, object?> parameters)`
+  - `static void BindAction(IReadOnlyList<SqlStatement> statements, IReadOnlyDictionary<string, object?> parameters)`
+  - Both throw `SqlSyntaxException.Semantic(…)` with Azure text for:
+    - `sys.X` not readable, including `sys.Subject` (`UnknownGettable`).
+    - A `SET sys.X` target that isn't settable (`UnknownSettable`).
+    - An unknown function (`UnknownFunction`). Functions are `newid` (0 arguments) and `property` (1 argument).
+    - Wrong arity (`FunctionArity`).
+    - A `LIKE` pattern or escape that is a non-string literal. The message is Azure's text from round1 `r.like-nonstring-pattern`, verbatim.
+    - An unbound `@p` (`UnboundParameter`) and an unused parameter key (`UnusedParameter`). Parameter keys must start with `@`; compare case-insensitively.
+  - `REMOVE sys.X` is **not** rejected here; it fails at run time.
 
 - [ ] **Step 1: Write the failing tests:**
-  - `SET user.a = 1` gives one `SqlSet`.
-  - `SET a = b + 1; REMOVE sys.Label;` gives a `SqlSet` and then a `SqlRemove` (the trailing `;` is allowed).
-  - `set [x-y] = @p ; remove "z"` works (keywords are case-insensitive).
-  - The errors below throw `SqlSyntaxException` with a column:
-    - `SET a 1` expects `"="`.
-    - `REMOVE` expects `"property name"`.
-    - `SET a = 1 REMOVE b` expects `";"` or end of input.
-    - `UPDATE a = 1` expects `"SET"` or `"REMOVE"`.
-    - `;` is an error.
-- [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.Tests --filter FullyQualifiedName~SqlActionGrammarTests`. Expected: FAIL.
-- [ ] **Step 3: Implement** `statement = SET property '=' expression | REMOVE property`, and `action = statement (';' statement)* ';'? end`, reusing Task 2's property and expression parsers.
+  - Each rejection above, asserting the exact `Message`.
+  - `sys.label IS NULL` binds.
+  - `REMOVE sys.NoSuch` binds.
+  - A parameter key `"p"` with expression `@p` gives `UnboundParameter("@p")`.
+  - Keys `"@P"` and `@p` bind.
+  - `SqlSystemProperties.Get(new BrokeredMessage(), "ScheduledEnqueueTimeUtc")` is `DateTime.MinValue`.
+  - `Get(…, "DeliveryCount")` is `1`.
+  - `Set(m, "SessionId", "s")` also sets `PartitionKey`.
+- [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.Tests --filter FullyQualifiedName~SqlBinderTests`. Expected: FAIL.
+- [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** with `feat(sql): SET/REMOVE action grammar`.
+- [ ] **Step 5: Commit** with `feat(sql): creation-time binder and system property map`.
 
-### Task 4: Values, system properties and semantics constants
+### Task 4: Values (Missing, C# operator table, conversions, LIKE, AMQP types)
 
 **Files:**
-- Create: `Broker/Sql/SqlSemantics.cs`, `Broker/Sql/SqlValues.cs`, `Broker/Sql/SqlSystemProperties.cs`
+- Create: `Sql/SqlValues.cs`
 - Test: `tests/AlmostServiceBus.Tests/Broker/Sql/SqlValuesTests.cs`
 
 **Interfaces:**
-- Produces: `internal static class SqlSemantics`. Every member is a provisional doc-based answer, each with a `// compat Q<n>` comment naming the spec question it answers:
-  ```csharp
-  internal const SqlScope UnscopedNamesResolveTo = SqlScope.User;            // Q1
-  internal const bool SystemNamesIgnoreCase = true;                          // Q2
-  internal const bool UserNamesIgnoreCase = false;                           // Q2
-  internal const bool UnknownSystemPropertyIsSyntaxError = true;             // Q3
-  internal const bool StringEqualityIgnoresCase = false;                     // Q4
-  internal const bool LikeIgnoresCase = false;                               // Q4
-  internal const bool StringsAreOrdered = true;                              // Q4 (< > on strings)
-  internal const bool TypeMismatchIsEvaluationError = false;                 // Q5 (false => unknown)
-  internal const bool NumericStringsCoerce = false;                          // Q5 ("27" = 27)
-  internal const bool DivideByZeroIsEvaluationError = false;                 // Q6 (false => unknown)
-  internal const bool ActionStatementsSeeEarlierStatements = true;           // Q8
-  internal const bool OneCopyPerMatchingActionRule = false;                  // Q9
-  internal const bool EmptyExpressionIsSyntaxError = true;                   // Q11
-  internal const bool UnboundParameterIsSyntaxError = true;                  // Q12
-  internal const bool UnusedParameterIsSyntaxError = false;                  // Q12
-  internal const bool ParameterNamesIgnoreCase = true;                       // Q12 (SDK PropertyDictionary is OrdinalIgnoreCase)
-  ```
-  Notes on the provisional values:
-  - `NumericStringsCoerce = false` departs from the WIP behaviour, where `"27" = 27` was true. The docs give no coercion. Q5 settles it.
-  - `LikeIgnoresCase = false` departs from today's emulator. Q4 settles it.
-  - If the compat run disagrees with `EmptyExpressionIsSyntaxError`, empty expressions become match-all **only** if Azure does that.
-- Produces: `internal static class SqlValues`:
-  - `object? Normalize(object? value)` maps every input to one of these:
-    - Integer types (`sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`) become `long`. A `ulong` above `long.MaxValue` becomes `double`.
-    - `float`, `double` and `decimal` become `double`.
-    - `char` and `Amqp.Types.Symbol` become `string`.
-    - `DateTime` is converted to UTC. `DateTimeOffset` becomes its `UtcDateTime`.
-    - `bool`, `Guid`, `TimeSpan` and `string` stay as they are.
-    - `null` stays `null`.
-    - Anything else (e.g. `byte[]`) becomes `SqlValues.Opaque` (a private sealed class wrapping the value), which compares unknown with everything.
-  - `int? Compare(object? a, object? b, bool ordered)` normalises both sides and returns `null` (unknown) on a `NULL` operand or an incomparable pair. When `SqlSemantics.TypeMismatchIsEvaluationError` is true, an incomparable pair throws `SqlEvaluationException` instead.
-  - `object? Arithmetic(SqlBinaryOp op, object? a, object? b)` promotes `long`/`long` to `long` (with `checked`; overflow is unknown) and anything else numeric to `double`. Non-numeric operands are unknown. Division by zero follows `SqlSemantics`.
-  - `Regex BuildLikeRegex(string pattern, char? escape)` translates `%` to `.*` and `_` to `.`. The escape character escapes the next character. A pattern ending in the escape character throws `SqlSyntaxException`. Uses `RegexOptions.Singleline`, plus `IgnoreCase` per `SqlSemantics.LikeIgnoresCase`.
-- Produces: `internal static class SqlSystemProperties`:
-  - `bool IsKnown(string name)`, `bool IsWritable(string name)`.
-  - `object? Get(BrokeredMessage message, string name)`, `void Set(BrokeredMessage message, string name, object? value)`, `void Remove(BrokeredMessage message, string name)`.
-  - Names are matched per `SqlSemantics.SystemNamesIgnoreCase`. Mapping:
-    - `MessageId`, `CorrelationId`, `To`, `ReplyTo`, `SessionId`, `ReplyToSessionId`, `ContentType`, `PartitionKey`: the field of the same name.
-    - `Label` and `Subject`: `Subject`.
-    - `SequenceNumber` and `EnqueuedSequenceNumber`: `SequenceNumber`.
-    - `DeliveryCount`: `DeliveryCount`.
-    - `EnqueuedTimeUtc`: `EnqueuedTimeUtc.UtcDateTime`.
-    - `ScheduledEnqueueTimeUtc`: the UTC `DateTime`, or null.
-    - `ExpiresAtUtc`: `EnqueuedTimeUtc + TimeToLive`, saturating when TTL is `MaxValue`.
-    - `TimeToLive`: `TimeToLive`.
-    - `Size`: `(long)Body.Length`.
-  - Provisionally writable: `MessageId`, `CorrelationId`, `To`, `ReplyTo`, `Label`/`Subject`, `SessionId`, `ReplyToSessionId`, `ContentType`, `PartitionKey`, `TimeToLive`, `ScheduledEnqueueTimeUtc`. That answers Q7, and Task 13 settles it.
+- Produces `internal static class SqlValues`:
+  - `public static readonly object Missing`, a sentinel distinct from `null`.
+  - `object? FromMessage(object? raw)` decodes AMQP values for evaluation (Review Focus 2):
+    - A `DescribedValue` with descriptor `com.microsoft:timespan` (ticks as `long`) becomes `TimeSpan`.
+    - `com.microsoft:uri` (string) becomes `Uri`.
+    - `com.microsoft:datetime-offset` (ticks as `long`) becomes a UTC `DateTimeOffset`.
+    - `Symbol` becomes `string`. A `DateTime` with `Kind` other than Utc becomes Utc.
+    - Everything else is returned unchanged, so CLR types are kept (`int` stays `int`).
+  - `object? ToMessage(object? value)` is the inverse, for values written by actions.
+  - `object? Equal(object? a, object? b)` and `object? Compare(SqlBinaryOp op, object? a, object? b)`:
+    - Return `Missing` if either side is `Missing`.
+    - C# `null` semantics for `=` and `<>`: `null = null` is true, and `null = x` is false.
+    - `<`, `>` and the other orderings with `null` are false (C# lifted operators). This wasn't probed; document it.
+    - Otherwise apply the C# operator table from decisions log Q5, or throw `SqlEvaluationException(SqlErrorText.OperatorNotApplicable(…))`:
+      - Integer types combine using C# implicit conversions; `ulong` with a signed type throws.
+      - `float` widens to `double`. `decimal` with `double` throws. `char` with `string` throws.
+      - `bool` supports only `=` and `<>`.
+      - A `string` supports only `=` and `<>`, and only against a `string`.
+      - `Guid` against a `string` parses the string (`Guid.Parse`; a `FormatException` message becomes the evaluation error), and supports only `=` and `<>`.
+      - `DateTime`, `DateTimeOffset`, `TimeSpan`, `Uri` and enums compare only with their own type.
+  - `object? Arithmetic(SqlBinaryOp op, object? a, object? b)`:
+    - `Missing` propagates. `null` gives `null`.
+    - `+` with any `string` operand concatenates, using invariant `ToString()`.
+    - Numbers use C# promotion with `checked` integer arithmetic. Overflow throws `Arithmetic operation resulted in an overflow.`, and integer `/` or `%` by zero throws `Attempted to divide by zero.`.
+    - Doubles follow IEEE.
+    - Any other combination throws `OperatorNotApplicable`.
+  - `object? Negate(object? v)`.
+  - `object? ConvertTo(Type target, object? value)` is `Convert.ChangeType` with `InvariantCulture`, plus `TimeSpan` (`TimeSpan.Parse` from a string, `Invalid cast from 'System.Int64' to 'System.TimeSpan'.` from a number) and `Guid` (`Guid.Parse`). Exceptions surface as `SqlEvaluationException` carrying the .NET message.
+  - `bool? Like(object? value, object? pattern, object? escape)`:
+    - `Missing` in any argument gives `null` (unknown). A `null` value gives `false`.
+    - A non-string value uses invariant `ToString()`; a `bool` gives `"True"`/`"False"`.
+    - The escape character is the first character of the escape string. An empty escape means none, and a trailing escape character is ignored.
+    - `%` becomes `[^\n]*` and `_` becomes `[^\n]`. Case-sensitive.
+    - Cache compiled regexes per (pattern, escape) in a bounded `ConcurrentDictionary`.
 
-- [ ] **Step 1: Write the failing tests:**
-  - **`Normalize`** (Review Focus 2): a `[Theory]` over each input type in the list above, asserting the output type and value.
-    - `byte[]` compares unknown with `"x"` and with itself.
-    - `new Amqp.Types.Symbol("abc")` equals `"abc"`.
-    - A `DateTime` with `Kind=Local` equals its UTC counterpart.
-  - **`Compare`:**
-    - `(5L, 5.0d)` gives 0. `("a", "b", ordered: true)` gives a negative number. `(true, true, ordered: false)` gives 0. `(true, false, ordered: true)` gives null.
-    - `("27", 27L)` gives null (per `NumericStringsCoerce = false`). `(null, 1L)` gives null.
-    - `(Guid g, g)` gives 0.
-  - **`Arithmetic`:** `long.MaxValue + 1` gives null. `7 % 2` gives `1L`. `7 / 2` gives `3L`. `7 / 2.0` gives `3.5d`. `1 / 0` gives null.
-  - **Culture** (Review Focus 3): under `de-DE`, `Compare(1.5d, 1.5d)` gives 0.
-  - **`BuildLikeRegex`:**
-    - `'50!%' ESCAPE '!'` matches `"50%"` and not `"500"`.
-    - `'a_c'` matches `"abc"`. `'a%'` matches `"a\nb"`.
-    - `'abc!'` with escape `'!'` throws.
-  - **`SqlSystemProperties`:**
-    - `Get(msg, "label")` returns `Subject`.
-    - `IsKnown("NoSuch")` is false.
-    - `Set(msg, "Label", "x")` sets `Subject`.
-    - `IsWritable("SequenceNumber")` is false.
+- [ ] **Step 1: Write the failing tests**, a `[Theory]` per area with values taken from the probe:
+  - Ok cases: `int` 27 = `long` 27; `int` 7 vs `double` 7.0; `uint` 7 vs `long` -1 is greater; `byte`/`short`/`sbyte` 7 = 7L.
+  - Throwing cases, asserting the exact message:
+    - `float` 0.1f vs 0.1d is not equal, and does not throw.
+    - `decimal` vs `double`: `…'decimal' and 'double'`. `ulong` vs `long`: `…'ulong' and 'long'`. `char` vs `string`. `"27"` vs `27L`: `…'string' and 'long'`.
+    - `true` vs `1L`. `true < true`: `…'bool' and 'bool'`. `"a" < "b"`.
+    - `DateTime` vs `string`: `…'System.DateTime' and 'string'`. `TimeSpan`, `Uri` and `DateTimeOffset` vs `string`.
+    - `MessageState.Active` vs `0L`: `…'Microsoft.ServiceBus.Messaging.MessageState' and 'long'`.
+  - `Guid` vs its string is equal. `Guid` vs `"not-a-guid"` throws the Guid format message. `Guid > string` throws.
+  - Null: `null = null` is true, `"a" = null` is false, `null <> "x"` is true. `Missing = null` is `Missing`.
+  - Arithmetic:
+    - `7/2 = 3L`, `-7/2 = -3L`, `-7%3 = -1L`. `7/0` throws, and `7.0/0` is +∞.
+    - `long.MaxValue*2` throws. `int` 2 * 2147483647L is 4294967294L.
+    - `"red" + 1L` is `"red1"`.
+  - `ConvertTo`: `int` ← 1.5 is 2. `string` ← 5L is `"5"`. `bool` ← `"false"`. `int` ← 9999999999L throws `Value was either too large or too small for an Int32.`. `int` ← `"text"` throws `Input string was not in a correct format.`. `TimeSpan` ← 5L throws the cast message.
+  - `Like`:
+    - `"a\nb"` against `a%` is false. `'50!%' ESCAPE '!'` matches `"50%"`. `ESCAPE '!x'` behaves the same.
+    - `ESCAPE ''` treats `%` as a wildcard. `'a!' ESCAPE '!'` matches `"a"`.
+    - `true` matches `'True'`. `1.5d` matches `'1.5'` under `de-DE` (Review Focus 3). `27` matches `'2%'`.
+    - `'r.d'` doesn't match `"red"`, and `'[r]ed'` doesn't match `"red"`.
+  - `FromMessage`/`ToMessage` round-trip the three described types (Review Focus 2).
 - [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.Tests --filter FullyQualifiedName~SqlValuesTests`. Expected: FAIL.
-- [ ] **Step 3: Implement** the three classes. Use `CultureInfo.InvariantCulture` in every conversion.
+- [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** with `feat(sql): value semantics and system property map`.
+- [ ] **Step 5: Commit** with `feat(sql): Azure value semantics`.
 
-### Task 5: Evaluator, `SqlFilter`, `SqlRuleAction`, parameters
+### Task 5: Evaluator, `SqlFilter`, `SqlRuleAction`
 
 **Files:**
-- Create: `Broker/Sql/SqlEvaluator.cs`, `Broker/Sql/SqlFilter.cs`, `Broker/Sql/SqlRuleAction.cs`
+- Create: `Sql/SqlEvaluator.cs`, `Sql/SqlFilter.cs`, `Sql/SqlRuleAction.cs`
 - Test: `tests/AlmostServiceBus.Tests/Broker/Sql/SqlEvaluatorTests.cs`
 
 **Interfaces:**
-- Consumes: Tasks 2–4.
 - Produces:
-  - `public sealed record SqlEvaluationContext(BrokeredMessage Message, IReadOnlyDictionary<string, object?> Parameters)`. Parameter keys are stored without `@`, using a comparer chosen by `SqlSemantics.ParameterNamesIgnoreCase`.
-  - `internal static class SqlEvaluator { public static object? Evaluate(SqlExpr expr, SqlEvaluationContext ctx); }`. It returns `bool`, `long`, `double`, `string`, `DateTime`, `Guid`, `TimeSpan` or `null` (unknown / NULL).
-    - Three-valued `AND`/`OR`/`NOT`, as in the spec's "Semantics".
-    - An unscoped name resolves per `SqlSemantics.UnscopedNamesResolveTo`.
-    - `property(x)` evaluates `x`, and a string result is looked up as `SqlScope.Unscoped` (Task 13 confirms).
+  - `internal sealed class SqlEvaluationContext(BrokeredMessage message, IReadOnlyDictionary<string, object?> parameters)`.
+    - It resolves user properties case-insensitively: an exact key first, then a case-insensitive scan.
+    - Each value goes through `SqlValues.FromMessage`. An absent key gives `SqlValues.Missing`.
+    - It also holds `Dictionary<string, object?> SystemOverrides`, which actions write to; reads check it first.
+  - `internal static class SqlEvaluator`:
+    - `public static object? Evaluate(SqlExpr e, SqlEvaluationContext ctx)` returns `true`/`false`, a CLR value, `null`, or `SqlValues.Missing`. Predicates return `true`, `false` or `Missing` (Missing doubles as unknown).
+    - AND/OR evaluate left to right with three-valued logic and short-circuit: `false AND x` doesn't evaluate `x`, and `true OR x` doesn't evaluate `x`. `NOT Missing` is `Missing`.
+    - `IN` compares items in order and returns true at the first equal item. Otherwise it returns `Missing` if the operand or any item was `Missing`, and false if not.
+    - `IS NULL` is true when the value is `null` or `Missing`.
+    - `EXISTS(user.x)` is true when the key is present, even with a null value. `EXISTS(sys.X)` is always true.
+    - `property(e)` evaluates `e`. A string result is looked up as a user property; anything else is `Missing`.
     - `newid()` returns `Guid.NewGuid()`.
-    - `IN` returns true on any equal item. Otherwise it returns unknown if any comparison was unknown, else false.
-    - A non-literal `LIKE` pattern or escape is evaluated at runtime. A non-string result is unknown.
   - `public sealed class SqlFilter`:
-    - Members: `public string Expression { get; }`, `public IReadOnlyDictionary<string, object?> Parameters { get; }`, `public bool Matches(BrokeredMessage message)` (true only for `true`), and `public static SqlFilter Parse(string expression, IReadOnlyDictionary<string, object?>? parameters = null)`.
-    - `Parse` normalises parameter keys by stripping one leading `@`, and normalises values with `SqlValues.Normalize`.
-    - It walks the AST and throws `SqlSyntaxException` for an unbound `@p` (per `UnboundParameterIsSyntaxError`) and for an unknown `sys.` name (per `UnknownSystemPropertyIsSyntaxError`).
+    - Members: `string Expression`, `IReadOnlyDictionary<string, object?> Parameters`, `static SqlFilter Parse(string expression, IReadOnlyDictionary<string, object?>? parameters = null)` (grammar plus binder), and `bool Matches(BrokeredMessage m)`.
+    - `Matches` is true only for `true`. It may throw `SqlEvaluationException`.
   - `public sealed class SqlRuleAction`:
-    - Members: `Expression`, `Parameters` and `static Parse(...)`, with the same validation as `SqlFilter`. `Parse` also checks that every `SET`/`REMOVE` target is either a user property or `SqlSystemProperties.IsWritable`; anything else throws `SqlSyntaxException`.
-    - `public void Apply(BrokeredMessage message)` runs the statements in order. Each statement sees the earlier statements' effects per `SqlSemantics.ActionStatementsSeeEarlierStatements`. When that is false, the evaluation context reads a `Clone()` snapshot taken before the first statement.
-    - `SET user.x = <NULL>` stores no value: it removes `x`. Task 13 confirms this.
+    - Members: `string Expression`, `Parameters`, `static Parse(…)`, and `void Apply(BrokeredMessage copy, string ruleName)`.
+    - `Apply` sets `copy.ApplicationProperties["RuleName"] = ruleName` first, then runs the statements in order against a context over `copy`. On `SqlEvaluationException` it stops, leaving earlier effects in place, and rethrows.
+    - `SET user.x = v`: if `x` exists (case-insensitive key match), store `ToMessage(ConvertTo(existing.GetType(), v))` under the existing key; otherwise store `ToMessage(v)`. A `Missing` or `null` `v` stores `null`.
+    - `REMOVE user.x` removes the key if present.
+    - `REMOVE sys.X` throws `SqlEvaluationException(SqlErrorText.CannotRemoveSystem(X))`.
+    - `SET sys.X = null` does nothing.
+    - `SET sys.X = v` records `SystemOverrides[X] = converted`, so later statements read it. It writes through to `copy` unless `X` is in `SenderPresetWins` **and** the copy's original value was non-null. The original value is captured before the first statement.
 
-- [ ] **Step 1: Write the failing tests** in `SqlEvaluatorTests`:
-  - The issue's five expressions × `Created`/`Unrelated` (expected: true for `Created` only).
-  - Three-valued truth tables: `NULL AND FALSE` is false, `NULL OR TRUE` is true, `NOT NULL` is unknown.
-  - Missing property: `color <> 'red'` and `NOT (color = 'red')` don't match; `color IS NULL` matches.
-  - Parameters:
-    - `SqlFilter.Parse("a = @p", new Dictionary<string, object?> { ["@p"] = 5 })` matches `a = 5L`. A key of `"p"` is accepted too.
-    - `Parse("a = @missing")` throws `SqlSyntaxException`.
-  - `Parse("sys.Nope = 1")` throws.
-  - Action: `SqlRuleAction.Parse("SET user.b = user.a * 2; REMOVE user.a; SET sys.Label = 'routed'").Apply(msg)` with `a = 3L` leaves `b == 6L`, `a` absent and `Subject == "routed"`.
-  - Action: `Parse("SET sys.SequenceNumber = 1")` throws.
-  - Action: `Parse("SET user.x = @v", {["v"]="p"})` sets `x = "p"`.
-  - `newid()`: `newid() IS NOT NULL` matches.
-  - `property('a') = 1` matches `a = 1L`.
+- [ ] **Step 1: Write the failing tests.** Expected values come from the probe:
+  - The issue's five expressions × `Created`/`Unrelated`.
+  - Missing versus null:
+    - Missing `<> 'x'`, `NOT (missing = 'x')`, `missing NOT IN ('x')` and `NOT (missing < 1)` don't match.
+    - Null-valued `p`: `p = NULL`, `p <> 'x'`, `p NOT IN ('x')` and `p NOT LIKE 'x'` match.
+    - `NULL = NULL` matches. `color IN ('red', NULL)` and `color NOT IN ('x', NULL)` match.
+  - Laziness:
+    - `1 = 1 OR color > 1` matches. `color > 1 OR 1 = 1` throws. `1 = 0 AND color > 1` doesn't match.
+    - `color IN ('red', 1)` matches. `color IN (1, 'red')` throws. `missing > 'a'` doesn't match and doesn't throw.
+  - `property('COLOR') = 'red'` matches.
+  - `sys.To IS NULL`, `sys.To = NULL` and `sys.To <> 'x'` match when `To` is unset.
+  - `EXISTS(sys.To)` matches when `To` is unset. `sys.ScheduledEnqueueTimeUtc IS NULL` doesn't match.
+  - Actions:
+    - `SET user.b = user.n * 2` with `n` = int 3 gives `b` = 6L.
+    - `SET user.n = 5; SET user.m = user.n` with int `n` gives `n` = 5 (int) and `m` = 5 (int).
+    - `SET user.x = 1; SET user.x = 'a'` throws, and `x` stays 1L.
+    - `REMOVE user.color; SET user.x = user.color` gives `x` = null.
+    - `SET sys.To = 'new'; SET user.t = sys.To` with `To = "o"` gives `t = "new"` and `copy.To == "o"`.
+    - `SET sys.Label = 'new'` with `Subject = "o"` gives `"new"`.
+    - `SET sys.SessionId = 'new'` with `SessionId = "o"` leaves `SessionId` at `"o"` and sets `PartitionKey` to `"new"`.
+    - `SET sys.ReplyTo = NULL` makes no change.
+    - `SET user.RuleName = 'mine'` gives `RuleName = "mine"`.
+    - `REMOVE sys.Label` throws `A system property cannot be removed. The system property specified was 'Label'.\r\nParameter name: name`.
+  - Parameters: `SqlFilter.Parse("color = @P", {["@p"]="red"})` matches.
+  - Review Focus 3: under `de-DE`, `SET user.x = color + 1.5` gives `"red1.5"`.
 - [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.Tests --filter FullyQualifiedName~SqlEvaluatorTests`. Expected: FAIL.
-- [ ] **Step 3: Implement** the evaluator as a `switch` over the AST record types, then the two compiled classes.
+- [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** with `feat(sql): evaluator, compiled filters and actions with parameters`.
+- [ ] **Step 5: Commit** with `feat(sql): lazy evaluator, compiled filters and actions`.
 
-### Task 6: Broker integration (rules, validation, actions on delivery)
+### Task 6: Broker integration
 
 **Files:**
-- Modify: `Broker/RuleEntity.cs`, `Broker/SubscriptionEntity.cs`
-- Delete: `Broker/SqlFilterExpression.cs`, `tests/AlmostServiceBus.Tests/Broker/SqlFilterExpressionTests.cs`. First copy its cases into a scratch list for Task 7.
-- Test: `tests/AlmostServiceBus.Tests/Broker/SubscriptionEntityTests.cs` (keep the existing SQL tests; they must still pass) and a new `tests/AlmostServiceBus.Tests/Broker/RuleActionDeliveryTests.cs`
+- Modify: `Broker/RuleEntity.cs`, `Broker/SubscriptionEntity.cs`, `Broker/QueueEntity.cs`
+- Delete: `Broker/SqlFilterExpression.cs`, `tests/AlmostServiceBus.Tests/Broker/SqlFilterExpressionTests.cs`
+- Test: `tests/AlmostServiceBus.Tests/Broker/RuleDeliveryTests.cs`; keep `SubscriptionEntityTests`, updating its SQL cases to the Azure answers
 
 **Interfaces:**
-- Consumes: `SqlFilter`, `SqlRuleAction`, `SqlSyntaxException`, `SqlEvaluationException`.
-- Produces on `RuleEntity`:
-  - New properties: `public Dictionary<string, object?>? FilterParameters { get; set; }` and `public Dictionary<string, object?>? ActionParameters { get; set; }`.
-  - `public void Validate()` compiles the filter (when `FilterType == SqlFilter`) and the action (when `ActionExpression` is not null), or throws `SqlSyntaxException`.
-  - `public bool Matches(BrokeredMessage message)` keeps its signature. It may throw `SqlEvaluationException`. It throws `SqlSyntaxException` for a rule that was never validated and is invalid.
-  - `public bool HasAction { get; }` and `public void ApplyAction(BrokeredMessage message)`.
-  - Compiled objects are cached in one immutable `private sealed record Compiled(string? FilterText, IReadOnlyDictionary<...>? FilterParams, SqlFilter? Filter, string? ActionText, ..., SqlRuleAction? Action)`. The cache is a single reference that is rebuilt when any input changes.
-  - All regex code is deleted.
-- Produces on `SubscriptionEntity`:
-  - `AddOrUpdateRule` calls `rule.Validate()` before storing.
-  - `DeliverMessage` changes as follows:
-    1. Evaluate every rule, ordered by name with `StringComparer.OrdinalIgnoreCase`, so the result is deterministic.
-    2. If a rule throws `SqlEvaluationException`: when `DeadLetteringOnFilterEvaluationExceptions` is set, dead-letter the message on arrival with reason `"FilterEvaluationException"` and the exception message as the description (Task 13 replaces both with Azure's strings), then stop. Otherwise skip that rule.
-    3. With `SqlSemantics.OneCopyPerMatchingActionRule == false`, deliver one copy and apply every matching rule's action to it, in rule order.
-    4. When it is true, deliver one separate `Clone()` per matching rule that has an action, plus one unmodified copy if any matching rule has no action.
-    5. Actions run before the session-null check and before `Queue.Enqueue`. With `ForwardTo` set, `Queue.Enqueue` forwards the modified copy.
+- `RuleEntity` gains:
+  - `Dictionary<string, object?>? FilterParameters` and `ActionParameters` (keys include `@`).
+  - `void Validate()`, which throws `SqlSyntaxException`.
+  - `bool Matches(BrokeredMessage)`, which may throw `SqlEvaluationException`. On an invalid, never-validated rule it throws `SqlSyntaxException`.
+  - `bool HasAction`, and `void ApplyAction(BrokeredMessage copy)`, which uses `Name` as the `RuleName`.
+  - `bool IsTrueFilter`: `FilterType == TrueFilter`.
+  - The compiled form is one immutable record, swapped as a single reference. All regex code is deleted.
+  - A whitespace-only `SqlExpression` is invalid (Q11).
+- `QueueEntity.DeadLetterOnArrival(BrokeredMessage message, string reason, string? description = null, string? source = null)` sets a new `BrokeredMessage.DeadLetterSource`. The existing outbound encoding of dead-letter fields must include `DeadLetterSource` as an application property, the same way `DeadLetterReason` is written today; find where that happens and extend it.
+- `SubscriptionEntity.AddOrUpdateRule` calls `rule.Validate()` first.
+- `SubscriptionEntity.DeliverMessage(BrokeredMessage message)` follows decisions log Q9 and the evaluation-error rules:
+  1. Iterate rules ordered by name (`StringComparer.OrdinalIgnoreCase`).
+  2. For each rule, evaluate `Matches(message)`. On `SqlEvaluationException`, dead-letter a `Clone()` (when `DeadLetteringOnFilterEvaluationExceptions`) with reason `"FilterException"`, the exception message, and source `"FilteringEngine"`, then continue with the next rule. When the flag is off, just continue.
+  3. A matching rule with an action produces `var copy = message.Clone(); rule.ApplyAction(copy);`. On `SqlEvaluationException`, dead-letter `copy` (with its partial effects) with reason `"RuleActionException"`, or drop it when the flag is off. On success, enqueue `copy`.
+  4. If at least one matching rule has no action, enqueue exactly one `message.Clone()`.
+  5. Each enqueued copy goes through the existing session-null check and `Queue.Enqueue`, so `ForwardTo` forwards the action's result.
 
-- [ ] **Step 1: Write the failing tests** in `RuleActionDeliveryTests`:
-  - `AddOrUpdateRule_InvalidFilter_Throws_AndRuleAbsent` uses `"color IN ('a'"`.
-  - `AddOrUpdateRule_InvalidAction_Throws` uses `"SET"`.
-  - `Publish_RuleWithAction_SubscriptionCopyHasProperty_OriginalAndOtherSubscriptionUntouched`:
-    - Topic with subscription A (rule `1=1`, action `SET user.tag = 'A'`) and subscription B (`$Default`).
-    - Publish one message.
-    - A's received copy has `tag == "A"`. B's copy and the original have no `tag`.
-  - `Publish_ActionSetsLabel_Forwarded_TargetQueueSeesLabel`: subscription with `ForwardTo` a queue and action `SET sys.Label = 'fwd'`; the queue's message has `Subject == "fwd"`.
-  - `Publish_TwoMatchingActionRules_OneCopy_BothActionsApplied`. This asserts the provisional Q9 answer; Task 13 may flip it.
-  - `Publish_FilterEvaluationError_DeadLetters`. Skip it with a `[Fact(Skip = "enabled in Task 13 if Azure has evaluation errors")]` until Task 13 knows which expressions raise errors. Keep the mechanism covered with an internal test seam: a `RuleEntity` whose compiled filter throws, injected through an `internal` constructor overload. The `InternalsVisibleTo` for the test project is already there.
-  - `ConcurrentRuleReplaceDuringPublish_NeverThrows` (Review Focus 5): one thread alternates `AddOrUpdateRule` between `a = 1` and `a = 2` 10,000 times, while another publishes 10,000 messages with `a = 1`. There must be no exceptions, and every delivered copy must have matched one of the two versions.
-- [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.Tests --filter "FullyQualifiedName~RuleActionDeliveryTests|FullyQualifiedName~SubscriptionEntityTests"`. Expected: FAIL.
-- [ ] **Step 3: Implement** the `RuleEntity` and `SubscriptionEntity` changes.
-- [ ] **Step 4: Run** the full `tests/AlmostServiceBus.Tests` project. Expected: everything passes, except `SubscriptionEntityTests` cases whose expectation conflicts with a provisional `SqlSemantics` value. Update each such case to the provisional answer with a `// compat Q<n>` comment. The only expected conflict is `ignore NOT LIKE 'true'` case handling, and only if case matters.
-- [ ] **Step 5: Commit** with `feat(broker): compiled SQL rules, validation on add, actions applied to delivered copy`.
+- [ ] **Step 1: Write the failing tests** in `RuleDeliveryTests`:
+  - `TwoActionRules_TwoCopies_EachWithOwnRuleNameAndEffect`.
+  - `ActionRuleAndPlainRule_TwoCopies_PlainHasNoRuleName`.
+  - `TwoPlainRules_OneCopy`.
+  - `FilterError_DeadLettersOneCopy_OtherRulesStillDeliver`: rules `color > 1` and true, against message `color = 'red'`. Expect 1 active copy and 1 dead-lettered copy with `DeadLetterReason == "FilterException"`, `DeadLetterErrorDescription == "Operator '>' cannot be applied to operands of type 'string' and 'long'"` and `DeadLetterSource == "FilteringEngine"`.
+  - `ActionError_DeadLettersPartialCopy`: `SET user.a = 1; SET user.b = 1/0` gives a dead-lettered copy with `a = 1L` and `RuleName`, and reason `"RuleActionException"`.
+  - `ErrorsWithDeadLetteringDisabled_AreDropped`.
+  - `ActionOnForwardingSubscription_TargetQueueReceivesModifiedCopy`.
+  - `ActionNeverTouchesOriginalOrOtherSubscriptions`.
+  - `AddOrUpdateRule_InvalidFilter_Throws_RuleAbsent` and `AddOrUpdateRule_InvalidAction_Throws`.
+  - `ConcurrentRuleReplaceDuringPublish_NeverThrows` (Review Focus 5): 10,000 iterations on each side.
+- [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.Tests --filter "FullyQualifiedName~RuleDeliveryTests|FullyQualifiedName~SubscriptionEntityTests"`. Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run all of `tests/AlmostServiceBus.Tests`.** Expected: PASS.
+- [ ] **Step 5: Commit** with `feat(broker): Azure rule delivery — per-rule copies, RuleName, filter/action exceptions`.
 
-### Task 7: Shared case table and broker-level table runner
+### Task 7: Shared table seeded from the probe, and broker-level runner
 
 **Files:**
 - Create: `tests/shared/sql-compat-cases.json`, `tests/shared/SqlCompatCases.cs`
-- Modify: `tests/AlmostServiceBus.Tests/AlmostServiceBus.Tests.csproj`. Add `<Compile Include="..\shared\SqlCompatCases.cs" Link="Shared\SqlCompatCases.cs" />` and `<None Include="..\shared\sql-compat-cases.json" Link="Shared\sql-compat-cases.json" CopyToOutputDirectory="PreserveNewest" />`.
+- Modify: `tests/AlmostServiceBus.Tests/AlmostServiceBus.Tests.csproj`. Link both shared files: `<Compile Include="..\shared\SqlCompatCases.cs" Link="Shared\SqlCompatCases.cs" />`, and the JSON as `None` with `CopyToOutputDirectory=PreserveNewest`.
 - Test: `tests/AlmostServiceBus.Tests/Broker/Sql/SqlCaseTableTests.cs`, `tests/AlmostServiceBus.Tests/Broker/Sql/Issue192ReproTests.cs`
 
 **Interfaces:**
-- Produces the JSON schema below. `System.Text.Json`, camelCase.
+- **JSON schema** (camelCase):
   ```json
   { "cases": [ {
-      "id": "in.string.nomatch",              // unique, stable, [a-z0-9.-]
-      "area": "in",                            // grammar/semantic area, for the report
-      "rules": [ { "filter": "color IN ('red','blue')",
-                   "filterParameters": { "p": { "type": "long", "value": "5" } },
-                   "action": null, "actionParameters": null } ],
-      "message": { "sys": { "Label": "x", "CorrelationId": "c", "To": null, "ReplyTo": null,
-                            "SessionId": null, "ReplyToSessionId": null, "ContentType": null,
-                            "MessageId": null, "TimeToLive": null },
-                   "user": { "color": { "type": "string", "value": "green" } } },
-      "expected": { "outcome": "NoMatch",     // Match | NoMatch | Rejected | DeadLettered
-                    "copies": 1,               // Match only
-                    "user": null, "sys": null }, // Match only: full user property set / sys values after actions
-      "verified": "doc",                       // doc | azure
-      "note": null
-  } ] }
+      "id": "in.with-null-nomatch", "area": "in",
+      "rules": [ { "filter": "color IN ('x', NULL)", "filterParameters": null,
+                   "action": null, "actionParameters": null, "correlation": false } ],
+      "subscription": { "deadLetterOnFilterExceptions": true },
+      "message": { "sys": { "Label": null, "To": null, "ReplyTo": null, "CorrelationId": null, "ContentType": null,
+                            "ReplyToSessionId": null, "SessionId": null, "PartitionKey": null, "MessageId": null, "TimeToLive": null },
+                   "user": { "color": { "type": "string", "value": "red" } } },
+      "expected": { "outcome": "NoMatch",
+                    "copies": [ { "user": { }, "sys": { } } ],
+                    "deadLettered": [ { "reason": "FilterException", "description": "…", "user": { } } ],
+                    "error": { "type": "ArgumentException", "message": "…" } },
+      "verified": "azure", "note": null } ] }
   ```
-  - Typed `type` values: `string`, `int`, `long`, `double`, `bool`, `datetime` (ISO-8601 UTC), `guid`, `timespan` (`c` format), `null`.
-  - A rule's `filter` may be null, meaning a `TrueFilter`.
-- Produces (`SqlCompatCases.cs`, namespace `AlmostServiceBus.Tests.Shared`, no SDK or Core references):
-  - Records `SqlCompatCase`, `SqlCompatRule`, `SqlCompatMessage`, `SqlCompatExpected`, `TypedValue` (with `object? ToClr()` and `static TypedValue From(object? value)`).
-  - `static IReadOnlyList<SqlCompatCase> SqlCompatCases.Load()`, which reads the copy in the output directory.
-  - `static string SqlCompatCases.SourcePath()`, which walks up from `AppContext.BaseDirectory` to the directory containing `AlmostServiceBus.sln` and returns `tests/shared/sql-compat-cases.json`.
-  - `static void SqlCompatCases.Save(IReadOnlyList<SqlCompatCase>)`, which writes to `SourcePath()` (indented, stable ordering).
+  - `outcome` is one of `Match`, `NoMatch`, `Rejected`, `DeadLettered`. `copies` and `deadLettered` list every resulting message, with the full user property set (including `RuleName`) and only the sys values the case cares about. `error` is set only for `Rejected`.
+  - Typed `type` values: `string`, `int`, `long`, `uint`, `ulong`, `short`, `byte`, `sbyte`, `char`, `float`, `double`, `decimal`, `bool`, `datetime` (ISO-8601 UTC), `datetimeoffset`, `guid`, `timespan` (the `c` format), `uri`, `null`.
+  - A rule's `filter` may be null, meaning a true filter. `correlation: true` means a correlation filter that matches only the case (used with an action).
+- **`SqlCompatCases.cs`** (namespace `AlmostServiceBus.Tests.Shared`): records for the schema, `TypedValue.ToClr()` / `TypedValue.From(object?)`, `Load()`, `SourcePath()` (walks up to `AlmostServiceBus.sln`) and `Save(…)` (indented, preserving case order).
+- **Seeding.** Build the table from the probe:
+  - Write a one-off converter: a C# script, or extend `docs/superpowers/specs/sql-azure-probe/probe-program.cs.txt`'s case list. Map each probe case's definition and its recorded Azure result (`round*.md` and the scratch `results*.json`, or reconstruct from the `.md` rows) into JSON with `"verified": "azure"`.
+  - Exclude the two `q5.bytes-*` cases: the SDK refuses to send `byte[]`.
+  - Exclude probe-only `extra` checks; those become Task 10 tests.
+  - Strip the probe's `user.caseId` guard from expressions and from rejected-case columns. The runner adds its own guard only in the conformance suite.
+  - Keep `caseId` out of `expected.user`.
 
-- [ ] **Step 1: Write `Issue192ReproTests`** with the issue's program body verbatim, inside a `[Fact]`. Replace `Console.WriteLine` with collecting mismatch lines, and `Assert.Empty(mismatches)`.
-- [ ] **Step 2: Write the table.** Use at least the cases below, each with doc-based `expected` and `"verified": "doc"`:
-  - All of the WIP `SqlFilterExpressionTests` cases (ported).
-  - Every grammar element, as a match case and a no-match case.
-  - Every spec question Q1–Q12, with one or more cases each. Examples:
-    - Q1: `label = 'x'` where only `sys.Label` is `x`, and again where only user `label` is `x`.
-    - Q2: `sys.label` versus `sys.Label`; user `Color` versus `color`.
-    - Q5: `'abc' > 1`; user `"27"` versus `27`; `true = 1`.
-    - Q9: two action rules.
-    - Q11: an empty filter.
-    - Q12: an unbound parameter; an unused parameter; `@P` versus key `p`; each parameter type.
-  - Review Focus 1: the NServiceBus, Wolverine and a MassTransit-style user SQL case.
-  - Rejected cases (one per parse-error class from Task 2 and Task 3).
-  - Action cases for `SET` and `REMOVE` on user and sys targets, and statement ordering.
-- [ ] **Step 3: Write `SqlCaseTableTests`**, a `[Theory]` with `[MemberData]` yielding case ids. For each case:
-  - Build a `TopicEntity` with one subscription. Remove `$Default`. Add the case's rules as `rule0`, `rule1`, …, mapping typed parameters with `ToClr()`. A `SqlSyntaxException` gives the outcome `Rejected`.
-  - Build a `BrokeredMessage` from `message.sys` and `message.user`, then publish.
-  - Outcome:
-    - `DeadLettered` if the subscription's dead-letter store holds the message.
-    - `Match` if the active queue has copies. Compare `copies`, the full user property set and the listed sys values.
-    - `NoMatch` otherwise.
-  - Assert equality with `expected`. The failure message includes the case `id` and `note`.
-- [ ] **Step 4: Run** `dotnet test tests/AlmostServiceBus.Tests --filter "FullyQualifiedName~SqlCaseTableTests|FullyQualifiedName~Issue192ReproTests"`. Expected: PASS. A failure means a table guess and the code disagree; fix whichever contradicts the spec.
-- [ ] **Step 5: Commit** with `test(sql): shared compat case table, broker-level runner, issue #192 repro`.
+- [ ] **Step 1: Write `Issue192ReproTests`.** Use the issue's program body verbatim in a `[Fact]`, collecting mismatch lines and asserting `Assert.Empty(mismatches)`.
+- [ ] **Step 2: Write the converter, run it, and commit the generated `sql-compat-cases.json`.** Expect about 410 cases. Spot-check five against `round*.md` by hand.
+- [ ] **Step 3: Write `SqlCaseTableTests`**, a `[Theory]` with `[MemberData]` over case ids. For each case:
+  - Create a `TopicEntity` with one subscription. Set its dead-lettering flag. Remove `$Default`, then add the rules `r0…rN`. A `SqlSyntaxException` means `Rejected`; compare its message with `expected.error.message` after trimming Azure's trailing `TrackingId…`.
+  - Publish a `BrokeredMessage` built from `message`, then drain the active queue and the dead-letter store, and compare with `expected`.
+  - The failure message shows `id`, `note`, the expected and actual JSON.
+- [ ] **Step 4: Run** `dotnet test tests/AlmostServiceBus.Tests --filter "FullyQualifiedName~SqlCaseTableTests|FullyQualifiedName~Issue192ReproTests"`. Expected: PASS.
+  - Every failure is an emulator bug against recorded Azure behaviour. Fix the code; never the table.
+  - The only allowed exception is a case the emulator can't model. Mark it `"skipEmulator": true` with a `note`, and list every such case in the final summary.
+- [ ] **Step 5: Commit** with `test(sql): Azure-recorded case table, broker-level runner, issue #192 repro`.
 
-### Task 8: HTTP management API — parameters and validation
+### Task 8: HTTP management API
 
 **Files:**
-- Modify:
-  - `Management/AtomXmlReader.cs`: add `FilterParameters` and `ActionParameters` to the `RuleProperties` record.
-  - `Management/AtomXmlWriter.cs`
-  - `Management/ManagementApiEndpoints.cs`: keep the WIP's `InvalidSqlFilter` / `InvalidDefaultRuleFilter`, generalised to rule validation.
-- Test: `tests/AlmostServiceBus.Tests/Management/AtomXmlReaderTests.cs`, `AtomXmlWriterTests.cs`, `ManagementApiRuleTests.cs`
+- Modify: `Management/AtomXmlReader.cs` (`RuleProperties` gains `FilterParameters` and `ActionParameters`), `Management/AtomXmlWriter.cs`, `Management/ManagementApiEndpoints.cs`
+- Test: `AtomXmlReaderTests.cs`, `AtomXmlWriterTests.cs`, `ManagementApiRuleTests.cs`
 
 **Interfaces:**
-- The XML format comes from the SDK:
-  ```xml
-  <Parameters>
-    <KeyValueOfstringanyType>
-      <Key>…</Key>
-      <Value i:type="l28:string" xmlns:l28="http://www.w3.org/2001/XMLSchema">…</Value>
-    </KeyValueOfstringanyType>
-  </Parameters>
-  ```
-  - All elements are in the ServiceBus namespace `http://schemas.microsoft.com/netservices/2010/10/servicebus/connect`. `i` is `http://www.w3.org/2001/XMLSchema-instance`.
-  - Types: `string`, `int`, `long`, `boolean`, `double`, `dateTime` (UTC), `duration` (TimeSpan, XML duration).
-  - Resolve the prefix through the element's namespace scope; don't hard-code `l28`.
-  - Keys are stored exactly as sent (the SDK doesn't add `@`).
-  - The SDK always sends `<Parameters/>`, even when empty.
-- The writer emits parameters in the same shape, using the `l28` prefix, so `GetRuleAsync` round-trips.
-- Validation: rule PUT and subscription PUT with a `DefaultRuleDescription` both run `RuleEntity.Validate()`:
-  - A `SqlSyntaxException` returns `ManagementApiErrors.BadRequest(...)`.
-  - The rule isn't added, and the subscription isn't created.
-  - Body text: `"The SQL expression is invalid: {ex.Message} SubCode=40000."`. Task 13 replaces it with Azure's wording.
+- **Parameter XML** (the SDK's shape): `<Parameters><KeyValueOfstringanyType><Key>@a</Key><Value i:type="l28:string" xmlns:l28="http://www.w3.org/2001/XMLSchema">x</Value></KeyValueOfstringanyType></Parameters>`.
+  - Elements are in the ServiceBus namespace.
+  - Types: `string`, `int`, `long`, `boolean`, `double`, `dateTime` (UTC), `duration` (`TimeSpan`, XML duration).
+  - Resolve the `i:type` prefix through the element's namespace scope. Keys are kept as sent.
+  - The writer emits the same shape, so `GetRuleAsync` round-trips the CLR types.
+- **Validation:** rule `PUT` and subscription `PUT` (with `DefaultRuleDescription`) call `RuleEntity.Validate()` before mutating anything. A `SqlSyntaxException` returns `ManagementApiErrors.BadRequest(ex.Message)`; the SDK raises it as `ArgumentException`.
+- **Duplicate rule:** a rule `PUT` without `If-Match` for an existing name returns 409, via `ManagementApiErrors.EntityAlreadyExists("{ns}:Topic:{topic}|{sub}|{rule}")` with Azure's text `The messaging entity '…' already exists.`. Check what the current code does for duplicates and align it.
+- **Filter types:** a `TrueFilter` created over HTTP reads back as `TrueFilter`; a `SqlFilter` with `1=1` stays a `SqlFilter`.
 
 - [ ] **Step 1: Write the failing tests:**
-  - **Reader:** a `SqlFilter` with two parameters (`string` and `long`) gives `FilterParameters` equal to `{["@a"]="x", ["@b"]=5L}`.
-  - **Reader:** an action with a `duration` parameter gives `TimeSpan`.
-  - **Writer:** a round-trip of a rule with each type gives equal values and types.
-  - **API:** `CreateRule_WithParameters_GetRuleReturnsThem`.
-  - **API:** `CreateRule_InvalidAction_Returns400`.
-  - **API:** the WIP's two 400 tests (an invalid filter, and an invalid default-rule subscription that isn't created) stay.
+  - Reader: two parameters give `{["@a"]="x", ["@b"]=5L}`, and a `duration` gives a `TimeSpan`.
+  - Writer: every type round-trips.
+  - API:
+    - `CreateRule_WithParameters_GetRuleReturnsSameTypes`.
+    - `CreateRule_InvalidFilter_400_AzureText`: the body contains `There was an error parsing the SQL expression. [Token line=2, column=0`.
+    - `CreateRule_UnusedParameter_400`.
+    - `CreateRule_Duplicate_409`.
+    - `CreateSubscription_InvalidDefaultRule_400_NotCreated`.
 - [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.Tests --filter "FullyQualifiedName~AtomXml|FullyQualifiedName~ManagementApiRuleTests"`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** with `feat(mgmt): SQL parameters over Atom XML; reject invalid rules with 400`.
+- [ ] **Step 5: Commit** with `feat(mgmt): SQL parameters over Atom XML; Azure-shaped rule errors`.
 
 ### Task 9: AMQP rule manager operations
 
 **Files:**
 - Create: `src/AlmostServiceBus.Core/Amqp/RuleManagementHandler.cs`
-- Modify: `src/AlmostServiceBus.Core/Amqp/ManagementLinkEndpoint.cs` (dispatch the three operations)
-- Test: `tests/AlmostServiceBus.Tests/Amqp/RuleManagementHandlerTests.cs`. These are unit tests over AMQPNetLite `Message` and `Map` objects. Check the folder for an existing pattern of driving `ManagementLinkEndpoint` handlers, and follow it if there is one.
+- Modify: `src/AlmostServiceBus.Core/Amqp/ManagementLinkEndpoint.cs` (add three `case`s; put a `// TODO(#192 follow-up)` at `default:`, which still replies OK)
+- Test: `tests/AlmostServiceBus.Tests/Amqp/RuleManagementHandlerTests.cs`
 
 **Interfaces:**
-- Wire format, from the Azure SDK source:
-  - **`com.microsoft:add-rule`**: body `Map` with `"rule-name"` (string) and `"rule-description"` (`Map`). The description map has exactly one filter key, an optional action key and `"rule-name"`:
-    - `"sql-filter"` → `{ "expression": string }`
-    - `"correlation-filter"` → keys `correlation-id`, `message-id`, `to`, `reply-to`, `label`, `session-id`, `reply-to-session-id`, `content-type`, `properties` (`Map`)
-    - `"sql-rule-action"` → `{ "expression": string }`
-    - The SDK sends `TrueRuleFilter` and `FalseRuleFilter` as `sql-filter` `1=1` and `1=0`.
-    - **The AMQP path carries no parameters.**
-    - Read map entries by enumerating them, accepting both `string` and `Symbol` keys (CLAUDE.md decision 9).
-  - **`com.microsoft:remove-rule`**: body `{ "rule-name": string }`.
-  - **`com.microsoft:enumerate-rules`**: body `{ "top": int, "skip": int }`.
-    - Reply status 200 with body `{ "rules": List<Map{ "rule-description": DescribedValue }> }`, or status 204 with no rules when `skip` is past the end.
-  - **Described types.** Use these descriptor codes exactly as the SDK writes them (note the differing digit counts):
+- **Wire format** (Azure SDK source):
+  - **`com.microsoft:add-rule`:** body `{ "rule-name", "rule-description": { "sql-filter": {"expression"} | "correlation-filter": {correlation-id, message-id, to, reply-to, label, session-id, reply-to-session-id, content-type, properties}, "sql-rule-action"?: {"expression"}, "rule-name" } }`.
+    - The SDK sends true and false filters as `sql-filter` `1=1` / `1=0`; store them as SQL filters, since Azure reads them back as `SqlRuleFilter`.
+    - The AMQP path carries no parameters.
+    - Enumerate map entries, accepting `string` or `Symbol` keys.
+  - **`com.microsoft:remove-rule`:** `{ "rule-name" }`.
+  - **`com.microsoft:enumerate-rules`:** `{ "top": int, "skip": int }`.
+    - Reply 200 with `{ "rules": List<Map{ "rule-description": DescribedValue }> }`, or 204 when `skip` is past the end.
+  - **Described types**, exactly as the SDK codes them:
 
     | Type | Code | Fields |
     |---|---|---|
-    | RuleDescription | `0x0000013700000004` | `List[filter, action, rule-name, created-at (DateTime)]` |
-    | SqlFilter | `0x000001370000006` | `[expression, compatibility-level(20)]` |
-    | CorrelationFilter | `0x000001370000009` | `[correlation-id, message-id, to, reply-to, label, session-id, reply-to-session-id, content-type, properties(Map)]` |
-    | TrueFilter | `0x000001370000007` | `[]` |
+    | RuleDescription | `0x0000013700000004` | `[filter, action, rule-name, created-at]` |
+    | SqlFilter | `0x000001370000006` | `[expression, 20]` |
+    | CorrelationFilter | `0x000001370000009` | `[9 fields as above]` |
+    | TrueFilter | `0x000001370000007` | `[]` (used for `$Default`) |
     | FalseFilter | `0x000001370000008` | `[]` |
     | EmptyRuleAction | `0x0000013700000005` | `[]` |
-    | SqlRuleAction | `0x0000013700000006` | `[expression, compatibility-level(20)]` |
+    | SqlRuleAction | `0x0000013700000006` | `[expression, 20]` |
 
-  - **Errors.** Reply application properties `statusCode`, `statusDescription` and `errorCondition`, using the same helper as the existing lock-lost replies. Provisional values (Task 13 confirms):
-    - Invalid expression: `400` with `com.microsoft:argument-error` (SDK → `ArgumentException`).
-    - Duplicate rule name: `409` with `com.microsoft:entity-already-exists` (SDK → `ServiceBusException` with reason `MessagingEntityAlreadyExists`).
-    - Missing rule on remove: `404` with `amqp:not-found` (reason `MessagingEntityNotFound`).
-    - Missing subscription: `404` with `amqp:not-found`.
-  - The target subscription comes from the request's `associated-link-name` or the management link address, `{topic}/Subscriptions/{sub}/$management`. Follow how existing handlers resolve the entity, and use the namespace from `ResolveNamespace`.
-- Produces: `internal sealed class RuleManagementHandler` with `void AddRule(RequestContext)`, `void RemoveRule(RequestContext)` and `void EnumerateRules(RequestContext)`.
-- Out of scope, but leave a `// TODO(#192 follow-up)` comment at the `default:` branch: an unknown operation still replies OK.
+- **Error replies** (from the decisions log, Q10), using the existing reply helper's `statusCode`, `statusDescription` and `errorCondition`:
+  - Invalid expression: status 500, condition `amqp:internal-error`, description `The service was unable to process the request; please retry the operation.`. The SDK maps that to `GeneralError`, as Azure does.
+  - Duplicate: 409 `com.microsoft:entity-already-exists`, giving `MessagingEntityAlreadyExists`.
+  - Missing rule or subscription: 404 `amqp:not-found`, giving `MessagingEntityNotFound`.
+- **Target subscription:** resolve it from the management link's address (`{topic}/Subscriptions/{sub}/$management`) the way the existing handlers resolve their entity, within `ResolveNamespace(requestContext)`.
 
 - [ ] **Step 1: Write the failing tests:**
-  - `AddRule_SqlFilterAndAction_StoresCompiledRule`.
-  - `AddRule_StringAndSymbolKeys_BothAccepted`.
-  - `AddRule_InvalidExpression_Replies400ArgumentError`.
+  - `AddRule_SqlFilterAndAction_Stored`.
+  - `AddRule_SymbolKeys_Accepted`.
+  - `AddRule_Invalid_Replies500InternalError`.
   - `AddRule_Duplicate_Replies409`.
   - `RemoveRule_Missing_Replies404`.
-  - `EnumerateRules_ReturnsDescribedTypesWithExactCodes`. Assert the `Descriptor` ulong of each filter and action type, including `$Default` as TrueFilter.
-  - `EnumerateRules_SkipPastEnd_Replies204`.
+  - `EnumerateRules_ExactDescriptorCodes`: `$Default` is `TrueFilter`, and a rule added as `1=1` is `SqlFilter`.
+  - `EnumerateRules_SkipPastEnd_204`.
 - [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.Tests --filter FullyQualifiedName~RuleManagementHandlerTests`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** with `feat(amqp): add-rule, remove-rule and enumerate-rules on $management`.
+- [ ] **Step 5: Commit** with `feat(amqp): add-rule, remove-rule, enumerate-rules`.
 
 ### Task 10: SDK end-to-end tests
 
 **Files:**
-- Create: `tests/AlmostServiceBus.SdkIntegration.Tests/SqlRuleTests.cs`. Follow `AdminClientTests` for fixture and admin-client setup. Use `ServiceBusClient(_fixture.ConnectionString)` for data and `client.CreateRuleManager(topic, sub)` for the rule manager.
+- Create: `tests/AlmostServiceBus.SdkIntegration.Tests/SqlRuleTests.cs`. Use `AdminClientTests` as the template for fixture and admin setup. The data client is `new ServiceBusClient(_fixture.ConnectionString, new ServiceBusClientOptions { RetryOptions = new() { MaxRetries = 0 } })`, because Azure-shaped `GeneralError` is retried and that would slow the tests.
 
-- [ ] **Step 1: Write the tests.** Each one creates its own topic, named with a GUID suffix.
-  - `AdminClient_InRule_RoutesOnlyMatching`: rule `"message-type" IN ('Created','Updated')`. Send `Created` and `Unrelated`; receive only `Created`.
-  - `AdminClient_RuleWithParametersAndAction_SetsProperty`: filter `amount > @min` with `Parameters["@min"] = 10L`, and action `SET user.routed = 'yes'`. A message with `amount = 11` arrives with `routed == "yes"`; `amount = 5` doesn't arrive. `GetRuleAsync` returns both parameters.
-  - `RuleManager_CreateListDelete_RoutesAndActs`:
-    - `CreateRuleAsync("r", new SqlRuleFilter("[NServiceBus.EnclosedMessageTypes] LIKE '%Ns.MyEvent%'"), new SqlRuleAction("SET sys.Label = 'nsb'"))`, after deleting `$Default`.
-    - A matching message arrives with `Subject == "nsb"`.
-    - `GetRulesAsync` lists `r` as a `SqlRuleFilter` with the expression, and the action as a `SqlRuleAction`.
-    - After `DeleteRuleAsync("r")`, nothing is delivered.
-  - `RuleManager_InvalidExpression_ThrowsArgumentException`.
-  - `AdminClient_InvalidExpression_Throws`: assert the exception type the admin client raises for the WIP's 400 body today. Inspect it once, then pin it; Task 13 re-pins it to Azure's.
-  - `RuleManager_DuplicateName_ThrowsEntityAlreadyExists`.
-- [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.SdkIntegration.Tests --filter FullyQualifiedName~SqlRuleTests`. Expected: PASS. Tasks 6–9 are already in place; any failure is a real bug to fix in the owning task's code.
+- [ ] **Step 1: Write the tests.** Each uses its own GUID-suffixed topic.
+  - `AdminClient_IssueRepro_RoutesOnlyCreated`: `"message-type" IN ('Created','Updated')`.
+  - `AdminClient_ParametersAndAction`: filter `amount > @min` (`@min` = 10L) and action `SET user.routed = 'yes'`. Received: `routed == "yes"` and `RuleName == <rule>`. `GetRuleAsync` returns `@min` as `long`.
+  - `AdminClient_TimeSpanPropertyFilter_AndActionWritingTimeSpan`: filter `ts = @t` with `@t = TimeSpan.FromHours(1)`, and action `SET user.copy = ts`. The received `copy` is a `TimeSpan` (Review Focus 2).
+  - `AdminClient_InvalidExpression_ThrowsArgumentException`: the message starts `There was an error parsing the SQL expression.`.
+  - `AdminClient_DuplicateRule_ThrowsEntityAlreadyExists`.
+  - `AdminClient_FilterException_DeadLettersWithReason`: a received dead-letter message has `DeadLetterReason == "FilterException"` and `ApplicationProperties["DeadLetterSource"] == "FilteringEngine"`.
+  - `RuleManager_CreateListDelete`:
+    - Create `[NServiceBus.EnclosedMessageTypes] LIKE '%Ns.MyEvent%'` with action `SET sys.Label = 'nsb'` (after deleting `$Default`). A message with no `Subject` arrives with `Subject == "nsb"`.
+    - `GetRulesAsync` returns `SqlRuleFilter` and `SqlRuleAction` with the exact text.
+    - After `DeleteRuleAsync`, nothing arrives.
+  - `RuleManager_TrueFilter_ReadsBackAsSql11`.
+  - `RuleManager_InvalidExpression_ThrowsGeneralError`.
+  - `RuleManager_Duplicate_EntityAlreadyExists`.
+  - `RuleManager_DeleteMissing_EntityNotFound`.
+- [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.SdkIntegration.Tests --filter FullyQualifiedName~SqlRuleTests`. Expected: PASS. Fix any failure in the owning task's code.
 - [ ] **Step 3: Commit** with `test(sdk): end-to-end SQL rules via admin client and rule manager`.
 
-### Task 11: Node and Java smoke coverage for the rule manager
+### Task 11: Node and Java smoke coverage
 
-**Files:**
-- Modify: `tests/client-sdk-smoke/node/smoke.mjs`, `tests/client-sdk-smoke/java/src/main/java/io/almostservicebus/smoke/Smoke.java`
+Do this task **only if George confirms it**. The open question is whether "don't touch `tests/client-sdk-smoke`" covers adding test steps. If he doesn't confirm, skip it and say so in the summary.
 
-- [ ] **Step 1: Add a step to each script, after its existing topic steps, using the script's existing `TOPIC`/`SUBSCRIPTION`.**
-  - Create the rule manager: Node `sbClient.createRuleManager(TOPIC, SUBSCRIPTION)`; Java `new ServiceBusClientBuilder().connectionString(...).ruleManager().topicName(..).subscriptionName(..).buildClient()`.
-  - Delete `$Default`, then create rule `in-rule` with filter `color IN ('red','blue')` and action `SET user.routed = 'yes'`.
-  - List the rules and assert `in-rule` is present with its expression.
-  - Send `red` and `green`. Assert exactly one message is received: `red`, with `routed == 'yes'`.
-  - Create `bad-rule` with `color IN ('red'` and assert it throws.
-  - Delete `in-rule`, recreate `$Default` as a true filter, and continue with the script's remaining steps.
-- [ ] **Step 2: Run against a local emulator.** Start it with `cd src/AlmostServiceBus.Host && dotnet run` in the background (it owns 5672/5300). Then:
-  - `cd tests/client-sdk-smoke/node && npm ci && node smoke.mjs && node admin.mjs && node concurrent-connections.mjs`
-  - `cd tests/client-sdk-smoke/java && mvn -q -B compile exec:java`
-  - `cd tests/client-sdk-smoke/python && python smoke.py`
+**Files:** `tests/client-sdk-smoke/node/smoke.mjs`, `tests/client-sdk-smoke/java/src/main/java/io/almostservicebus/smoke/Smoke.java`. Connection handling stays unchanged.
 
-  Expected: all exit 0. Stop only the emulator process you started.
-- [ ] **Step 3: Commit** with `test(smoke): rule manager create/list/route/delete in Node and Java`.
+- [ ] **Step 1: Add a rule-manager step after each script's existing topic steps:**
+  - Delete `$Default`, then create `in-rule` with `color IN ('red','blue')` and action `SET user.routed = 'yes'`.
+  - List the rules and assert `in-rule` is there.
+  - Send `red` and `green`, and assert that only `red` arrives, with `routed == 'yes'`.
+  - Assert that creating `color IN ('red'` throws.
+  - Delete `in-rule`, then recreate `$Default`.
+- [ ] **Step 2: Run** `node smoke.mjs`, `node admin.mjs`, `node concurrent-connections.mjs`, `mvn -q -B compile exec:java` and `python smoke.py` against a locally started emulator (`cd src/AlmostServiceBus.Host && dotnet run`). Stop only the PID you started. Expected: all exit 0.
+- [ ] **Step 3: Commit** with `test(smoke): rule manager in Node and Java`.
 
-### Task 12: Compatibility suite (emulator vs Azure, diff, record mode)
+### Task 12: Connection helper and the conformance compat suite
 
 **Files:**
 - Modify: `tests/AlmostServiceBus.Conformance.Tests/AlmostServiceBus.Conformance.Tests.csproj`:
   - Add `<UserSecretsId>almostservicebus-conformance</UserSecretsId>`.
-  - Add `<PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.*" />`. Pin it to the version that matches the repo's other 10.0.x Microsoft packages (10.0.14 at the time of writing). The repo has no central package management.
-  - Add the same shared `Compile` and `None` links as Task 7.
-- Create: `tests/AlmostServiceBus.Conformance.Tests/RealAsbConnection.cs`. It provides `internal static class RealAsbConnection { public static string? ConnectionString { get; } }`, which returns the environment variable `ASB_CONNECTION_STRING` if it is non-empty, otherwise user secrets (`new ConfigurationBuilder().AddUserSecrets<RealAsbConnection>()["ASB_CONNECTION_STRING"]`).
-- Modify: `RealAsbConformanceTests.cs` and `TopicRequeueReproTest.cs` to use `RealAsbConnection.ConnectionString` instead of reading the environment variable themselves. Update their skip messages to mention both sources.
-- Modify: the "real ASB" sections of `CLAUDE.md` and `README.md` to document `dotnet user-secrets set ASB_CONNECTION_STRING "..." --id almostservicebus-conformance`.
-- Create: `tests/AlmostServiceBus.Conformance.Tests/SqlCompatTests.cs`, which sits next to `RealAsbConformanceTests`.
+  - Add `<PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.x" />`, choosing the newest 10.0.x on NuGet (there is no central package management).
+  - Add the shared links from Task 7.
+- Create: `RealAsbConnection.cs`:
+  ```csharp
+  internal static class RealAsbConnection { public static string? ConnectionString { get; } }
+  ```
+  It returns the environment variable `ASB_CONNECTION_STRING` if non-empty, else `new ConfigurationBuilder().AddUserSecrets(typeof(RealAsbConnection).Assembly, optional: true).Build()["ASB_CONNECTION_STRING"]`.
+- Modify: `RealAsbConformanceTests.cs` and `TopicRequeueReproTest.cs` to use it. Skip reasons mention both sources.
+- Modify: the "real ASB" sections of `CLAUDE.md` and `README.md` to add `dotnet user-secrets set ASB_CONNECTION_STRING "..." --id almostservicebus-conformance`.
+- Create: `SqlCompatTests.cs`, with one `[Fact] SqlCompatTable_EmulatorAndAzureAgreeWithTable`.
 
-**Interfaces:**
-- Consumes: `SqlCompatCases.Load/Save/SourcePath`, `TypedValue.ToClr/From` (Task 7), and `ServiceBusEmulatorFixture` (as in `EmulatorConformanceTests`).
-- Produces one `[Fact] SqlCompatTable_EmulatorMatchesAzure`, with this algorithm:
-  1. Run the table against the **emulator** through the SDK (HTTP admin plus AMQP data), using `RunTableAsync(ServiceBusClient, ServiceBusAdministrationClient)`.
-  2. If `RealAsbConnection.ConnectionString` is non-null, run the same `RunTableAsync` against **Azure**.
-  3. Report rows where the emulator differs from Azure. When Azure is absent, compare the emulator with `expected`.
-  4. With `ASB_COMPAT_RECORD=1` and Azure present, write Azure's outcome, copies and properties into each case's `expected`, set `"verified": "azure"`, and `Save`. For `Rejected` cases, also put the Azure exception type and message into `note`.
-  5. Fail with a markdown table: `id | area | table | azure | emulator`.
-
-  `RunTableAsync`, per run:
-  - Create one topic, `sqlcompat-{8 hex}`.
-  - Per case, create subscription `c{index:D4}` with `DeadLetteringOnFilterEvaluationExceptions = true`, via `CreateSubscriptionAsync(options, ruleOptions)` for rule 0 and `CreateRuleAsync` for the rest. Each rule's filter is `user.caseId = '<id>' AND (<filter>)`; a null filter becomes `user.caseId = '<id>'`. An exception during creation gives `Rejected`.
-  - Publish one `ServiceBusMessage` per non-rejected case, with `caseId` plus the case's properties.
-  - Drain each subscription and its DLQ: `ReceiveMessagesAsync(10, TimeSpan.FromSeconds(3))`, with a parallelism of 8.
+**Interfaces / algorithm:**
+- `RunTableAsync(ServiceBusClient, ServiceBusAdministrationClient)` returns `Dictionary<string, ObservedResult>`. This is the probe's algorithm, ported from `probe-program.cs.txt`:
+  - One topic, `sqlcompat-{8 hex}`. One subscription per case (`c{index:D3}`), with the case's dead-lettering flag.
+  - Filters are wrapped as `user.caseId = '{id}' AND ({filter})`. A null filter becomes the guard alone. A correlation rule matches on `caseId`.
+  - One message per case. Drain the active queue and the DLQ, with a parallelism of 16.
   - Delete the topic in `finally`.
-  - Sys values the SDK can't set (e.g. `SequenceNumber`) can't be message inputs; the table only uses settable ones.
-- Skip behaviour: the emulator half always runs, so the test always runs.
+- Run it against the emulator (`ServiceBusEmulatorFixture`), and against Azure when `RealAsbConnection.ConnectionString` is non-null.
+- Compare both with `expected`. Rejected-case messages are compared after removing Azure's `TrackingId…` tail; column numbers inside them shift by the guard's length, so compare the guarded text.
+- With `ASB_COMPAT_RECORD=1` and Azure present, overwrite `expected` from Azure, set `verified = "azure"`, and `Save()`.
+- Fail with a markdown table: `id | table | azure | emulator`.
 
-- [ ] **Step 1: Write the test.**
-- [ ] **Step 2: Run** `dotnet test tests/AlmostServiceBus.Conformance.Tests --filter FullyQualifiedName~SqlCompatTests`. Expected: PASS, because the emulator agrees with the doc-based table.
-- [ ] **Step 3: Commit** with `test(conformance): SQL compat suite with Azure diff and record mode`.
+- [ ] **Step 1: Write `RealAsbConnection`, switch the two existing classes over, and update the docs.**
+- [ ] **Step 2: Write `SqlCompatTests`.**
+- [ ] **Step 3: Run** `dotnet test tests/AlmostServiceBus.Conformance.Tests --filter "FullyQualifiedName~SqlCompatTests"`. Expected: PASS. With the user secret present this also runs against Azure.
+- [ ] **Step 4: Commit** with `test(conformance): connection helper (env, then user secrets) and SQL compat suite`.
 
-### Task 13: Azure compat run, reconcile, document
+### Task 13: Reconcile, document, verify
 
-- [ ] **Step 1: Check the connection string.** It comes from `RealAsbConnection` (the environment variable, or user secrets `almostservicebus-conformance`). If neither is set, say so in the summary to George and carry on with everything that doesn't need Azure, leaving the cases marked `"verified": "doc"`.
-- [ ] **Step 2: Record:** `ASB_COMPAT_RECORD=1 dotnet test tests/AlmostServiceBus.Conformance.Tests --filter FullyQualifiedName~SqlCompatTests`. Check that `git diff` touches only `tests/shared/sql-compat-cases.json`, and that every case now reads `"verified": "azure"`.
-- [ ] **Step 3: Reconcile.** For each divergence:
-  - Flip the matching `SqlSemantics` constant, or fix the code.
-  - Re-pin the error strings and exception types (HTTP body and AMQP condition) in Tasks 8, 9 and 10's tests to Azure's.
-  - Enable or delete the skipped evaluation-error test from Task 6.
-  - If a case can't apply to the emulator, write why in the case's `note` and keep Azure's value.
-  - Rerun until `SqlCompatTests` is green with and without Azure.
-- [ ] **Step 4: Document.**
-  - Fill the spec's **Decisions log** with one line per Q1–Q12: Azure's answer and the constant or code that implements it.
-  - Add a `## [Unreleased]` section to `CHANGELOG.md`, in the file's existing style. Include:
-    - "Fixed: SQL filters (#192)".
-    - "Added: SQL rule actions, SQL parameters, AMQP rule manager".
-    - A **Behaviour changes** list: unprefixed names if Q1 changed them, case sensitivity if changed, empty expressions, rejection at creation, numeric-string coercion if changed.
-  - Update `CLAUDE.md`:
-    - Add `Broker/Sql/` to Key Components.
-    - Update the test counts table.
-    - Add a Key Design Decision: "SQL semantics follow the recorded Azure table (`tests/shared/sql-compat-cases.json`); change `SqlSemantics` only with a recorded Azure case".
-- [ ] **Step 5: Full verification.**
-  - Run the full solution test command from Global Constraints.
-  - Run the Task 11 smoke scripts.
-  - Run the external framework suites from CLAUDE.md's "Running" section. The submodules need `git submodule update --init` first, and NServiceBus needs the emulator to own port 5300.
+- [ ] **Step 1: Re-run against Azure in record mode:** `ASB_COMPAT_RECORD=1 dotnet test tests/AlmostServiceBus.Conformance.Tests --filter FullyQualifiedName~SqlCompatTests`. `git diff` must touch only `tests/shared/sql-compat-cases.json`. Any change from the 2026-11-04 recording is Azure drift; note it in the spec's decisions log.
+- [ ] **Step 2: Fix every divergence** in the emulator, until the suite is green both with and without Azure.
+- [ ] **Step 3: Update `CHANGELOG.md`.** Add a `## [Unreleased]` section in the file's style.
+  - **Fixed:** SQL filters (#192): `IN`, delimited identifiers, no more match-all fallback.
+  - **Added:** SQL rule actions, SQL parameters, AMQP rule manager operations, filter and action exception dead-lettering.
+  - **Behaviour changes:**
+    - Unprefixed names are user properties (Q1).
+    - Invalid expressions are rejected at creation.
+    - `LIKE` is case-sensitive.
+    - Numeric strings no longer equal numbers; type mismatches dead-letter with `FilterException`.
+    - String ordering comparisons dead-letter.
+    - Empty or whitespace expressions are rejected.
+- [ ] **Step 4: Update `CLAUDE.md`.**
+  - Add `Broker/Sql/` to Key Components and update the test counts table.
+  - Add a Key Design Decision: "SQL semantics follow the Azure-recorded table `tests/shared/sql-compat-cases.json`; change behaviour only with a recorded Azure case."
+- [ ] **Step 5: Run everything.**
+  - The full test command, and Task 11's smoke scripts if they were done.
+  - The external framework suites from CLAUDE.md "Running": run `git submodule update --init` first; NServiceBus needs the emulator on port 5300.
 
-  Expected: all green apart from the known `RealAsbTopicRequeueReproTest` skips.
-- [ ] **Step 6: Commit** with `docs: SQL compat decisions, changelog and CLAUDE.md for #192`. Then report to George, without pushing.
+  Expected: green, apart from known pre-existing failures, which must be listed.
+- [ ] **Step 6: Commit** with `docs: SQL compat changelog and CLAUDE.md for #192`. Report to George, without pushing.
