@@ -28,7 +28,7 @@ internal static class RuleManagementHandler
     // Azure answers an invalid filter or action from the rule manager with this, which the SDK raises as GeneralError.
     private const string InvalidRuleDescription = "The service was unable to process the request; please retry the operation.";
 
-    public static ManagementReply AddRule(SubscriptionEntity? subscription, Map body)
+    public static ManagementReply AddRule(SubscriptionEntity? subscription, Map body, string namespaceName = "")
     {
         if (subscription is null)
             return NotFound("The messaging entity could not be found.");
@@ -36,11 +36,6 @@ internal static class RuleManagementHandler
         var name = Get(body, "rule-name") as string;
         if (Get(body, "rule-description") is not Map description || string.IsNullOrEmpty(name))
             return new ManagementReply(400, "A rule-name and rule-description are required.", "com.microsoft:argument-error");
-
-        if (subscription.GetRule(name) is not null)
-            return new ManagementReply(409,
-                $"The messaging entity '{subscription.TopicName}|{subscription.Name}|{name}' already exists.",
-                "com.microsoft:entity-already-exists");
 
         var rule = new RuleEntity { Name = name };
         if (Get(description, "correlation-filter") is Map correlation)
@@ -69,7 +64,10 @@ internal static class RuleManagementHandler
 
         try
         {
-            subscription.AddOrUpdateRule(rule);
+            if (!subscription.TryAddRule(rule))
+                return new ManagementReply(409,
+                    $"The messaging entity '{EntityPath(namespaceName, subscription, name)}' already exists.",
+                    "com.microsoft:entity-already-exists");
         }
         catch (SqlSyntaxException)
         {
@@ -79,13 +77,19 @@ internal static class RuleManagementHandler
         return new ManagementReply(200, "OK");
     }
 
-    public static ManagementReply RemoveRule(SubscriptionEntity? subscription, Map body)
+    public static ManagementReply RemoveRule(SubscriptionEntity? subscription, Map body, string namespaceName = "")
     {
         var name = Get(body, "rule-name") as string;
-        if (subscription is null || name is null || !subscription.RemoveRule(name))
-            return NotFound($"The messaging entity '{subscription?.TopicName}|{subscription?.Name}|{name}' could not be found.");
+        if (subscription is null)
+            return NotFound("The messaging entity could not be found.");
+        if (name is null || !subscription.RemoveRule(name))
+            return NotFound($"The messaging entity '{EntityPath(namespaceName, subscription, name)}' could not be found.");
         return new ManagementReply(200, "OK");
     }
+
+    // Azure names a rule "{namespace}:Topic:{topic}|{subscription}|{rule}" in its errors.
+    private static string EntityPath(string namespaceName, SubscriptionEntity subscription, string? rule) =>
+        $"{namespaceName}:Topic:{subscription.TopicName}|{subscription.Name}|{rule}";
 
     public static ManagementReply EnumerateRules(SubscriptionEntity? subscription, Map body)
     {

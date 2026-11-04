@@ -199,6 +199,47 @@ public class RuleDeliveryTests
     }
 
     [Fact]
+    public void ActionCopies_AreNumberedInDeliveryOrder_AndActionsSeeTheSequenceNumber()
+    {
+        var sub = Subscription(True("a", "SET user.seen = sys.SequenceNumber"), True("b", "SET user.seen = sys.SequenceNumber"), True("plain"));
+
+        sub.DeliverMessage(Red());
+
+        var copies = Drain(sub.Queue);
+        Assert.Equal(3, copies.Count);
+        var numbers = copies.Select(c => c.SequenceNumber).ToList();
+        Assert.Equal(numbers.OrderBy(n => n), numbers);
+        Assert.Equal(numbers.Count, numbers.Distinct().Count());
+        Assert.All(copies.Where(c => c.ApplicationProperties.ContainsKey("seen")),
+            c => Assert.True((long)c.ApplicationProperties["seen"] > 0));
+    }
+
+    [Fact]
+    public void TryAddRule_SecondAddOfSameName_ReturnsFalse_AndKeepsTheFirst()
+    {
+        var sub = new SubscriptionEntity("sub", "topic");
+
+        Assert.True(sub.TryAddRule(Sql("r", "a = 1")));
+        Assert.False(sub.TryAddRule(Sql("r", "a = 2")));
+        Assert.Equal("a = 1", sub.GetRule("r")!.SqlExpression);
+    }
+
+    [Fact]
+    public void TryAddRule_ConcurrentCreatesOfOneName_ExactlyOneWins()
+    {
+        var sub = new SubscriptionEntity("sub", "topic");
+        var wins = 0;
+
+        Parallel.For(0, 64, i => { if (sub.TryAddRule(Sql("r", $"a = {i}"))) Interlocked.Increment(ref wins); });
+
+        Assert.Equal(1, wins);
+    }
+
+    [Fact]
+    public void TryAddRule_InvalidRule_Throws() =>
+        Assert.Throws<SqlSyntaxException>(() => new SubscriptionEntity("sub", "topic").TryAddRule(Sql("bad", "a IN (")));
+
+    [Fact]
     public void AddOrUpdateRule_InvalidFilter_Throws_RuleAbsent()
     {
         var sub = new SubscriptionEntity("sub", "topic");

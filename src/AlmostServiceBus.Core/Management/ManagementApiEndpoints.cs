@@ -64,14 +64,14 @@ public static class ManagementApiEndpoints
                 }
 
                 // Without If-Match this is a create, and Azure refuses to overwrite an existing rule.
-                if (!isUpdate && sub.GetRule(ruleName) is not null)
-                    return ManagementApiErrors.Conflict(
-                        $"The messaging entity '{ns.Name}:Topic:{topicName}|{subName}|{ruleName}' already exists.");
-
                 var rule = ToRuleEntity(props, ruleName);
                 try
                 {
-                    sub.AddOrUpdateRule(rule);
+                    if (isUpdate)
+                        sub.AddOrUpdateRule(rule);
+                    else if (!sub.TryAddRule(rule))
+                        return ManagementApiErrors.Conflict(
+                            $"The messaging entity '{ns.Name}:Topic:{topicName}|{subName}|{ruleName}' already exists.");
                 }
                 catch (SqlSyntaxException ex)
                 {

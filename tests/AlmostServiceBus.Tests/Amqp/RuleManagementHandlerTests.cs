@@ -105,10 +105,11 @@ public class RuleManagementHandlerTests
         var sub = Sub();
         RuleManagementHandler.AddRule(sub, AddRuleBody("dup"));
 
-        var reply = RuleManagementHandler.AddRule(sub, AddRuleBody("dup"));
+        var reply = RuleManagementHandler.AddRule(sub, AddRuleBody("dup"), "ns");
 
         Assert.Equal(409, reply.StatusCode);
         Assert.Equal("com.microsoft:entity-already-exists", reply.ErrorCondition);
+        Assert.Equal("The messaging entity 'ns:Topic:topic|sub|dup' already exists.", reply.Description);
     }
 
     [Fact]
@@ -128,10 +129,11 @@ public class RuleManagementHandlerTests
     [Fact]
     public void RemoveRule_Missing_Replies404NotFound()
     {
-        var reply = RuleManagementHandler.RemoveRule(Sub(), new Map { ["rule-name"] = "nope" });
+        var reply = RuleManagementHandler.RemoveRule(Sub(), new Map { ["rule-name"] = "nope" }, "ns");
 
         Assert.Equal(404, reply.StatusCode);
         Assert.Equal("amqp:not-found", reply.ErrorCondition);
+        Assert.Equal("The messaging entity 'ns:Topic:topic|sub|nope' could not be found.", reply.Description);
     }
 
     [Fact]

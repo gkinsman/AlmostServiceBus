@@ -93,11 +93,13 @@ public class ManagementLinkEndpoint : IRequestProcessor
                     break;
 
                 case "com.microsoft:add-rule":
-                    SendReply(requestContext, RuleManagementHandler.AddRule(FindScopedSubscription(requestContext), RequestBody(requestContext)));
+                    SendReply(requestContext, RuleManagementHandler.AddRule(FindScopedSubscription(requestContext), RequestBody(requestContext),
+                        ResolveNamespace(requestContext).Name));
                     break;
 
                 case "com.microsoft:remove-rule":
-                    SendReply(requestContext, RuleManagementHandler.RemoveRule(FindScopedSubscription(requestContext), RequestBody(requestContext)));
+                    SendReply(requestContext, RuleManagementHandler.RemoveRule(FindScopedSubscription(requestContext), RequestBody(requestContext),
+                        ResolveNamespace(requestContext).Name));
                     break;
 
                 case "com.microsoft:enumerate-rules":

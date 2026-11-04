@@ -93,6 +93,17 @@ public sealed class SubscriptionEntity
         _rules[rule.Name] = rule;
     }
 
+    /// <summary>
+    /// Adds the rule unless one with that name exists (Azure answers a create of an existing rule with 409).
+    /// Atomic, so of concurrent creates of one name exactly one wins.
+    /// </summary>
+    /// <exception cref="SqlSyntaxException">The rule's SQL filter or action is invalid, as Azure would reject it.</exception>
+    public bool TryAddRule(RuleEntity rule)
+    {
+        rule.Validate();
+        return _rules.TryAdd(rule.Name, rule);
+    }
+
     public RuleEntity? GetRule(string name) =>
         _rules.TryGetValue(name, out var rule) ? rule : null;
 
@@ -117,6 +128,7 @@ public sealed class SubscriptionEntity
     {
         Queue.AssignSequenceNumber(message);
         var plainMatch = false;
+        var actionCopies = new List<BrokeredMessage>();
         foreach (var rule in _rules.Values.OrderBy(r => r.Name, RuleKeyComparer))
         {
             bool matched;
@@ -140,7 +152,9 @@ public sealed class SubscriptionEntity
                 continue;
             }
 
+            // Clone() drops the sequence number; the action still sees the message's own (sys.SequenceNumber).
             var copy = message.Clone();
+            copy.SequenceNumber = message.SequenceNumber;
             try
             {
                 rule.ApplyAction(copy);
@@ -148,15 +162,23 @@ public sealed class SubscriptionEntity
             catch (SqlEvaluationException ex)
             {
                 if (DeadLetteringOnFilterEvaluationExceptions)
+                {
+                    copy.SequenceNumber = 0; // the dead-letter queue numbers its own messages
                     Queue.DeadLetterOnArrival(copy, "RuleActionException", ex.Message, FilteringEngine);
+                }
                 continue;
             }
 
-            Enqueue(copy);
+            actionCopies.Add(copy);
         }
 
-        if (plainMatch)
-            Enqueue(message);
+        // Deliver in sequence order: the first copy keeps the number already assigned, the rest are numbered
+        // as they are enqueued, so a receiver never sees a later number before an earlier one.
+        var deliveries = plainMatch ? [message, .. actionCopies] : actionCopies;
+        for (var i = 1; i < deliveries.Count; i++)
+            deliveries[i].SequenceNumber = 0;
+        foreach (var delivery in deliveries)
+            Enqueue(delivery);
     }
 
     private void Enqueue(BrokeredMessage message)
