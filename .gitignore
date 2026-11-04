@@ -497,3 +497,6 @@ tests/client-sdk-smoke/java/target/
 emulator-ca.crt
 emulator-truststore.p12
 emulator-admin.pfx
+
+# Local design notes and plans (superpowers skills); not part of the repo
+docs/superpowers/

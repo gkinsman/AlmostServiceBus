@@ -4,7 +4,7 @@ namespace AlmostServiceBus.Tests.Broker.Sql;
 
 /// <summary>
 /// Syntax errors, with the details text real Azure returned for the same expression
-/// (docs/superpowers/specs/sql-azure-probe). Columns are recomputed for the unwrapped expression; for a STRING
+/// (the recorded cases in tests/shared/sql-compat-cases.json). Columns are recomputed for the unwrapped expression; for a STRING
 /// token Azure reports the column of its last character.
 /// </summary>
 public class SqlGrammarErrorTests
