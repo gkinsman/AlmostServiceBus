@@ -128,9 +128,18 @@ public sealed class NamespaceContext
     /// Sends a message the source just dead-lettered to its ForwardDeadLetteredMessagesTo
     /// entity. Returns <see langword="false"/> when it can't be delivered there; the caller then
     /// keeps it in the source's own dead-letter queue with the reason it was dead-lettered for.
+    /// Real Service Bus sets DeadLetterSource only on a message forwarded this way.
     /// </summary>
-    internal bool ForwardDeadLetter(QueueEntity source, BrokeredMessage message) =>
-        TryTransfer(source.ForwardDeadLetteredMessagesTo!, message) is null;
+    internal bool ForwardDeadLetter(QueueEntity source, BrokeredMessage message)
+    {
+        var previousSource = message.DeadLetterSource;
+        message.DeadLetterSource = source.Name;
+        if (TryTransfer(source.ForwardDeadLetteredMessagesTo!, message) is null)
+            return true;
+
+        message.DeadLetterSource = previousSource;
+        return false;
+    }
 
     // Delivers the message to the named queue or topic, or returns why it can't.
     private string? TryTransfer(string target, BrokeredMessage message)

@@ -568,7 +568,7 @@ public class ReceiverLinkEndpoint : LinkEndpoint
             message.MessageAnnotations[new Symbol("x-opt-partition-key")] = brokered.PartitionKey;
 
         if (brokered.DeadLetterSource is not null)
-            message.MessageAnnotations[new Symbol("x-opt-dead-letter-source")] = brokered.DeadLetterSource;
+            message.MessageAnnotations[new Symbol("x-opt-deadletter-source")] = brokered.DeadLetterSource;
 
         if (brokered.ScheduledEnqueueTimeUtc.HasValue)
         {

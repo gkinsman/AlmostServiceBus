@@ -247,11 +247,14 @@ public class AutoForwardingTests
         source.Enqueue(Message());
         var received = source.TryDequeueImmediate()!;
         source.TrackPending(received);
-        source.DeadLetter(received.LockToken!, "manual", null);
+        source.DeadLetter(received.LockToken!, "manual", "explicit dead-letter");
 
+        // Real Service Bus replaces the reason but keeps the original description and source.
         Assert.Equal(0, end.MessageCount);
-        Assert.Equal("Maximum transfer hop count is exceeded.",
-            ns.GetQueue("q3")!.DeadLetterQueue.TryDequeueImmediate()?.DeadLetterReason);
+        var dead = ns.GetQueue("q3")!.DeadLetterQueue.TryDequeueImmediate();
+        Assert.Equal("Maximum transfer hop count is exceeded.", dead?.DeadLetterReason);
+        Assert.Equal("explicit dead-letter", dead!.DeadLetterErrorDescription);
+        Assert.Equal("source", dead.DeadLetterSource);
     }
 
     [Fact]

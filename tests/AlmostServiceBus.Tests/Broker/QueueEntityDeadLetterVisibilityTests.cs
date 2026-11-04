@@ -30,7 +30,7 @@ public class QueueEntityDeadLetterVisibilityTests
         Assert.Equal(MessageState.Active, inDlq.State);
         Assert.Equal("ValidationFailed", inDlq.DeadLetterReason);
         Assert.Equal("bad schema", inDlq.DeadLetterErrorDescription);
-        Assert.Equal("orders", inDlq.DeadLetterSource);
+        Assert.Null(inDlq.DeadLetterSource); // Real Service Bus sets it only on forwarded dead letters.
         Assert.Equal("test", inDlq.ApplicationProperties["source"]);
 
         var dashboardDlq = dlq.PeekMessages(10);

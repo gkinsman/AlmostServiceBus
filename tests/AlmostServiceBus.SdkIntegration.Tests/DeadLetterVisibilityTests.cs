@@ -87,7 +87,8 @@ public class DeadLetterVisibilityTests : IAsyncLifetime
         Assert.Equal(2, rows.Count);
         Assert.Equal("ValidationFailed", rows["m1"].GetProperty("deadLetterReason").GetString());
         Assert.Equal("schema mismatch", rows["m1"].GetProperty("deadLetterErrorDescription").GetString());
-        Assert.Equal(queueName, rows["m1"].GetProperty("deadLetterSource").GetString());
+        // Service Bus sets DeadLetterSource only on dead letters forwarded on to another entity.
+        Assert.Null(rows["m1"].GetProperty("deadLetterSource").GetString());
         Assert.Equal("Active", rows["m1"].GetProperty("state").GetString());
         Assert.Equal("test", rows["m1"].GetProperty("applicationProperties").GetProperty("source").GetString());
 

@@ -40,6 +40,7 @@ public sealed class QueueEntity : IDisposable
     private readonly ConcurrentDictionary<string, byte> _sweptLockTokens = new();
     private readonly bool _isDeadLetterQueue;
     private QueueEntity? _deadLetterQueue;
+    private QueueEntity? _deadLetterParent;
     private NamespaceContext? _namespace;
     private SessionManager? _sessionManager;
     private int _messageCount;
@@ -122,6 +123,13 @@ public sealed class QueueEntity : IDisposable
 
     public string? ForwardDeadLetteredMessagesTo { get; set; }
 
+    /// <summary>
+    /// Real Service Bus refuses receivers and browsers on an entity that auto-forwards. That
+    /// includes the dead-letter queue of an entity that forwards its dead-lettered messages.
+    /// </summary>
+    internal bool AutoForwards =>
+        ForwardTo is not null || _deadLetterParent?.ForwardDeadLetteredMessagesTo is not null;
+
     public TimeSpan? AutoDeleteOnIdle { get; set; }
 
     public bool RequiresDuplicateDetection { get; set; } = false;
@@ -177,7 +185,7 @@ public sealed class QueueEntity : IDisposable
             if (_deadLetterQueue is not null)
                 return _deadLetterQueue;
 
-            var dlq = new QueueEntity($"{Name}/$deadletterqueue", isDeadLetterQueue: true);
+            var dlq = new QueueEntity($"{Name}/$deadletterqueue", isDeadLetterQueue: true) { _deadLetterParent = this };
             if (Interlocked.CompareExchange(ref _deadLetterQueue, dlq, null) != null)
                 dlq.Dispose(); // lost the race — dispose the duplicate (has a Timer)
             return _deadLetterQueue;
@@ -255,11 +263,13 @@ public sealed class QueueEntity : IDisposable
 
     // For messages the broker itself refuses on the way in. Real Service Bus puts those it can't
     // auto-forward in the source's ordinary dead-letter queue, with only a reason, not in the
-    // transfer dead-letter queue the docs describe.
+    // transfer dead-letter queue the docs describe. A message already dead-lettered once (forwarded
+    // by ForwardDeadLetteredMessagesTo) keeps its description unless a new one is given.
     internal void DeadLetterOnArrival(BrokeredMessage message, string reason, string? description = null)
     {
         message.DeadLetterReason = reason;
-        message.DeadLetterErrorDescription = description;
+        if (description is not null)
+            message.DeadLetterErrorDescription = description;
         message.LockToken = null;
         message.State = MessageState.Active;
 
@@ -513,7 +523,7 @@ public sealed class QueueEntity : IDisposable
         if (message.DeliveryCount >= MaxDeliveryCount)
         {
             MoveToDeadLetterQueue(lockToken, message, "MaxDeliveryCountExceeded",
-                $"Message delivery count exceeded the maximum of {MaxDeliveryCount}.");
+                $"Message could not be consumed after {MaxDeliveryCount} delivery attempts.");
         }
         else
         {
@@ -661,7 +671,6 @@ public sealed class QueueEntity : IDisposable
     {
         message.DeadLetterReason = reason;
         message.DeadLetterErrorDescription = description;
-        message.DeadLetterSource = Name;
 
         RecordSettled(lockToken, message, MessageState.DeadLettered);
 
@@ -809,7 +818,7 @@ public sealed class QueueEntity : IDisposable
         if (message.DeliveryCount >= MaxDeliveryCount)
         {
             MoveToDeadLetterQueue(oldLockToken, message, "MaxDeliveryCountExceeded",
-                $"Message delivery count exceeded the maximum of {MaxDeliveryCount}.");
+                $"Message could not be consumed after {MaxDeliveryCount} delivery attempts.");
         }
         else
         {

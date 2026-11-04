@@ -18,6 +18,19 @@ All notable changes to this project are documented here. The format is based on
     destination doesn't exist is refused. If the destination is deleted later,
     the message stays in the source's dead-letter queue. The transfer counts
     towards the same four-hop limit as `ForwardTo`.
+  - The source's dead-letter queue refuses receivers and peeks while
+    forwarding is on, as Service Bus does.
+  - Checked against a real Service Bus namespace by new conformance tests.
+- **`DeadLetterSource` now reaches clients, and only when Service Bus sets it.**
+  - The emulator sent it under the wrong AMQP annotation name, so the SDK
+    always saw `null`.
+  - It is now set only on messages forwarded out of a dead-letter queue, as in
+    Service Bus. An ordinary dead-lettered message has none.
+- **Dead-letter descriptions match Service Bus.**
+  - Max-delivery dead-lettering now says "Message could not be consumed after
+    N delivery attempts.", the text Service Bus uses.
+  - When a forwarded dead-letter fails its next transfer, the hop-limit reason
+    replaces the original reason but the description is kept.
 
 ## [0.7.3] - 2026-10-23
 
