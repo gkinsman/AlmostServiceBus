@@ -16,7 +16,8 @@
 - **No fallback, ever.** No code path may turn an unparseable or unevaluable expression into a match, or into a silent no-match.
 - Parse errors carry the **position** (absolute index, line, column) and the **expected tokens**.
 - Filter and action expressions longer than **1024** characters are rejected at creation. This mirrors the SDK's `MaximumSqlRuleFilterStatementLength` / `MaximumSqlRuleActionStatementLength`.
-- The Azure connection string comes **only** from `ASB_CONNECTION_STRING`, and never touches git. Record mode is turned on by `ASB_COMPAT_RECORD=1`.
+- **Azure connection string.** It is resolved by one shared helper: first the `ASB_CONNECTION_STRING` environment variable, then .NET user secrets with id `almostservicebus-conformance` and key `ASB_CONNECTION_STRING`. It never touches git. Record mode is turned on by `ASB_COMPAT_RECORD=1`.
+- `tests/client-sdk-smoke` must not change how it gets its connection: it reads `ASB_CONNECTION_STRING` to override the emulator, which is why the secret isn't a global environment variable.
 - Commit locally on `fleet/session-c54d42a2`. **Don't push, open a PR or comment on issue #192.**
 - `TreatWarningsAsErrors` is on, solution-wide. Match the surrounding comment density and naming.
 - Every commit message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
@@ -549,14 +550,20 @@ Deleted: `Broker/SqlFilterExpression.cs` and `tests/AlmostServiceBus.Tests/Broke
 ### Task 12: Compatibility suite (emulator vs Azure, diff, record mode)
 
 **Files:**
-- Modify: `tests/AlmostServiceBus.Conformance.Tests/AlmostServiceBus.Conformance.Tests.csproj`, adding the same shared `Compile` and `None` links as Task 7.
-- Create: `tests/AlmostServiceBus.Conformance.Tests/SqlCompatTests.cs`
+- Modify: `tests/AlmostServiceBus.Conformance.Tests/AlmostServiceBus.Conformance.Tests.csproj`:
+  - Add `<UserSecretsId>almostservicebus-conformance</UserSecretsId>`.
+  - Add `<PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.*" />`. Pin it to the version that matches the repo's other 10.0.x Microsoft packages (10.0.14 at the time of writing). The repo has no central package management.
+  - Add the same shared `Compile` and `None` links as Task 7.
+- Create: `tests/AlmostServiceBus.Conformance.Tests/RealAsbConnection.cs`. It provides `internal static class RealAsbConnection { public static string? ConnectionString { get; } }`, which returns the environment variable `ASB_CONNECTION_STRING` if it is non-empty, otherwise user secrets (`new ConfigurationBuilder().AddUserSecrets<RealAsbConnection>()["ASB_CONNECTION_STRING"]`).
+- Modify: `RealAsbConformanceTests.cs` and `TopicRequeueReproTest.cs` to use `RealAsbConnection.ConnectionString` instead of reading the environment variable themselves. Update their skip messages to mention both sources.
+- Modify: the "real ASB" sections of `CLAUDE.md` and `README.md` to document `dotnet user-secrets set ASB_CONNECTION_STRING "..." --id almostservicebus-conformance`.
+- Create: `tests/AlmostServiceBus.Conformance.Tests/SqlCompatTests.cs`, which sits next to `RealAsbConformanceTests`.
 
 **Interfaces:**
 - Consumes: `SqlCompatCases.Load/Save/SourcePath`, `TypedValue.ToClr/From` (Task 7), and `ServiceBusEmulatorFixture` (as in `EmulatorConformanceTests`).
 - Produces one `[Fact] SqlCompatTable_EmulatorMatchesAzure`, with this algorithm:
   1. Run the table against the **emulator** through the SDK (HTTP admin plus AMQP data), using `RunTableAsync(ServiceBusClient, ServiceBusAdministrationClient)`.
-  2. If `ASB_CONNECTION_STRING` is set, run the same `RunTableAsync` against **Azure**.
+  2. If `RealAsbConnection.ConnectionString` is non-null, run the same `RunTableAsync` against **Azure**.
   3. Report rows where the emulator differs from Azure. When Azure is absent, compare the emulator with `expected`.
   4. With `ASB_COMPAT_RECORD=1` and Azure present, write Azure's outcome, copies and properties into each case's `expected`, set `"verified": "azure"`, and `Save`. For `Rejected` cases, also put the Azure exception type and message into `note`.
   5. Fail with a markdown table: `id | area | table | azure | emulator`.
@@ -576,7 +583,7 @@ Deleted: `Broker/SqlFilterExpression.cs` and `tests/AlmostServiceBus.Tests/Broke
 
 ### Task 13: Azure compat run, reconcile, document
 
-- [ ] **Step 1: Ask George for the namespace.** It must be Standard tier or above. He should set `ASB_CONNECTION_STRING` in the environment or in the gitignored `.env`; it must never go in a tracked file. Stop here until it's available. Report the cases still marked `"verified": "doc"`.
+- [ ] **Step 1: Check the connection string.** It comes from `RealAsbConnection` (the environment variable, or user secrets `almostservicebus-conformance`). If neither is set, say so in the summary to George and carry on with everything that doesn't need Azure, leaving the cases marked `"verified": "doc"`.
 - [ ] **Step 2: Record:** `ASB_COMPAT_RECORD=1 dotnet test tests/AlmostServiceBus.Conformance.Tests --filter FullyQualifiedName~SqlCompatTests`. Check that `git diff` touches only `tests/shared/sql-compat-cases.json`, and that every case now reads `"verified": "azure"`.
 - [ ] **Step 3: Reconcile.** For each divergence:
   - Flip the matching `SqlSemantics` constant, or fix the code.
