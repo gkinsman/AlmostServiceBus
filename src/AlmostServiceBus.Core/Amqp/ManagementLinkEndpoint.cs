@@ -832,15 +832,13 @@ public class ManagementLinkEndpoint : IRequestProcessor
 
     private static void SendReply(RequestContext requestContext, ManagementReply reply)
     {
-        var response = (reply.Body is null ? new Message() : new Message(reply.Body))
+        var response = reply.Body is null ? new Message() : new Message(reply.Body);
+        response.ApplicationProperties = new ApplicationProperties
         {
-            ApplicationProperties = new ApplicationProperties
-            {
-                ["statusCode"] = reply.StatusCode,
-                ["statusDescription"] = reply.Description
-            },
-            Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
+            ["statusCode"] = reply.StatusCode,
+            ["statusDescription"] = reply.Description
         };
+        response.Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message);
         if (reply.ErrorCondition is not null)
             response.ApplicationProperties["errorCondition"] = new Symbol(reply.ErrorCondition);
         AmqpIdentifiers.CompleteRequest(requestContext, response);
