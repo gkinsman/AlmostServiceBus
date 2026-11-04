@@ -52,7 +52,10 @@ Reference docs:
   hand-written. Tokenizer first (`Tokenizer<SqlToken>`/`TokenizerBuilder`), then token-list
   combinators building an AST. Parse errors report **position and the expected token**
   (Superpower's `TokenListParserResult` provides both; surface them in the exception message).
-- **Scope:** filters and `SqlRuleAction`.
+- **Scope:** filters and `SqlRuleAction`, **including SQL parameters** (`@name`, from
+  `SqlRuleFilter.Parameters` / `SqlRuleAction.Parameters`).
+- **Goal: as full compatibility with Azure Service Bus as possible.** Where Azure and the docs
+  disagree, Azure wins.
 - **Fidelity:** Azure is the reference. George provides a real namespace for the compat run.
   It must be Standard tier or above, because Basic has no topics.
 - **Secrets:** the connection string comes from an environment variable and never touches git.
@@ -88,6 +91,10 @@ A scope applies to any identifier form (`user.[message-type]`, `sys."Label"`).
 - unary `+` and `-`
 
 **Predicates and functions:** `EXISTS(property)`, `newid()`, `property(name)`.
+
+**Parameters:** `@name` (a regular identifier after `@`) is a value bound from the rule's
+parameter collection. It is allowed anywhere a literal is allowed, in filters and in action
+expressions.
 
 **Actions:** `SET <property> = <expression>` and `REMOVE <property>`, separated by `;`, with an
 optional trailing `;`. Action expressions use the same expression grammar.
@@ -176,6 +183,29 @@ run, and the results get recorded in the case table.
 - **More than one matching rule on a subscription.** Delivering one copy per matching rule that
   has an action, versus one copy in total, is a compat question. The emulator currently
   delivers one copy when any rule matches.
+
+### Parameters
+
+- **Storage.** `RuleEntity` gains `FilterParameters` and `ActionParameters` (name → value).
+  Parameter names are stored without their leading `@`; the builder confirms from the SDK
+  source whether the SDK sends `@x` or `x`, and normalises.
+- **Transport.**
+  - HTTP: `AtomXmlReader` and `AtomXmlWriter` read and write the `<Parameters>` element of
+    `SqlFilter` and `SqlRuleAction`. That element is a list of `KeyValueOfstringanyType`
+    entries whose values have typed `i:type` attributes; follow the SDK's serializer for the
+    types.
+  - AMQP: `add-rule` decodes the `parameters` map in the rule description, and
+    `enumerate-rules` encodes it back.
+  - Round-trip: `GetRuleAsync` / `GetRulesAsync` must return the same parameter names, values
+    and types that were sent.
+- **Binding.** Parameters are bound when the rule is compiled, so the compiled filter carries
+  the values.
+- **Compat questions** (settled in the Azure run):
+  - Is a referenced but unbound parameter rejected at creation, or `NULL`?
+  - Is a bound but unreferenced parameter allowed?
+  - Are parameter names case-sensitive?
+  - Which value types are supported (string, long, int, double, bool, DateTime, Guid,
+    TimeSpan)?
 
 ## Validation when a rule is created
 
@@ -272,6 +302,8 @@ Collect these as cases from the start, so one Azure run answers them all:
     a duplicate rule name.
 11. Is an empty or whitespace `SqlExpression` rejected? (The emulator treats it as match-all
     today.)
+12. Parameters: is an unbound reference rejected or `NULL`; is an unused binding allowed; are
+    names case-sensitive; how is each value type compared; and do parameters work in actions?
 
 Each answer goes into the table as an expected outcome and into this document's decisions log
 (below). Answers that change existing emulator behaviour also go into the changelog.
@@ -283,6 +315,7 @@ Each answer goes into the table as an expected outcome and into this document's 
 3. `RuleEntity` / `SubscriptionEntity` integration and validation. Delete the regex code.
 4. HTTP management validation; AMQP `add-rule` / `remove-rule` / `enumerate-rules`.
 5. Actions: grammar, evaluation, and applying them to the delivered copy.
+5a. Parameters: grammar, binding, and HTTP and AMQP round-trip.
 6. SDK end-to-end tests.
 7. Compat suite. **Then ask George for the namespace**, run in record mode, and reconcile every
    divergence (fix the emulator, or note why the case can't apply).
