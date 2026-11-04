@@ -119,6 +119,72 @@ public class ManagementApiRuleTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Null(_registry.GetOrCreate("test-ns").GetSubscription(TopicName, SubName)!.GetRule("bad-rule"));
+        Assert.Contains("There was an error parsing the SQL expression. [Token line=2, column=0, Token in error= , Additional details= syntax error, unexpected EOF",
+            await response.Content.ReadAsStringAsync());
+    }
+
+    private Task<HttpResponseMessage> PutRule(RuleEntity rule, bool update = false)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Put, $"/{TopicName}/Subscriptions/{SubName}/Rules/{rule.Name}")
+        {
+            Content = new StringContent(AtomXmlWriter.WriteRuleEntry(rule, TopicName, SubName), Encoding.UTF8, "application/atom+xml")
+        };
+        if (update) request.Headers.Add("If-Match", "*");
+        return _client.SendAsync(request);
+    }
+
+    [Fact]
+    public async Task CreateRule_WithParameters_GetRuleReturnsSameTypes()
+    {
+        await PutRule(new RuleEntity
+        {
+            Name = "params", FilterType = FilterType.SqlFilter, SqlExpression = "a = @a AND b = @b",
+            FilterParameters = new() { ["@a"] = "x", ["@b"] = 5L },
+            ActionExpression = "SET user.t = @t", ActionParameters = new() { ["@t"] = TimeSpan.FromHours(1) },
+        });
+
+        var response = await _client.GetAsync($"/{TopicName}/Subscriptions/{SubName}/Rules/params");
+        var props = AtomXmlReader.ReadRuleProperties(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(new Dictionary<string, object?> { ["@a"] = "x", ["@b"] = 5L }, props.FilterParameters);
+        Assert.Equal(new Dictionary<string, object?> { ["@t"] = TimeSpan.FromHours(1) }, props.ActionParameters);
+    }
+
+    [Fact]
+    public async Task CreateRule_UnusedParameter_Returns400WithAzureText()
+    {
+        var response = await PutRule(new RuleEntity
+        {
+            Name = "unused", FilterType = FilterType.SqlFilter, SqlExpression = "a = 1",
+            FilterParameters = new() { ["@x"] = 1 },
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("The specified parameter (@x) in Parameters property was not used in the expression specified in SqlExpression.",
+            await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task CreateRule_InvalidAction_Returns400()
+    {
+        var response = await PutRule(new RuleEntity { Name = "bad-action", FilterType = FilterType.TrueFilter, ActionExpression = "SET" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("expecting IDENTIFIER, or DELIMITED_IDENTIFIER", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task CreateRule_Duplicate_Returns409_UpdateWithIfMatchSucceeds()
+    {
+        var rule = new RuleEntity { Name = "dup", FilterType = FilterType.SqlFilter, SqlExpression = "a = 1" };
+        Assert.Equal(HttpStatusCode.Created, (await PutRule(rule)).StatusCode);
+
+        var duplicate = await PutRule(rule);
+        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        var detail = System.Xml.Linq.XDocument.Parse(await duplicate.Content.ReadAsStringAsync()).Root!.Element("Detail")!.Value;
+        Assert.Equal($"The messaging entity 'test-ns:Topic:{TopicName}|{SubName}|dup' already exists.", detail);
+
+        Assert.Equal(HttpStatusCode.OK, (await PutRule(rule, update: true)).StatusCode);
     }
 
     [Fact]

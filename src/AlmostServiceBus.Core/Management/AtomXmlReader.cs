@@ -61,7 +61,9 @@ public record RuleProperties(
     string? ReplyTo = null,
     string? SessionId = null,
     string? ContentType = null,
-    Dictionary<string, object>? CorrelationFilterProperties = null);
+    Dictionary<string, object>? CorrelationFilterProperties = null,
+    Dictionary<string, object?>? FilterParameters = null,
+    Dictionary<string, object?>? ActionParameters = null);
 
 // ── Reader ───────────────────────────────────────────────────────────────────
 
@@ -174,9 +176,11 @@ public static class AtomXmlReader
         string? contentType = null;
         Dictionary<string, object>? correlationFilterProperties = null;
 
+        Dictionary<string, object?>? filterParameters = null;
         if (filterType == FilterType.SqlFilter)
         {
             sqlExpression = ParseOptionalString(filterEl, "SqlExpression");
+            filterParameters = ParseParameters(filterEl);
         }
         else if (filterType == FilterType.CorrelationFilter)
         {
@@ -203,15 +207,52 @@ public static class AtomXmlReader
 
         var actionEl = ruleEl.Element(Sb + "Action");
         string? actionExpression = null;
+        Dictionary<string, object?>? actionParameters = null;
         if (actionEl is not null)
         {
             var actionType = actionEl.Attribute(Xsi + "type")?.Value;
             if (actionType == "SqlRuleAction")
+            {
                 actionExpression = ParseOptionalString(actionEl, "SqlExpression");
+                actionParameters = ParseParameters(actionEl);
+            }
         }
 
         return new RuleProperties(name, filterType, sqlExpression, correlationId, actionExpression,
-            subject, to, replyTo, sessionId, contentType, correlationFilterProperties);
+            subject, to, replyTo, sessionId, contentType, correlationFilterProperties, filterParameters, actionParameters);
+    }
+
+    // <Parameters><KeyValueOfstringanyType><Key>@a</Key><Value i:type="xs:long">5</Value>… as the SDK writes
+    // them. The type's prefix varies, so only its local name is used. An empty element means no parameters.
+    private static Dictionary<string, object?>? ParseParameters(XElement parent)
+    {
+        var entries = parent.Element(Sb + "Parameters")?.Elements(Sb + "KeyValueOfstringanyType").ToList();
+        if (entries is null || entries.Count == 0)
+            return null;
+
+        var parameters = new Dictionary<string, object?>();
+        foreach (var entry in entries)
+        {
+            var key = entry.Element(Sb + "Key")?.Value;
+            var valueEl = entry.Element(Sb + "Value");
+            if (key is null || valueEl is null)
+                continue;
+
+            var type = valueEl.Attribute(Xsi + "type")?.Value;
+            var text = valueEl.Value;
+            parameters[key] = valueEl.Attribute(Xsi + "nil")?.Value == "true" ? null : (type?[(type.IndexOf(':') + 1)..]) switch
+            {
+                "int" => XmlConvert.ToInt32(text),
+                "long" => XmlConvert.ToInt64(text),
+                "boolean" => XmlConvert.ToBoolean(text),
+                "double" => XmlConvert.ToDouble(text),
+                "dateTime" => XmlConvert.ToDateTime(text, XmlDateTimeSerializationMode.Utc),
+                "duration" => XmlConvert.ToTimeSpan(text),
+                _ => text
+            };
+        }
+
+        return parameters;
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────

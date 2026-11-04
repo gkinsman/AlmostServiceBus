@@ -168,6 +168,8 @@ public static class AtomXmlWriter
             var sqlExpr = rule.FilterType == FilterType.TrueFilter ? "1=1" : rule.SqlExpression;
             if (sqlExpr is not null)
                 filterElement.Add(new XElement(Sb + "SqlExpression", sqlExpr));
+            if (rule.FilterType == FilterType.SqlFilter && rule.FilterParameters is not null)
+                filterElement.Add(BuildParameters(rule.FilterParameters));
         }
         else if (rule.FilterType == FilterType.CorrelationFilter)
         {
@@ -203,6 +205,8 @@ public static class AtomXmlWriter
 
         if (rule.ActionExpression is not null)
             actionElement.Add(new XElement(Sb + "SqlExpression", rule.ActionExpression));
+        if (rule.ActionExpression is not null && rule.ActionParameters is not null)
+            actionElement.Add(BuildParameters(rule.ActionParameters));
 
         var desc = new XElement(Sb + "RuleDescription",
             new XAttribute(XNamespace.Xmlns + "i", Xsi.NamespaceName),
@@ -213,6 +217,31 @@ public static class AtomXmlWriter
         // Full "{topic}/Subscriptions/{sub}/Rules/{rule}" path so the SDK can parse the entity names.
         return BuildEntry($"{topicName}/Subscriptions/{subscriptionName}/Rules/{rule.Name}", rule.Name, desc, baseUrl);
     }
+
+    private static readonly XNamespace Xsd = "http://www.w3.org/2001/XMLSchema";
+
+    // The SDK's parameter shape: each value carries an xsd type (it hard-codes the "l28" prefix).
+    private static XElement BuildParameters(Dictionary<string, object?> parameters) =>
+        new(Sb + "Parameters", parameters.Select(p =>
+        {
+            var (type, text) = p.Value switch
+            {
+                int i => ("int", XmlConvert.ToString(i)),
+                long l => ("long", XmlConvert.ToString(l)),
+                bool b => ("boolean", XmlConvert.ToString(b)),
+                double d => ("double", XmlConvert.ToString(d)),
+                DateTime dt => ("dateTime", XmlConvert.ToString(dt, XmlDateTimeSerializationMode.Utc)),
+                TimeSpan ts => ("duration", XmlConvert.ToString(ts)),
+                null => ("string", ""),
+                var other => ("string", Convert.ToString(other, System.Globalization.CultureInfo.InvariantCulture) ?? "")
+            };
+            return new XElement(Sb + "KeyValueOfstringanyType",
+                new XElement(Sb + "Key", p.Key),
+                new XElement(Sb + "Value",
+                    new XAttribute(Xsi + "type", "l28:" + type),
+                    new XAttribute(XNamespace.Xmlns + "l28", Xsd.NamespaceName),
+                    text));
+        }));
 
     // ── Shared helpers ───────────────────────────────────────────────────────
 

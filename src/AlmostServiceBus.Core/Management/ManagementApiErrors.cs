@@ -21,6 +21,13 @@ public static class ManagementApiErrors
         return Results.Content(xml, ContentType, statusCode: StatusCodes.Status400BadRequest);
     }
 
+    /// <summary>409 with Azure's own detail text; the admin client raises MessagingEntityAlreadyExists.</summary>
+    public static IResult Conflict(string detail)
+    {
+        var xml = $"<Error><Code>409</Code><Detail>{System.Security.SecurityElement.Escape(detail)}</Detail></Error>";
+        return Results.Content(xml, ContentType, statusCode: StatusCodes.Status409Conflict);
+    }
+
     public static IResult EntityAlreadyExists(string entityName)
     {
         var xml = $"<Error><Code>509</Code><Detail>Entity '{entityName}' already exists.</Detail></Error>";
