@@ -31,6 +31,61 @@ All notable changes to this project are documented here. The format is based on
     N delivery attempts.", the text Service Bus uses.
   - When a forwarded dead-letter fails its next transfer, the hop-limit reason
     replaces the original reason but the description is kept.
+- **SQL filters no longer match unrelated messages.** (#192)
+  - `IN`, `"quoted"` and `[bracketed]` property names, and combinations of
+    them, used to fall through to a catch-all that matched every message.
+  - The regex-based evaluator is replaced by a full parser for the Service
+    Bus SQL grammar, built with Superpower. It covers every operator,
+    `LIKE … ESCAPE`, `IN`, `IS [NOT] NULL`, `EXISTS`, arithmetic, `newid()`,
+    `property()`, the `sys.`/`user.` scopes and all three identifier forms.
+  - Behaviour matches real Azure. A table of 478 cases, recorded against a
+    real namespace, runs in CI against the emulator
+    (`tests/shared/sql-compat-cases.json`). This includes how values turn into
+    text in `LIKE` and concatenation: doubles to 15 digits, as Azure prints them.
+- **`ServiceBusRuleManager` works.** `add-rule`, `remove-rule` and
+  `enumerate-rules` on `$management` used to answer OK without doing
+  anything, so `CreateRuleAsync` "succeeded" without adding a rule.
+
+### Added
+- **SQL rule actions.** `SET` and `REMOVE` run on the copy a rule delivers,
+  as on Azure:
+  - The copy gets a `RuleName` property.
+  - Statements run in order.
+  - `SET` on an existing property converts the value to that property's type.
+  - Each matching rule with an action produces its own copy.
+- **SQL parameters** (`@name`) on filters and actions, through the admin
+  client. Like Azure, the AMQP rule manager can't send them.
+- **Filter and action exceptions.** A filter or action that fails on a message
+  dead-letters it, as Azure does, with `FilterException` or
+  `RuleActionException` and source `FilteringEngine`. With
+  `DeadLetteringOnFilterEvaluationExceptions` off, the message is dropped.
+- **Azure comparison tests** read the connection string from the
+  `ASB_CONNECTION_STRING` environment variable or from user secrets:
+  `dotnet user-secrets set ASB_CONNECTION_STRING "..." --id almostservicebus-conformance`.
+
+### Changed
+These match real Azure, but may change routing for existing rules.
+- **Unprefixed property names are user properties.** `label = 'x'` no longer
+  reads the system `Label`; write `sys.Label`. `To`, `MessageId`,
+  `CorrelationId` and the other system names work the same way.
+- **Invalid expressions are rejected when the rule is created**, with Azure's
+  error text. The admin client raises `ArgumentException`, the rule manager a
+  `GeneralError`.
+  - This covers syntax errors, unknown `sys.` names (including
+    `sys.Subject`), unknown functions, and unbound or unused parameters.
+  - It also covers bare values used as a predicate (`b`, `TRUE`) and empty or
+    whitespace-only expressions.
+- **Type mismatches dead-letter the message** instead of being quietly
+  coerced or matched. For example, a numeric string compared with a number
+  (`n = 27` where `n` is `"27"`), or `<`/`>` between strings.
+- **A missing property makes comparisons unknown.** So `color <> 'red'`
+  doesn't match a message without `color`, while `NULL = NULL` and
+  null-valued properties follow C# equality.
+- **`LIKE` and `=` are case-sensitive.** Property and function names are
+  case-insensitive.
+- **Creating a rule that already exists answers 409**
+  (`MessagingEntityAlreadyExists`) instead of overwriting it. Updates with
+  `If-Match` still replace it.
 
 ## [0.7.3] - 2026-10-23
 

@@ -156,6 +156,9 @@ public sealed class NamespaceContext
             return "The SessionId was not set on a message, and it cannot be sent to the entity. Entities that have session support enabled can only receive messages that have the SessionId set to a valid value.";
 
         message.ForwardHopCount++;
+        // The source assigned its own sequence number (subscriptions do so before filtering); the target
+        // numbers the message itself, so it never collides with the target's own sequence.
+        message.SequenceNumber = 0;
         if (queue is not null)
             queue.Enqueue(message);
         else

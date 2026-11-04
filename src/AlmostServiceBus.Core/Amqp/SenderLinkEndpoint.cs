@@ -304,6 +304,9 @@ public class SenderLinkEndpoint : LinkEndpoint
             }
         }
 
+        // Azure reports a session message's partition key as its session id when the sender set none.
+        brokered.PartitionKey ??= brokered.SessionId;
+
         // Extract TTL from header
         if (amqpMessage.Header?.Ttl > 0)
         {

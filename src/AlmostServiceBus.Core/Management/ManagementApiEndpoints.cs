@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using AlmostServiceBus.Core.Broker;
+using AlmostServiceBus.Core.Broker.Sql;
 using AlmostServiceBus.Core.Hosting;
 
 namespace AlmostServiceBus.Core.Management;
@@ -62,21 +63,20 @@ public static class ManagementApiEndpoints
                     props = new RuleProperties(ruleName, FilterType.TrueFilter, null, null, null);
                 }
 
-                var rule = new RuleEntity
+                // Without If-Match this is a create, and Azure refuses to overwrite an existing rule.
+                var rule = ToRuleEntity(props, ruleName);
+                try
                 {
-                    Name = ruleName,
-                    FilterType = props.FilterType,
-                    SqlExpression = props.SqlExpression,
-                    CorrelationId = props.CorrelationId,
-                    Subject = props.Subject,
-                    To = props.To,
-                    ReplyTo = props.ReplyTo,
-                    SessionId = props.SessionId,
-                    ContentType = props.ContentType,
-                    CorrelationFilterProperties = props.CorrelationFilterProperties,
-                    ActionExpression = props.ActionExpression
-                };
-                sub.AddOrUpdateRule(rule);
+                    if (isUpdate)
+                        sub.AddOrUpdateRule(rule);
+                    else if (!sub.TryAddRule(rule))
+                        return ManagementApiErrors.Conflict(
+                            $"The messaging entity '{ns.Name}:Topic:{topicName}|{subName}|{ruleName}' already exists.");
+                }
+                catch (SqlSyntaxException ex)
+                {
+                    return ManagementApiErrors.BadRequest(ex.Message);
+                }
 
                 var xml = AtomXmlWriter.WriteRuleEntry(rule, topicName, subName, baseUrl);
                 return Results.Content(xml, AtomXmlContentType,
@@ -96,6 +96,9 @@ public static class ManagementApiEndpoints
                     return [p.ForwardTo, p.ForwardDeadLetteredMessagesTo];
                 }) is { } badSub)
                     return badSub;
+
+                if (InvalidDefaultRule(body) is { } badRule)
+                    return badRule;
 
                 SubscriptionEntity sub;
                 if (isUpdate)
@@ -523,6 +526,47 @@ public static class ManagementApiEndpoints
         return null;
     }
 
+    private static RuleEntity ToRuleEntity(RuleProperties props, string name) => new()
+    {
+        Name = name,
+        FilterType = props.FilterType,
+        SqlExpression = props.SqlExpression,
+        FilterParameters = props.FilterParameters,
+        CorrelationId = props.CorrelationId,
+        Subject = props.Subject,
+        To = props.To,
+        ReplyTo = props.ReplyTo,
+        SessionId = props.SessionId,
+        ContentType = props.ContentType,
+        MessageId = props.MessageId,
+        ReplyToSessionId = props.ReplyToSessionId,
+        CorrelationFilterProperties = props.CorrelationFilterProperties,
+        ActionExpression = props.ActionExpression,
+        ActionParameters = props.ActionParameters,
+    };
+
+    // Azure validates an inline DefaultRuleDescription before creating anything, answering 400 (the admin client's
+    // ArgumentException) with the SQL error text, and no subscription is created.
+    private static IResult? InvalidDefaultRule(string body)
+    {
+        RuleProperties? rule;
+        try { rule = AtomXmlReader.ReadSubscriptionProperties(body).DefaultRule; }
+        catch { return null; }
+
+        if (rule is null)
+            return null;
+
+        try
+        {
+            ToRuleEntity(rule, rule.Name).Validate();
+            return null;
+        }
+        catch (SqlSyntaxException ex)
+        {
+            return ManagementApiErrors.BadRequest(ex.Message);
+        }
+    }
+
     private static void ApplySubscriptionProperties(SubscriptionEntity entity, string body)
     {
         try
@@ -548,20 +592,7 @@ public static class ManagementApiEndpoints
             if (props.DefaultRule is not null)
             {
                 entity.RemoveRule("$Default");
-                var rule = new RuleEntity
-                {
-                    Name = props.DefaultRule.Name,
-                    FilterType = props.DefaultRule.FilterType,
-                    SqlExpression = props.DefaultRule.SqlExpression,
-                    CorrelationId = props.DefaultRule.CorrelationId,
-                    Subject = props.DefaultRule.Subject,
-                    To = props.DefaultRule.To,
-                    ReplyTo = props.DefaultRule.ReplyTo,
-                    SessionId = props.DefaultRule.SessionId,
-                    ContentType = props.DefaultRule.ContentType,
-                    CorrelationFilterProperties = props.DefaultRule.CorrelationFilterProperties,
-                    ActionExpression = props.DefaultRule.ActionExpression,
-                };
+                var rule = ToRuleEntity(props.DefaultRule, props.DefaultRule.Name);
                 entity.AddOrUpdateRule(rule);
             }
         }

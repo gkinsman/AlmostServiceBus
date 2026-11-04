@@ -283,8 +283,10 @@ generates, bring-your-own-certificate instructions, and the full list of certifi
 # Run all tests
 dotnet test AlmostServiceBus.sln --filter "FullyQualifiedName!~RealAsbConformanceTests"
 
-# Run conformance tests against real Azure Service Bus
-ASB_CONNECTION_STRING="Endpoint=sb://..." dotnet test tests/AlmostServiceBus.Conformance.Tests \
+# Run conformance tests against real Azure Service Bus. The connection string comes from the
+# ASB_CONNECTION_STRING environment variable, or else from user secrets:
+#   dotnet user-secrets set ASB_CONNECTION_STRING "Endpoint=sb://..." --id almostservicebus-conformance
+dotnet test tests/AlmostServiceBus.Conformance.Tests \
   --filter "FullyQualifiedName~RealAsbConformanceTests"
 
 # Run Wolverine tests (emulator must be running on port 5673)

@@ -91,13 +91,21 @@ public class SubscriptionEntityTests
     [Theory]
     [InlineData("1=1", true)]
     [InlineData("1=0", false)]
-    [InlineData("true", true)]
-    [InlineData("false", false)]
     public void SqlFilter_TautologyAndContradiction(string expr, bool expected)
     {
         var rule = new RuleEntity { Name = "r", FilterType = FilterType.SqlFilter, SqlExpression = expr };
         var msg = CreateMessage();
         Assert.Equal(expected, rule.Matches(msg));
+    }
+
+    [Theory]
+    [InlineData("true")]
+    [InlineData("false")]
+    public void SqlFilter_BareBooleanLiteral_IsRejectedAsOnAzure(string expr)
+    {
+        // Azure requires a comparison: a bare TRUE/FALSE is a syntax error ("unexpected EOF").
+        var rule = new RuleEntity { Name = "r", FilterType = FilterType.SqlFilter, SqlExpression = expr };
+        Assert.Throws<AlmostServiceBus.Core.Broker.Sql.SqlSyntaxException>(() => rule.Matches(CreateMessage()));
     }
 
     [Fact]

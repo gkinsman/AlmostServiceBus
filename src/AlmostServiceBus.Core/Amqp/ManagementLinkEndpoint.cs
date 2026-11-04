@@ -92,7 +92,22 @@ public class ManagementLinkEndpoint : IRequestProcessor
                     HandleUpdateDisposition(requestContext);
                     break;
 
+                case "com.microsoft:add-rule":
+                    SendReply(requestContext, RuleManagementHandler.AddRule(FindScopedSubscription(requestContext), RequestBody(requestContext),
+                        ResolveNamespace(requestContext).Name));
+                    break;
+
+                case "com.microsoft:remove-rule":
+                    SendReply(requestContext, RuleManagementHandler.RemoveRule(FindScopedSubscription(requestContext), RequestBody(requestContext),
+                        ResolveNamespace(requestContext).Name));
+                    break;
+
+                case "com.microsoft:enumerate-rules":
+                    SendReply(requestContext, RuleManagementHandler.EnumerateRules(FindScopedSubscription(requestContext), RequestBody(requestContext)));
+                    break;
+
                 default:
+                    // TODO(#192 follow-up): an unknown operation should fail rather than reply OK.
                     ReplyOk(requestContext);
                     break;
             }
@@ -803,6 +818,41 @@ public class ManagementLinkEndpoint : IRequestProcessor
             },
             Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message)
         };
+        AmqpIdentifiers.CompleteRequest(requestContext, response);
+    }
+
+    private static Map RequestBody(RequestContext requestContext) => requestContext.Message.Body as Map ?? new Map();
+
+    /// <summary>
+    /// Splits "{topic}/Subscriptions/{subscription}" — the scope of a subscription's $management node — at the last
+    /// "/Subscriptions/", since topic names may themselves contain '/'.
+    /// </summary>
+    internal static (string Topic, string Subscription)? ParseSubscriptionAddress(string address)
+    {
+        const string separator = "/Subscriptions/";
+        var at = address.LastIndexOf(separator, StringComparison.OrdinalIgnoreCase);
+        if (at <= 0)
+            return null;
+        var subscription = address[(at + separator.Length)..];
+        return subscription.Length == 0 || subscription.Contains('/') ? null : (address[..at], subscription);
+    }
+
+    private SubscriptionEntity? FindScopedSubscription(RequestContext requestContext) =>
+        _scopedAddress is not null && ParseSubscriptionAddress(_scopedAddress) is var (topic, subscription)
+            ? ResolveNamespace(requestContext).GetSubscription(topic, subscription)
+            : null;
+
+    private static void SendReply(RequestContext requestContext, ManagementReply reply)
+    {
+        var response = reply.Body is null ? new Message() : new Message(reply.Body);
+        response.ApplicationProperties = new ApplicationProperties
+        {
+            ["statusCode"] = reply.StatusCode,
+            ["statusDescription"] = reply.Description
+        };
+        response.Properties = AmqpIdentifiers.CorrelateTo(requestContext.Message);
+        if (reply.ErrorCondition is not null)
+            response.ApplicationProperties["errorCondition"] = new Symbol(reply.ErrorCondition);
         AmqpIdentifiers.CompleteRequest(requestContext, response);
     }
 
