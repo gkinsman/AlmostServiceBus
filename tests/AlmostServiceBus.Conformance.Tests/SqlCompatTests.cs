@@ -41,12 +41,14 @@ public class SqlCompatTests(ITestOutputHelper output)
             output.WriteLine(RealAsbConnection.NotConfigured + " — comparing the emulator with the recorded table only.");
         }
 
-        var record = azure is not null && Environment.GetEnvironmentVariable("ASB_COMPAT_RECORD") == "1";
-        if (record)
+        // ASB_COMPAT_RECORD=1 records cases not yet verified against Azure; =all re-records every case (which also
+        // replaces the "any value" wildcards of newid() cases, so review the diff).
+        var recordMode = Environment.GetEnvironmentVariable("ASB_COMPAT_RECORD");
+        if (azure is not null && recordMode is "1" or "all")
         {
-            foreach (var c in cases)
+            foreach (var c in cases.Where(c => recordMode == "all" || c.Verified != "azure"))
             {
-                c.Expected = azure![c.Id];
+                c.Expected = azure[c.Id];
                 c.Verified = "azure";
             }
 

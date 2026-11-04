@@ -485,6 +485,21 @@ This **changes existing emulator behaviour**, which looked up system properties 
 - **Statement separators.** One trailing `;` is allowed. `;;` and a leading `;` are rejected.
 - **Correlation filters** can carry a SQL action.
 
+### Values as text (recorded later the same day; cases `fmt.*`)
+
+Azure's host is .NET Framework, and its text conversions show it. This applies to `LIKE` on non-strings,
+`'' + value`, and `SET` into an existing string property:
+- **Doubles use 15 significant digits** (`G15`): `0.1 + 0.2` gives `"0.3"`, and `1 / 3.0` gives
+  `"0.333333333333333"`. So `d LIKE '0.3'` matches a double of 0.1 + 0.2. Exponents print as `1E+20` and
+  `1E-07`.
+- **Floats use 7 significant digits.** Decimals keep their scale (`"1.50"`).
+- **DateTime / DateTimeOffset in concatenation** use the US short form: `"1/2/2024 3:04:05 AM"`, with
+  `" +00:00"` appended for an offset.
+- **DateTime / DateTimeOffset in `LIKE` and in conversion to a string** use the invariant form:
+  `"01/02/2024 03:04:05"`.
+- **TimeSpan, Guid, bool and Uri** print as .NET prints them: `"01:30:00"`, `"1.02:03:04.5000000"`, lower-case
+  Guid `D` format, `"True"`, and the original URI text.
+
 ### Q9 — more than one matching rule
 
 The subscription receives **one copy per matching rule that has an action**. Each copy gets only that rule's action and that rule's `RuleName`. On top of those, it receives **one plain copy if at least one matching rule has no action**. Two matching plain rules still give one copy. Errors are per rule (see "Evaluation errors").

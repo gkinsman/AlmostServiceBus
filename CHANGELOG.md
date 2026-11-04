@@ -38,9 +38,10 @@ All notable changes to this project are documented here. The format is based on
     Bus SQL grammar, built with Superpower. It covers every operator,
     `LIKE … ESCAPE`, `IN`, `IS [NOT] NULL`, `EXISTS`, arithmetic, `newid()`,
     `property()`, the `sys.`/`user.` scopes and all three identifier forms.
-  - Behaviour matches real Azure. A table of 420 cases, recorded against a
+  - Behaviour matches real Azure. A table of 478 cases, recorded against a
     real namespace, runs in CI against the emulator
-    (`tests/shared/sql-compat-cases.json`).
+    (`tests/shared/sql-compat-cases.json`). This includes how values turn into
+    text in `LIKE` and concatenation: doubles to 15 digits, as Azure prints them.
 - **`ServiceBusRuleManager` works.** `add-rule`, `remove-rule` and
   `enumerate-rules` on `$management` used to answer OK without doing
   anything, so `CreateRuleAsync` "succeeded" without adding a rule.

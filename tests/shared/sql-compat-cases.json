@@ -16390,6 +16390,2747 @@
         }
       },
       "verified": "azure"
+    },
+    {
+      "id": "fmt.concat-double-0.1+0.2",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-double-0.1+0.2"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "0.30000000000000004"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "0.30000000000000004"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "0.3"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-double-0.1+0.2"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-double-0.1+0.2",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-double-0.1+0.2"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "0.30000000000000004"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "0.30000000000000004"
+              },
+              "s": {
+                "type": "string",
+                "value": "0.3"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-double-0.1+0.2"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-double-1.5",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-double-1.5"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "1.5"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "1.5"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "1.5"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-double-1.5"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-double-1.5",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-double-1.5"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "1.5"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "1.5"
+              },
+              "s": {
+                "type": "string",
+                "value": "1.5"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-double-1.5"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-double-2",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-double-2"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "2"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "2"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "2"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-double-2"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-double-2",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-double-2"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "2"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "2"
+              },
+              "s": {
+                "type": "string",
+                "value": "2"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-double-2"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-double-1e20",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-double-1e20"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "1E+20"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "1E+20"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "1E+20"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-double-1e20"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-double-1e20",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-double-1e20"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "1E+20"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "1E+20"
+              },
+              "s": {
+                "type": "string",
+                "value": "1E+20"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-double-1e20"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-double-1e-7",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-double-1e-7"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "1E-07"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "1E-07"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "1E-07"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-double-1e-7"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-double-1e-7",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-double-1e-7"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "1E-07"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "1E-07"
+              },
+              "s": {
+                "type": "string",
+                "value": "1E-07"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-double-1e-7"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-double-third",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-double-third"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "0.3333333333333333"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "0.3333333333333333"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "0.333333333333333"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-double-third"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-double-third",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-double-third"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "0.3333333333333333"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "0.3333333333333333"
+              },
+              "s": {
+                "type": "string",
+                "value": "0.333333333333333"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-double-third"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-float-0.1",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-float-0.1"
+        },
+        "user": {
+          "v": {
+            "type": "float",
+            "value": "0.1"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "float",
+                "value": "0.1"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "0.1"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-float-0.1"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-float-0.1",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-float-0.1"
+        },
+        "user": {
+          "v": {
+            "type": "float",
+            "value": "0.1"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "float",
+                "value": "0.1"
+              },
+              "s": {
+                "type": "string",
+                "value": "0.1"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-float-0.1"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-float-1.5",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-float-1.5"
+        },
+        "user": {
+          "v": {
+            "type": "float",
+            "value": "1.5"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "float",
+                "value": "1.5"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "1.5"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-float-1.5"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-float-1.5",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-float-1.5"
+        },
+        "user": {
+          "v": {
+            "type": "float",
+            "value": "1.5"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "float",
+                "value": "1.5"
+              },
+              "s": {
+                "type": "string",
+                "value": "1.5"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-float-1.5"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-decimal-1.50",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-decimal-1.50"
+        },
+        "user": {
+          "v": {
+            "type": "decimal",
+            "value": "1.50"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "decimal",
+                "value": "1.50"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "1.50"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-decimal-1.50"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-decimal-1.50",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-decimal-1.50"
+        },
+        "user": {
+          "v": {
+            "type": "decimal",
+            "value": "1.50"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "decimal",
+                "value": "1.50"
+              },
+              "s": {
+                "type": "string",
+                "value": "1.50"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-decimal-1.50"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-datetime",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-datetime"
+        },
+        "user": {
+          "v": {
+            "type": "datetime",
+            "value": "2024-01-02T03:04:05.0000000Z"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "datetime",
+                "value": "2024-01-02T03:04:05.0000000Z"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "1/2/2024 3:04:05 AM"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-datetime"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-datetime",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-datetime"
+        },
+        "user": {
+          "v": {
+            "type": "datetime",
+            "value": "2024-01-02T03:04:05.0000000Z"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "datetime",
+                "value": "2024-01-02T03:04:05.0000000Z"
+              },
+              "s": {
+                "type": "string",
+                "value": "01/02/2024 03:04:05"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-datetime"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-datetime-ms",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-datetime-ms"
+        },
+        "user": {
+          "v": {
+            "type": "datetime",
+            "value": "2024-11-21T15:04:05.1230000Z"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "datetime",
+                "value": "2024-11-21T15:04:05.1230000Z"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "11/21/2024 3:04:05 PM"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-datetime-ms"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-datetime-ms",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-datetime-ms"
+        },
+        "user": {
+          "v": {
+            "type": "datetime",
+            "value": "2024-11-21T15:04:05.1230000Z"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "datetime",
+                "value": "2024-11-21T15:04:05.1230000Z"
+              },
+              "s": {
+                "type": "string",
+                "value": "11/21/2024 15:04:05"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-datetime-ms"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-datetimeoffset",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-datetimeoffset"
+        },
+        "user": {
+          "v": {
+            "type": "datetimeoffset",
+            "value": "2024-01-02T03:04:05.0000000+00:00"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "datetimeoffset",
+                "value": "2024-01-02T03:04:05.0000000+00:00"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "1/2/2024 3:04:05 AM +00:00"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-datetimeoffset"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-datetimeoffset",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-datetimeoffset"
+        },
+        "user": {
+          "v": {
+            "type": "datetimeoffset",
+            "value": "2024-01-02T03:04:05.0000000+00:00"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "datetimeoffset",
+                "value": "2024-01-02T03:04:05.0000000+00:00"
+              },
+              "s": {
+                "type": "string",
+                "value": "01/02/2024 03:04:05 +00:00"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-datetimeoffset"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-timespan",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-timespan"
+        },
+        "user": {
+          "v": {
+            "type": "timespan",
+            "value": "01:30:00"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "timespan",
+                "value": "01:30:00"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "01:30:00"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-timespan"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-timespan",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-timespan"
+        },
+        "user": {
+          "v": {
+            "type": "timespan",
+            "value": "01:30:00"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "timespan",
+                "value": "01:30:00"
+              },
+              "s": {
+                "type": "string",
+                "value": "01:30:00"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-timespan"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-timespan-days",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-timespan-days"
+        },
+        "user": {
+          "v": {
+            "type": "timespan",
+            "value": "1.02:03:04.5000000"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "timespan",
+                "value": "1.02:03:04.5000000"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "1.02:03:04.5000000"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-timespan-days"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-timespan-days",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-timespan-days"
+        },
+        "user": {
+          "v": {
+            "type": "timespan",
+            "value": "1.02:03:04.5000000"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "timespan",
+                "value": "1.02:03:04.5000000"
+              },
+              "s": {
+                "type": "string",
+                "value": "1.02:03:04.5000000"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-timespan-days"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-guid",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-guid"
+        },
+        "user": {
+          "v": {
+            "type": "guid",
+            "value": "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "guid",
+                "value": "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-guid"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-guid",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-guid"
+        },
+        "user": {
+          "v": {
+            "type": "guid",
+            "value": "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "guid",
+                "value": "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+              },
+              "s": {
+                "type": "string",
+                "value": "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-guid"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-bool",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-bool"
+        },
+        "user": {
+          "v": {
+            "type": "bool",
+            "value": "true"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "bool",
+                "value": "true"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "True"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-bool"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-bool",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-bool"
+        },
+        "user": {
+          "v": {
+            "type": "bool",
+            "value": "true"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "bool",
+                "value": "true"
+              },
+              "s": {
+                "type": "string",
+                "value": "True"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-bool"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-uri",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-uri"
+        },
+        "user": {
+          "v": {
+            "type": "uri",
+            "value": "http://a/b?c=d"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "uri",
+                "value": "http://a/b?c=d"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "http://a/b?c=d"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-uri"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-uri",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-uri"
+        },
+        "user": {
+          "v": {
+            "type": "uri",
+            "value": "http://a/b?c=d"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "uri",
+                "value": "http://a/b?c=d"
+              },
+              "s": {
+                "type": "string",
+                "value": "http://a/b?c=d"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-uri"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-long",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-long"
+        },
+        "user": {
+          "v": {
+            "type": "long",
+            "value": "-42"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "long",
+                "value": "-42"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "-42"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-long"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.into-string-long",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.s = v"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.into-string-long"
+        },
+        "user": {
+          "v": {
+            "type": "long",
+            "value": "-42"
+          },
+          "s": {
+            "type": "string",
+            "value": "old"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "long",
+                "value": "-42"
+              },
+              "s": {
+                "type": "string",
+                "value": "-42"
+              },
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.into-string-long"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-literal-1.5",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + (1.5)"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-literal-1.5"
+        },
+        "user": {}
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "1.5"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-literal-1.5"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-literal-1e20",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + (1e20)"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-literal-1e20"
+        },
+        "user": {}
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "1E+20"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-literal-1e20"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-literal-1e-7",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + (1e-7)"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-literal-1e-7"
+        },
+        "user": {}
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "1E-07"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-literal-1e-7"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-literal-0.1+0.2",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + (0.1 + 0.2)"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-literal-0.1+0.2"
+        },
+        "user": {}
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "0.3"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-literal-0.1+0.2"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-literal-1/3.0",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + (1 / 3.0)"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-literal-1/3.0"
+        },
+        "user": {}
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "0.333333333333333"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-literal-1/3.0"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-literal-2.0",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + (2.0)"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-literal-2.0"
+        },
+        "user": {}
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "2"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-literal-2.0"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.concat-literal--42",
+      "area": "fmt",
+      "rules": [
+        {
+          "action": "SET user.x = '' + (-42)"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.concat-literal--42"
+        },
+        "user": {}
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "RuleName": {
+                "type": "string",
+                "value": "r0"
+              },
+              "x": {
+                "type": "string",
+                "value": "-42"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.concat-literal--42"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-00-double-0.1+0.2",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '0.3'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-00-double-0.1+0.2"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "0.30000000000000004"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "0.30000000000000004"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.like-00-double-0.1+0.2"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-01-double-0.1+0.2",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '0.30000000000000004'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-01-double-0.1+0.2"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "0.30000000000000004"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "NoMatch",
+        "copies": [],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-02-double-1e20",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '1E+20'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-02-double-1e20"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "1E+20"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "1E+20"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.like-02-double-1e20"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-03-double-1e20",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '100000000000000000000'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-03-double-1e20"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "1E+20"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "NoMatch",
+        "copies": [],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-04-double-1e-7",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '1E-07'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-04-double-1e-7"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "1E-07"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "1E-07"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.like-04-double-1e-7"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-05-double-2",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '2'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-05-double-2"
+        },
+        "user": {
+          "v": {
+            "type": "double",
+            "value": "2"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "double",
+                "value": "2"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.like-05-double-2"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-06-float-0.1",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '0.1'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-06-float-0.1"
+        },
+        "user": {
+          "v": {
+            "type": "float",
+            "value": "0.1"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "float",
+                "value": "0.1"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.like-06-float-0.1"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-07-decimal-1.50",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '1.50'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-07-decimal-1.50"
+        },
+        "user": {
+          "v": {
+            "type": "decimal",
+            "value": "1.50"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "decimal",
+                "value": "1.50"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.like-07-decimal-1.50"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-08-datetime",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '1/2/2024 3:04:05 AM'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-08-datetime"
+        },
+        "user": {
+          "v": {
+            "type": "datetime",
+            "value": "2024-01-02T03:04:05.0000000Z"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "NoMatch",
+        "copies": [],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-09-datetime",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '01/02/2024 03:04:05'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-09-datetime"
+        },
+        "user": {
+          "v": {
+            "type": "datetime",
+            "value": "2024-01-02T03:04:05.0000000Z"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "datetime",
+                "value": "2024-01-02T03:04:05.0000000Z"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.like-09-datetime"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-10-datetime",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '2024-01-02%'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-10-datetime"
+        },
+        "user": {
+          "v": {
+            "type": "datetime",
+            "value": "2024-01-02T03:04:05.0000000Z"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "NoMatch",
+        "copies": [],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-11-timespan",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '01:30:00'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-11-timespan"
+        },
+        "user": {
+          "v": {
+            "type": "timespan",
+            "value": "01:30:00"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "timespan",
+                "value": "01:30:00"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.like-11-timespan"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-12-timespan-days",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '1.02:03:04.5000000'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-12-timespan-days"
+        },
+        "user": {
+          "v": {
+            "type": "timespan",
+            "value": "1.02:03:04.5000000"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "timespan",
+                "value": "1.02:03:04.5000000"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.like-12-timespan-days"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-13-guid",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE '6f9619ff-%'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-13-guid"
+        },
+        "user": {
+          "v": {
+            "type": "guid",
+            "value": "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "guid",
+                "value": "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.like-13-guid"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
+    },
+    {
+      "id": "fmt.like-14-uri",
+      "area": "fmt",
+      "rules": [
+        {
+          "filter": "v LIKE 'http://a/b?c=d'"
+        }
+      ],
+      "subscription": {
+        "deadLetterOnFilterExceptions": true
+      },
+      "message": {
+        "sys": {
+          "MessageId": "m-fmt.like-14-uri"
+        },
+        "user": {
+          "v": {
+            "type": "uri",
+            "value": "http://a/b?c=d"
+          }
+        }
+      },
+      "expected": {
+        "outcome": "Match",
+        "copies": [
+          {
+            "user": {
+              "v": {
+                "type": "uri",
+                "value": "http://a/b?c=d"
+              }
+            },
+            "sys": {
+              "MessageId": "m-fmt.like-14-uri"
+            }
+          }
+        ],
+        "deadLettered": []
+      },
+      "verified": "azure",
+      "note": "M8 probe: how Azure turns values into text"
     }
   ]
 }

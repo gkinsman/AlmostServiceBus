@@ -184,7 +184,7 @@ internal static class SqlValues
             return null;
 
         if (op == SqlBinaryOp.Add && (a is string || b is string))
-            return ToText(a) + ToText(b);
+            return ToText(a, concatenation: true) + ToText(b, concatenation: true);
 
         if (!Numeric.TryPromote(a, b, out var x, out var y))
             throw NotApplicable(op, a, b);
@@ -365,14 +365,27 @@ internal static class SqlValues
 
     // ── Text and type names ──────────────────────────────────────────────────
 
-    /// <summary>Invariant <c>ToString()</c>, used by <c>LIKE</c>, string concatenation and string conversion.</summary>
-    public static string ToText(object value) => value switch
+    /// <summary>
+    /// A value as text for <c>LIKE</c>, string concatenation and conversion to a string property, formatted as
+    /// Azure's .NET Framework host formats it (recorded in the table's <c>fmt.*</c> cases): doubles to 15 and
+    /// floats to 7 significant digits (<c>0.1 + 0.2</c> is <c>"0.3"</c>), dates invariantly
+    /// (<c>"01/02/2024 03:04:05"</c>) except in concatenation, which uses the US short form
+    /// (<c>"1/2/2024 3:04:05 AM"</c>).
+    /// </summary>
+    public static string ToText(object value, bool concatenation = false) => value switch
     {
         string s => s,
         bool b => b ? "True" : "False",
+        double d => d.ToString("G15", CultureInfo.InvariantCulture),
+        float f => f.ToString("G7", CultureInfo.InvariantCulture),
+        DateTime dt when concatenation => dt.ToString(UsDateTime, CultureInfo.InvariantCulture),
+        DateTimeOffset dto when concatenation => dto.ToString(UsDateTime + " zzz", CultureInfo.InvariantCulture),
         IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
         _ => value.ToString() ?? ""
     };
+
+    // en-US's general date/time pattern, spelled out: ICU's en-US data puts a narrow no-break space before AM/PM.
+    private const string UsDateTime = "M/d/yyyy h:mm:ss tt";
 
     private static SqlEvaluationException NotApplicable(SqlBinaryOp op, object a, object b) =>
         new($"Operator '{OperatorText(op)}' cannot be applied to operands of type '{TypeName(a.GetType())}' and '{TypeName(b.GetType())}'");
