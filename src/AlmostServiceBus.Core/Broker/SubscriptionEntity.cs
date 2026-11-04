@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using AlmostServiceBus.Core.Broker.Sql;
 
 namespace AlmostServiceBus.Core.Broker;
 
@@ -85,7 +86,7 @@ public sealed class SubscriptionEntity
 
     // --- Rule management ---
 
-    /// <exception cref="SqlFilterException">The rule's SQL filter expression is invalid or unsupported.</exception>
+    /// <exception cref="SqlSyntaxException">The rule's SQL filter or action is invalid, as Azure would reject it.</exception>
     public void AddOrUpdateRule(RuleEntity rule)
     {
         rule.Validate();
@@ -103,21 +104,62 @@ public sealed class SubscriptionEntity
 
     // --- Message delivery ---
 
-    /// <summary>
-    /// Returns <see langword="true"/> if at least one rule matches the message.
-    /// </summary>
-    public bool ShouldDeliver(BrokeredMessage message) =>
-        _rules.Values.Any(r => r.Matches(message));
+    private const string FilteringEngine = "FilteringEngine";
 
     /// <summary>
-    /// Enqueues the message if a rule matches. When <see cref="ForwardTo"/> is set the
-    /// subscription's queue passes it on to that queue or topic instead of holding it.
+    /// Delivers the copies Azure would: one per matching rule with an action (that rule's action applied and its
+    /// name in <c>RuleName</c>), plus one unmodified copy if any matching rule has no action. A filter or action
+    /// that fails dead-letters that rule's copy (<c>FilterException</c> / <c>RuleActionException</c>), or drops it
+    /// when <see cref="DeadLetteringOnFilterEvaluationExceptions"/> is off; the other rules are unaffected.
+    /// When <see cref="ForwardTo"/> is set the subscription's queue passes each copy on.
     /// </summary>
     public void DeliverMessage(BrokeredMessage message)
     {
-        if (!ShouldDeliver(message))
-            return;
+        var plainMatch = false;
+        foreach (var rule in _rules.Values.OrderBy(r => r.Name, RuleKeyComparer))
+        {
+            bool matched;
+            try
+            {
+                matched = rule.Matches(message);
+            }
+            catch (SqlEvaluationException ex)
+            {
+                if (DeadLetteringOnFilterEvaluationExceptions)
+                    Queue.DeadLetterOnArrival(message.Clone(), "FilterException", ex.Message, FilteringEngine);
+                continue;
+            }
 
+            if (!matched)
+                continue;
+
+            if (!rule.HasAction)
+            {
+                plainMatch = true;
+                continue;
+            }
+
+            var copy = message.Clone();
+            try
+            {
+                rule.ApplyAction(copy);
+            }
+            catch (SqlEvaluationException ex)
+            {
+                if (DeadLetteringOnFilterEvaluationExceptions)
+                    Queue.DeadLetterOnArrival(copy, "RuleActionException", ex.Message, FilteringEngine);
+                continue;
+            }
+
+            Enqueue(copy);
+        }
+
+        if (plainMatch)
+            Enqueue(message);
+    }
+
+    private void Enqueue(BrokeredMessage message)
+    {
         // A direct send to a session queue is refused, but a topic accepts the message and only
         // the session subscription dead-letters its copy; the other subscriptions still get theirs.
         if (RequiresSession && string.IsNullOrEmpty(message.SessionId))

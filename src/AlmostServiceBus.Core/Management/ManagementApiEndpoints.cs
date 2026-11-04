@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using AlmostServiceBus.Core.Broker;
+using AlmostServiceBus.Core.Broker.Sql;
 using AlmostServiceBus.Core.Hosting;
 
 namespace AlmostServiceBus.Core.Management;
@@ -80,7 +81,7 @@ public static class ManagementApiEndpoints
                 {
                     sub.AddOrUpdateRule(rule);
                 }
-                catch (SqlFilterException ex)
+                catch (SqlSyntaxException ex)
                 {
                     return InvalidSqlFilter(ex);
                 }
@@ -534,7 +535,7 @@ public static class ManagementApiEndpoints
     }
 
     // Real Service Bus rejects an unparseable SQL filter with 400 when the rule is created.
-    private static IResult InvalidSqlFilter(SqlFilterException ex) =>
+    private static IResult InvalidSqlFilter(SqlSyntaxException ex) =>
         ManagementApiErrors.BadRequest($"The SQL filter expression is invalid: {ex.Message}");
 
     private static IResult? InvalidDefaultRuleFilter(string body)
@@ -549,10 +550,10 @@ public static class ManagementApiEndpoints
 
         try
         {
-            SqlFilterExpression.Parse(expression);
+            SqlFilter.Parse(expression);
             return null;
         }
-        catch (SqlFilterException ex)
+        catch (SqlSyntaxException ex)
         {
             return InvalidSqlFilter(ex);
         }
