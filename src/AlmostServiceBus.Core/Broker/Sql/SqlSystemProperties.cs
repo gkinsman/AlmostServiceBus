@@ -34,7 +34,7 @@ internal static class SqlSystemProperties
         ["DeliveryCount"] = new(typeof(int), m => m.DeliveryCount + 1),
         ["EnqueuedTimeUtc"] = new(typeof(DateTime), m => m.EnqueuedTimeUtc.UtcDateTime),
         ["ExpiresAtUtc"] = new(typeof(DateTime), ExpiresAt),
-        ["Size"] = new(typeof(long), m => (long)m.Body.Length),
+        ["Size"] = new(typeof(long), EstimatedSize),
         ["LockToken"] = new(typeof(Guid), _ => Guid.Empty),
         ["LockedUntilUtc"] = new(typeof(DateTime), _ => DateTime.MinValue),
         ["DeadLetterSource"] = new(typeof(string), _ => null),
@@ -62,6 +62,21 @@ internal static class SqlSystemProperties
 
     /// <summary>Sets a settable property; <paramref name="value"/> must already be of <see cref="TypeOf"/>.</summary>
     public static void Set(BrokeredMessage message, string name, object? value) => Properties[name].Set!(message, value);
+
+    // Azure's Size is the whole encoded message (sections, annotations, properties), not just the body. The
+    // emulator doesn't encode at filter time, so it estimates: body + property and header text + fixed framing.
+    private const int EncodedOverheadBytes = 120;
+
+    private static object EstimatedSize(BrokeredMessage m)
+    {
+        long size = EncodedOverheadBytes + m.Body.Length;
+        foreach (var text in new[] { m.MessageId, m.CorrelationId, m.To, m.ReplyTo, m.Subject, m.SessionId,
+                     m.ReplyToSessionId, m.ContentType, m.PartitionKey })
+            size += text?.Length ?? 0;
+        foreach (var (key, value) in m.ApplicationProperties)
+            size += key.Length + (value is string s ? s.Length : 9);
+        return size;
+    }
 
     private static object ExpiresAt(BrokeredMessage m)
     {

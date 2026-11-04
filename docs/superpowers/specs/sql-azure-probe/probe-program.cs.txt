@@ -442,6 +442,7 @@ F("r.is-without-null", "color IS 'red'", red);
 F("r.exists-literal", "EXISTS('x')");
 F("r.exists-expression", "EXISTS(n + 1)", U(("n", 1)));
 
+if (args is ["export", var exportPath]) { SqlProbeExport.Run(cases, noDlq, exportPath); return; }
 if (only is not null) cases = cases.Where(c => c.Id.StartsWith(only)).ToList();
 var dupe = cases.GroupBy(c => c.Id).FirstOrDefault(g => g.Count() > 1);
 if (dupe is not null) throw new Exception("duplicate id " + dupe.Key);

@@ -142,8 +142,17 @@ public class SqlSystemPropertiesTests
         Assert.Equal(DateTime.MaxValue, SqlSystemProperties.Get(new BrokeredMessage { TimeToLive = TimeSpan.MaxValue }, "ExpiresAtUtc"));
 
     [Fact]
-    public void Get_Size_IsBodyLengthAsLong() =>
-        Assert.Equal(3L, SqlSystemProperties.Get(new BrokeredMessage { Body = [1, 2, 3] }, "Size"));
+    public void Get_Size_ApproximatesTheEncodedMessage()
+    {
+        // Azure's Size counts the whole encoded message (a tiny one lands between 100 and 1000 bytes), not the body.
+        var small = (long)SqlSystemProperties.Get(new BrokeredMessage { Body = [1, 2, 3], MessageId = "m" }, "Size")!;
+        var withProperty = new BrokeredMessage { Body = [1, 2, 3], MessageId = "m" };
+        withProperty.ApplicationProperties["key"] = new string('x', 500);
+        var larger = (long)SqlSystemProperties.Get(withProperty, "Size")!;
+
+        Assert.InRange(small, 100, 1000);
+        Assert.True(larger >= small + 500);
+    }
 
     [Fact]
     public void Get_State_IsTheEnum() =>

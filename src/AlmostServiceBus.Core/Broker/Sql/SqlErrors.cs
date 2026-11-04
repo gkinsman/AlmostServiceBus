@@ -2,7 +2,7 @@ namespace AlmostServiceBus.Core.Broker.Sql;
 
 /// <summary>
 /// A SQL filter or action expression that Service Bus rejects when the rule is created. Syntax errors
-/// carry Azure's message shape — <c>[Token line=…, column=…, Token in error=…, Additional details=…]</c>,
+/// carry Azure's message shape — <c>[Token line=…, column=…, Token in error= …, Additional details= …]</c>,
 /// with a 1-based line and a 0-based column — and semantic errors carry Azure's text verbatim.
 /// Derives from <see cref="ArgumentException"/> because that is what the SDK raises for both.
 /// </summary>
@@ -40,7 +40,7 @@ public sealed class SqlSyntaxException : ArgumentException
     {
         var (line, column) = LineAndColumn(text, position);
         var message =
-            $"There was an error parsing the SQL expression. [Token line={line}, column={column}, Token in error={tokenInError}, Additional details={details}]";
+            $"There was an error parsing the SQL expression. [Token line={line}, column={column}, Token in error= {tokenInError}, Additional details= {details}]";
         return new SqlSyntaxException(message, line, column, tokenInError, details, expected ?? []);
     }
 

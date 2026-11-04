@@ -115,6 +115,7 @@ public sealed class SubscriptionEntity
     /// </summary>
     public void DeliverMessage(BrokeredMessage message)
     {
+        Queue.AssignSequenceNumber(message);
         var plainMatch = false;
         foreach (var rule in _rules.Values.OrderBy(r => r.Name, RuleKeyComparer))
         {

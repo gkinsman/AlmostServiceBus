@@ -4,7 +4,8 @@ namespace AlmostServiceBus.Tests.Broker.Sql;
 
 /// <summary>
 /// Syntax errors, with the details text real Azure returned for the same expression
-/// (docs/superpowers/specs/sql-azure-probe). Columns are recomputed for the unwrapped expression.
+/// (docs/superpowers/specs/sql-azure-probe). Columns are recomputed for the unwrapped expression; for a STRING
+/// token Azure reports the column of its last character.
 /// </summary>
 public class SqlGrammarErrorTests
 {
@@ -23,20 +24,21 @@ public class SqlGrammarErrorTests
     [InlineData("color === 'red'", 7, "=", "syntax error, unexpected EQ")]
     [InlineData("color == 'red'", 7, "=", "syntax error, unexpected EQ")]
     [InlineData("in = 1", 0, "in", "syntax error, unexpected IN")]
-    [InlineData("color NOT 'red'", 10, "'", "syntax error, unexpected STRING, expecting LIKE, or IN")]
-    [InlineData("color IS 'red'", 9, "'", "syntax error, unexpected STRING, expecting NULL, or NOT")]
-    [InlineData("EXISTS('x')", 7, "'", "syntax error, unexpected STRING, expecting IDENTIFIER, or DELIMITED_IDENTIFIER")]
+    [InlineData("color NOT 'red'", 14, "'", "syntax error, unexpected STRING, expecting LIKE, or IN")]
+    [InlineData("color IS 'red'", 13, "'", "syntax error, unexpected STRING, expecting NULL, or NOT")]
+    [InlineData("EXISTS('x')", 9, "'", "syntax error, unexpected STRING, expecting IDENTIFIER, or DELIMITED_IDENTIFIER")]
     [InlineData("EXISTS(n + 1)", 9, "+", "syntax error, unexpected '+', expecting ')'")]
     [InlineData("color /* c */ = 'red'", 7, "*", "syntax error, unexpected '*'")]
     [InlineData("1abc = 'x'", 1, "abc", "syntax error, unexpected IDENTIFIER")]
     [InlineData("n = 0x10", 5, "x10", "syntax error, unexpected IDENTIFIER")]
     [InlineData("n = 99999999999999999999", 4, "99999999999999999999", "Value was either too large or too small for an Int64.")]
-    [InlineData("color = N'red'", 9, "'", "syntax error, unexpected STRING")]
+    [InlineData("color = N'red'", 13, "'", "syntax error, unexpected STRING")]
     [InlineData(".5 = 0.5", 0, ".", "syntax error, unexpected '.'")]
     [InlineData("n = 1.", 5, ".", "syntax error, unexpected '.'")]
     [InlineData("n = 1e", 5, "e", "syntax error, unexpected IDENTIFIER")]
     [InlineData("(color = 'red'", Eof, "", "syntax error, unexpected EOF, expecting ')', or AND, or OR")]
     [InlineData("color = 'red' blue", 14, "blue", "syntax error, unexpected IDENTIFIER")]
+    [InlineData("(color = 'red' blue)", 15, "blue", "syntax error, unexpected IDENTIFIER")]
     [InlineData("color = 'red' AND", Eof, "", "syntax error, unexpected EOF")]
     [InlineData("color = 'red';", 13, ";", "Unrecognized character. ';'")]
     [InlineData(" ", Eof, "", "syntax error, unexpected EOF")]
@@ -57,6 +59,13 @@ public class SqlGrammarErrorTests
     [InlineData(" ", Eof, "", "syntax error, unexpected EOF, expecting SET, or REMOVE")]
     public void ParseAction_Rejects(string text, int column, string token, string details) =>
         AssertSyntaxError(() => SqlGrammar.ParseAction(text), column, token, details);
+
+    [Fact]
+    public void ParseFilter_ChecksFunctionArityWhileParsing() =>
+        // Azure reports the arity error before it reaches the IS (which a function result can't take).
+        Assert.Equal(
+            "The 'newid' function expects 0 argument(s), but 1 argument(s) was/were specified.\r\nParameter name: arguments",
+            Assert.Throws<SqlSyntaxException>(() => SqlGrammar.ParseFilter("newid(1) IS NOT NULL")).Message);
 
     private static void AssertSyntaxError(Action parse, int column, string token, string details)
     {

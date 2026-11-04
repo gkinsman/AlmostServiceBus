@@ -67,7 +67,7 @@ public class SqlTokenizerTests
         Assert.Equal(token, ex.TokenInError);
         Assert.Equal(details, ex.Details);
         Assert.Equal(
-            $"There was an error parsing the SQL expression. [Token line={line}, column={column}, Token in error={token}, Additional details={details}]",
+            $"There was an error parsing the SQL expression. [Token line={line}, column={column}, Token in error= {token}, Additional details= {details}]",
             ex.Message);
     }
 

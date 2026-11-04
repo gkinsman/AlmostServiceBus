@@ -251,8 +251,11 @@ public static class SqlGrammar
         var close = RParen(rest);
         if (!close.HasValue)
             return Fail<SqlExpr>(close.Remainder, close.Expectations);
-        return TokenListParserResult.Value<SqlToken, SqlExpr>(
-            new SqlFunctionCall(name.Value.ToStringValue().ToLowerInvariant(), args), input, close.Remainder);
+
+        // Azure resolves the function as soon as the call is parsed, before any later syntax error.
+        var function = name.Value.ToStringValue().ToLowerInvariant();
+        SqlBinder.CheckFunction(function, args.Count);
+        return TokenListParserResult.Value<SqlToken, SqlExpr>(new SqlFunctionCall(function, args), input, close.Remainder);
     };
 
     // ── Scalar expressions ───────────────────────────────────────────────────
@@ -348,10 +351,12 @@ public static class SqlGrammar
         select (SqlExpr)new SqlExists(property);
 
     // A parenthesised predicate. After it, Azure expects ')' or a continuation of the predicate.
+    private const string GroupedPredicateFollow = "')', or AND, or OR";
+
     private static readonly TokenListParser<SqlToken, SqlExpr> GroupedPredicate =
         from open in LParen
         from inner in Parse.Ref(() => Or!)
-        from close in Tok(SqlToken.RParen, "')', or AND, or OR")
+        from close in Tok(SqlToken.RParen, GroupedPredicateFollow)
         select inner;
 
     private static readonly TokenListParser<SqlToken, SqlExpr> PrimaryPredicate =
@@ -419,7 +424,10 @@ public static class SqlGrammar
     private static SqlSyntaxException Error(string text, TokenList<SqlToken> at, string[]? expectations, Mode mode)
     {
         var next = at.ConsumeToken();
-        var position = next.HasValue ? next.Value.Position.Absolute : text.Length;
+        // Azure reports a string literal at its closing quote, every other token at its first character.
+        var position = !next.HasValue ? text.Length
+            : next.Value.Kind == SqlToken.String ? next.Value.Position.Absolute + next.Value.Span.Length - 1
+            : next.Value.Position.Absolute;
         var tokenText = !next.HasValue ? ""
             : next.Value.Kind == SqlToken.String ? "'"
             : next.Value.ToStringValue();
@@ -427,6 +435,9 @@ public static class SqlGrammar
 
         var details = $"syntax error, unexpected {unexpected}";
         var expected = (expectations ?? []).Distinct().ToList();
+        // Azure lists what may follow a parenthesised predicate only when the input ends there.
+        if (next.HasValue)
+            expected.Remove(GroupedPredicateFollow);
         var count = expected.Sum(e => e.Split(", or ").Length);
         if (count is > 0 and <= MaxListedExpectations)
             details += ", expecting " + string.Join(", or ", expected);

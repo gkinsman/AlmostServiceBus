@@ -173,6 +173,32 @@ public class RuleDeliveryTests
     }
 
     [Fact]
+    public void SequenceNumber_IsAssignedBeforeFiltersRun()
+    {
+        var sub = Subscription(Sql("r0", "sys.SequenceNumber > 0"));
+
+        sub.DeliverMessage(Red());
+
+        var copy = Assert.Single(Drain(sub.Queue));
+        Assert.True(copy.SequenceNumber > 0);
+    }
+
+    [Fact]
+    public void ForwardedCopy_GetsTheTargetQueuesOwnSequenceNumber()
+    {
+        var ns = new NamespaceContext("ns");
+        var target = ns.CreateQueue("target");
+        ns.CreateSubscription("topic", "fwd", forwardTo: "target");
+        target.Enqueue(new BrokeredMessage());
+
+        ns.GetTopic("topic")!.Publish(Red());
+
+        var first = target.TryDequeueImmediate()!;
+        var forwarded = target.TryDequeueImmediate()!;
+        Assert.NotEqual(first.SequenceNumber, forwarded.SequenceNumber);
+    }
+
+    [Fact]
     public void AddOrUpdateRule_InvalidFilter_Throws_RuleAbsent()
     {
         var sub = new SubscriptionEntity("sub", "topic");

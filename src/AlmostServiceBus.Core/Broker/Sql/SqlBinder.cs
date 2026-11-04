@@ -81,15 +81,21 @@ internal static class SqlBinder
                 CheckReadable(exists.Property);
                 break;
             case SqlFunctionCall call:
-                if (!FunctionArity.TryGetValue(call.Name, out var arity))
-                    throw SqlSyntaxException.Semantic(SqlErrorText.UnknownFunction(call.Name));
-                if (call.Arguments.Count != arity)
-                    throw SqlSyntaxException.Semantic(SqlErrorText.FunctionArity(call.Name, arity, call.Arguments.Count));
+                CheckFunction(call.Name, call.Arguments.Count);
                 foreach (var argument in call.Arguments) Walk(argument, parameters);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(expr), expr.GetType().Name);
         }
+    }
+
+    /// <summary>Rejects an unknown function or a call with the wrong number of arguments.</summary>
+    public static void CheckFunction(string name, int argumentCount)
+    {
+        if (!FunctionArity.TryGetValue(name, out var arity))
+            throw SqlSyntaxException.Semantic(SqlErrorText.UnknownFunction(name));
+        if (argumentCount != arity)
+            throw SqlSyntaxException.Semantic(SqlErrorText.FunctionArity(name, arity, argumentCount));
     }
 
     private static void CheckReadable(SqlPropertyRef property)

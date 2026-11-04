@@ -32,4 +32,8 @@
     <ProjectReference Include="..\..\src\AlmostServiceBus.TestHost\AlmostServiceBus.TestHost.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\shared\SqlCompatCases.cs" Link="Shared\SqlCompatCases.cs" />
+    <None Include="..\shared\sql-compat-cases.json" Link="sql-compat-cases.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

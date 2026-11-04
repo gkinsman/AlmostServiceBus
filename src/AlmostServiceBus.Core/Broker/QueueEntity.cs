@@ -261,6 +261,16 @@ public sealed class QueueEntity : IDisposable
         PublishEnqueued(message);
     }
 
+    /// <summary>
+    /// Gives <paramref name="message"/> this queue's next sequence number now, so subscription filters can read
+    /// <c>sys.SequenceNumber</c> as they can on Azure. <see cref="Enqueue"/> keeps a number that is already set.
+    /// </summary>
+    internal void AssignSequenceNumber(BrokeredMessage message)
+    {
+        if (message.SequenceNumber == 0)
+            message.SequenceNumber = Interlocked.Increment(ref _sequenceNumber);
+    }
+
     // For messages the broker itself refuses on the way in. Real Service Bus puts those it can't
     // auto-forward in the source's ordinary dead-letter queue, with only a reason, not in the
     // transfer dead-letter queue the docs describe. A message already dead-lettered once (forwarded
