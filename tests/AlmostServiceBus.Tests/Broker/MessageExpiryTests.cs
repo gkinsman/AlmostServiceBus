@@ -339,4 +339,86 @@ public class MessageExpiryTests
         Assert.Null(queue.Sessions.TryAcceptSession(null, "other"));
         Assert.Equal(1, queue.MessageCount);
     }
+
+    // ── Forwarding and scheduling clocks ─────────────────────────────────────
+
+    [Fact]
+    public void ForwardTo_RestartsClockAtDestination()
+    {
+        var ns = new NamespaceContext("ns", timeProvider: _time);
+        var target = ns.CreateQueue("target");
+        var source = ns.CreateQueue("source");
+        source.ForwardTo = "target";
+        var message = Message(TimeSpan.FromSeconds(5));
+        _time.Advance(TimeSpan.FromSeconds(4));
+
+        source.Enqueue(message);
+        _time.Advance(TimeSpan.FromSeconds(3));
+
+        Assert.NotNull(target.TryDequeueImmediate());
+    }
+
+    [Fact]
+    public void ScheduledMessage_ClockStartsAtSend()
+    {
+        // Real Service Bus counts a scheduled message's time-to-live from when it was sent, so one
+        // that outlives its TTL before activating goes straight to the dead-letter queue.
+        var ns = new NamespaceContext("ns", timeProvider: _time);
+        var queue = ns.CreateQueue("q");
+        queue.DeadLetteringOnMessageExpiration = true;
+        using var scheduler = new ScheduledMessageProcessor(ns);
+        var message = Message(TimeSpan.FromSeconds(2));
+        message.ScheduledEnqueueTimeUtc = _time.GetUtcNow().AddSeconds(3);
+        scheduler.Schedule("q", message, ns);
+
+        _time.Advance(TimeSpan.FromSeconds(2.5));
+        scheduler.ProcessDueMessages();
+        Assert.Equal(0, queue.MessageCount);
+
+        _time.Advance(TimeSpan.FromSeconds(1));
+        scheduler.ProcessDueMessages();
+
+        Assert.Null(queue.TryDequeueImmediate());
+        Assert.Equal(ExpiredReason, queue.DeadLetterQueue.TryDequeueImmediate()?.DeadLetterReason);
+    }
+
+    // ── Background processor ─────────────────────────────────────────────────
+
+    [Fact]
+    public void Processor_SweepsAllNamespacesQueuesAndSubscriptions()
+    {
+        var registry = new NamespaceRegistry(timeProvider: _time);
+        var queue = registry.GetOrCreate("a").CreateQueue("q");
+        var nsB = registry.GetOrCreate("b");
+        var sub = nsB.CreateSubscription("t", "s");
+        queue.Enqueue(Message(TimeSpan.FromSeconds(1)));
+        nsB.GetTopic("t")!.Publish(Message(TimeSpan.FromSeconds(1)));
+        _time.Advance(TimeSpan.FromSeconds(2));
+        using var processor = new MessageExpiryProcessor(registry);
+
+        Assert.Equal(2, processor.ProcessExpiredMessages());
+
+        Assert.Equal(0, queue.MessageCount);
+        Assert.Equal(0, sub.Queue.MessageCount);
+    }
+
+    [Fact]
+    public void Processor_ContinuesAfterOneEntityThrows()
+    {
+        var registry = new NamespaceRegistry(timeProvider: _time);
+        var ns = registry.GetOrCreate("a");
+        ns.CreateQueue("broken").TimeProvider = new ThrowingTimeProvider();
+        var healthy = ns.CreateQueue("healthy");
+        healthy.Enqueue(Message(TimeSpan.FromSeconds(1)));
+        _time.Advance(TimeSpan.FromSeconds(2));
+        using var processor = new MessageExpiryProcessor(registry);
+
+        Assert.Equal(1, processor.ProcessExpiredMessages());
+        Assert.Equal(0, healthy.MessageCount);
+    }
+
+    private sealed class ThrowingTimeProvider : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => throw new InvalidOperationException("clock broken");
+    }
 }

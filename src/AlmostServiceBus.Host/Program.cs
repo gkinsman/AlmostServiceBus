@@ -92,6 +92,8 @@ mgmtBuilder.WebHost.ConfigureKestrel(k =>
 var defaultContext = registry.GetOrCreate("default");
 var scheduledProcessor = new ScheduledMessageProcessor(defaultContext);
 scheduledProcessor.StartBackground(TimeSpan.FromMilliseconds(500));
+var expiryProcessor = new MessageExpiryProcessor(registry);
+expiryProcessor.StartBackground(TimeSpan.FromSeconds(1));
 
 var mgmtApp = mgmtBuilder.Build();
 mgmtApp.MapServiceBusManagementApi(registry, scheduledProcessor);
@@ -251,6 +253,7 @@ try { await Task.Delay(Timeout.Infinite, shutdownCts.Token); } catch (OperationC
 Console.WriteLine("Shutting down...");
 multiplexerCts.Cancel();
 scheduledProcessor.Dispose();
+expiryProcessor.Dispose();
 amqpServer.Stop();
 
 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));

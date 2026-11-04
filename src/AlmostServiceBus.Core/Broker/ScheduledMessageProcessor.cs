@@ -107,12 +107,10 @@ public sealed class ScheduledMessageProcessor : IDisposable
     /// </summary>
     public void ProcessDueMessages()
     {
-        var now = DateTimeOffset.UtcNow;
-
         foreach (var (key, entry) in _scheduled)
         {
             var scheduledTime = entry.Message.ScheduledEnqueueTimeUtc;
-            if (scheduledTime.HasValue && scheduledTime.Value > now)
+            if (scheduledTime.HasValue && scheduledTime.Value > entry.Namespace.TimeProvider.GetUtcNow())
                 continue;
 
             // Remove from the scheduled store; if another thread beat us here, skip.

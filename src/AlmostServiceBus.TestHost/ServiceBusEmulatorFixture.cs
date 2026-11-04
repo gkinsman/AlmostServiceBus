@@ -21,6 +21,7 @@ public class ServiceBusEmulatorFixture : IAsyncDisposable
     private CancellationTokenSource? _multiplexerCts;
     private Task? _multiplexerTask;
     private ScheduledMessageProcessor? _scheduledProcessor;
+    private MessageExpiryProcessor? _expiryProcessor;
     private readonly MessageEventBus _eventBus = new();
     private readonly NamespaceRegistry _registry;
     private readonly string _namespace;
@@ -95,6 +96,8 @@ public class ServiceBusEmulatorFixture : IAsyncDisposable
 
         _scheduledProcessor = new ScheduledMessageProcessor(_registry.GetOrCreate("default"));
         _scheduledProcessor.StartBackground(TimeSpan.FromMilliseconds(500));
+        _expiryProcessor = new MessageExpiryProcessor(_registry);
+        _expiryProcessor.StartBackground(TimeSpan.FromSeconds(1));
 
         _webApp = builder.Build();
         _webApp.MapServiceBusManagementApi(_registry, _scheduledProcessor);
@@ -166,6 +169,9 @@ public class ServiceBusEmulatorFixture : IAsyncDisposable
 
         _scheduledProcessor?.Dispose();
         _scheduledProcessor = null;
+
+        _expiryProcessor?.Dispose();
+        _expiryProcessor = null;
 
         if (_webApp is not null)
         {
