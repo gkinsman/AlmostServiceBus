@@ -47,14 +47,14 @@ privileged port binding.
 
 Namespace is extracted from `SharedAccessKeyName` in the connection string (NOT the hostname). `RootManageSharedAccessKey` maps to `"default"` namespace. Any other key name becomes the namespace. This allows GUIDs as namespace identifiers for test isolation.
 
-## Test Results (1432 in-repo + frameworks, 2026-11-04)
+## Test Results (1451 in-repo + frameworks, 2026-11-04)
 
 | Suite | Passed | Total |
 |-------|--------|-------|
-| Emulator internal (incl. the 478-case SQL table) | 1173 | 1173 |
-| SDK integration | 81 | 81 |
+| Emulator internal (incl. the 478-case SQL table) | 1181 | 1181 |
+| SDK integration | 84 | 84 |
 | SDK live | 84 | 84 |
-| Conformance (emulator; Azure-gated cases run when a connection string is configured) | 54 | 54 |
+| Conformance (emulator; Azure-gated cases run when a connection string is configured) | 62 | 62 |
 | MassTransit integration (in-repo) | 29 | 29 |
 | Aspire | 11 | 11 |
 | MassTransit own ASB tests (CI filter) | 101 | 101 |
