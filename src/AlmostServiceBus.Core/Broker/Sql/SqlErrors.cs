@@ -68,3 +68,31 @@ public sealed class SqlSyntaxException : ArgumentException
 /// (<c>FilterException</c> / <c>RuleActionException</c>) or drops it, as Azure does.
 /// </summary>
 public sealed class SqlEvaluationException(string message) : Exception(message);
+
+/// <summary>Azure's wording for SQL rule errors, so emulator messages read the same as the service's.</summary>
+internal static class SqlErrorText
+{
+    public static string UnknownGettable(string name) =>
+        $"The specified property {name} does not exist, or it is not a gettable property of the Microsoft.ServiceBus.Messaging.BrokeredMessage class.\r\nParameter name: qualifiedPropertyName";
+
+    public static string UnknownSettable(string name) =>
+        $"The specified property ({name}) does not exist or it is not a settable property of the Microsoft.ServiceBus.Messaging.BrokeredMessage class.\r\nParameter name: property";
+
+    public static string CannotRemoveSystem(string name) =>
+        $"A system property cannot be removed. The system property specified was '{name}'.\r\nParameter name: name";
+
+    public static string UnboundParameter(string name) =>
+        $"A parameter ({name}) used in the expression specified in SqlExpression is missing from the Parameters property.";
+
+    public static string UnusedParameter(string name) =>
+        $"The specified parameter ({name}) in Parameters property was not used in the expression specified in SqlExpression.";
+
+    public static string UnknownFunction(string name) =>
+        $"The specified function name ({name}) is unknown. Make sure the function name is correct.";
+
+    public static string FunctionArity(string name, int expected, int actual) =>
+        $"The '{name}' function expects {expected} argument(s), but {actual} argument(s) was/were specified.\r\nParameter name: arguments";
+
+    public static string LikeLiteral(Type type) =>
+        $"Expression of type '{type.FullName}' cannot be used for parameter of type 'System.Object' of method 'System.Nullable`1[System.Boolean] LikeMethod(System.Object, System.Object, System.Object)'";
+}
