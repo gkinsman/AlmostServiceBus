@@ -85,8 +85,12 @@ public sealed class SubscriptionEntity
 
     // --- Rule management ---
 
-    public void AddOrUpdateRule(RuleEntity rule) =>
+    /// <exception cref="SqlFilterException">The rule's SQL filter expression is invalid or unsupported.</exception>
+    public void AddOrUpdateRule(RuleEntity rule)
+    {
+        rule.Validate();
         _rules[rule.Name] = rule;
+    }
 
     public RuleEntity? GetRule(string name) =>
         _rules.TryGetValue(name, out var rule) ? rule : null;

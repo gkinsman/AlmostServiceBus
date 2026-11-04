@@ -76,7 +76,14 @@ public static class ManagementApiEndpoints
                     CorrelationFilterProperties = props.CorrelationFilterProperties,
                     ActionExpression = props.ActionExpression
                 };
-                sub.AddOrUpdateRule(rule);
+                try
+                {
+                    sub.AddOrUpdateRule(rule);
+                }
+                catch (SqlFilterException ex)
+                {
+                    return InvalidSqlFilter(ex);
+                }
 
                 var xml = AtomXmlWriter.WriteRuleEntry(rule, topicName, subName, baseUrl);
                 return Results.Content(xml, AtomXmlContentType,
@@ -96,6 +103,9 @@ public static class ManagementApiEndpoints
                     return [p.ForwardTo, p.ForwardDeadLetteredMessagesTo];
                 }) is { } badSub)
                     return badSub;
+
+                if (InvalidDefaultRuleFilter(body) is { } badRule)
+                    return badRule;
 
                 SubscriptionEntity sub;
                 if (isUpdate)
@@ -521,6 +531,31 @@ public static class ManagementApiEndpoints
         }
 
         return null;
+    }
+
+    // Real Service Bus rejects an unparseable SQL filter with 400 when the rule is created.
+    private static IResult InvalidSqlFilter(SqlFilterException ex) =>
+        ManagementApiErrors.BadRequest($"The SQL filter expression is invalid: {ex.Message}");
+
+    private static IResult? InvalidDefaultRuleFilter(string body)
+    {
+        RuleProperties? rule;
+        try { rule = AtomXmlReader.ReadSubscriptionProperties(body).DefaultRule; }
+        catch { return null; }
+
+        if (rule is not { FilterType: FilterType.SqlFilter, SqlExpression: { } expression } ||
+            string.IsNullOrWhiteSpace(expression))
+            return null;
+
+        try
+        {
+            SqlFilterExpression.Parse(expression);
+            return null;
+        }
+        catch (SqlFilterException ex)
+        {
+            return InvalidSqlFilter(ex);
+        }
     }
 
     private static void ApplySubscriptionProperties(SubscriptionEntity entity, string body)

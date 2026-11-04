@@ -106,4 +106,45 @@ public class ManagementApiRuleTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
+
+    [Fact]
+    public async Task CreateRule_InvalidSqlFilter_Returns400AndAddsNoRule()
+    {
+        var rule = new RuleEntity { Name = "bad-rule", FilterType = FilterType.SqlFilter, SqlExpression = "color IN ('red'" };
+        var xml = AtomXmlWriter.WriteRuleEntry(rule, TopicName, SubName);
+
+        var response = await _client.PutAsync(
+            $"/{TopicName}/Subscriptions/{SubName}/Rules/bad-rule",
+            new StringContent(xml, Encoding.UTF8, "application/atom+xml"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Null(_registry.GetOrCreate("test-ns").GetSubscription(TopicName, SubName)!.GetRule("bad-rule"));
+    }
+
+    [Fact]
+    public async Task CreateSubscription_WithInvalidDefaultRuleSqlFilter_Returns400AndCreatesNothing()
+    {
+        var xml = """
+            <entry xmlns="http://www.w3.org/2005/Atom">
+              <content type="application/xml">
+                <SubscriptionDescription xmlns="http://schemas.microsoft.com/netservices/2010/10/servicebus/connect"
+                                         xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+                  <DefaultRuleDescription>
+                    <Name>bad-default</Name>
+                    <Filter i:type="SqlFilter">
+                      <SqlExpression>"unterminated = 'x'</SqlExpression>
+                    </Filter>
+                  </DefaultRuleDescription>
+                </SubscriptionDescription>
+              </content>
+            </entry>
+            """;
+
+        var response = await _client.PutAsync(
+            $"/{TopicName}/Subscriptions/bad-sub",
+            new StringContent(xml, Encoding.UTF8, "application/atom+xml"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Null(_registry.GetOrCreate("test-ns").GetSubscription(TopicName, "bad-sub"));
+    }
 }
