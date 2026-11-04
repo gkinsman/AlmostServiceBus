@@ -1,0 +1,671 @@
+﻿// Throwaway probe: asks real Azure Service Bus how it evaluates SQL filters and actions.
+// Reads ASB_CONNECTION_STRING from user secrets "almostservicebus-conformance". Never prints it.
+using System.Collections.Concurrent;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
+using Microsoft.Extensions.Configuration;
+
+var config = new ConfigurationBuilder().AddUserSecrets("almostservicebus-conformance").Build();
+var cs = config["ASB_CONNECTION_STRING"] ?? throw new InvalidOperationException("ASB_CONNECTION_STRING missing");
+var nsHost = Regex.Match(cs, @"sb://([^/;]+)").Groups[1].Value;
+string Scrub(string? s) => (s ?? "").Replace(nsHost, "<ns>").Replace(nsHost.Split('.')[0], "<ns>");
+
+var admin = new ServiceBusAdministrationClient(cs);
+await using var client = new ServiceBusClient(cs);
+var topic = $"sqlprobe-{Guid.NewGuid():N}"[..20];
+var only = args.Length > 0 ? args[0] : null;
+
+var guid = Guid.Parse("6f9619ff-8b86-d011-b42d-00c04fc964ff");
+var dt = new DateTime(2024, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+
+var cases = new List<Case>();
+void F(string id, string filter, Dictionary<string, object?>? user = null, Action<ServiceBusMessage>? sys = null) =>
+    cases.Add(new Case(id, [new Rule(filter)], user ?? [], sys));
+void A(string id, string action, Dictionary<string, object?>? user = null, Action<ServiceBusMessage>? sys = null, string? filter = null, Dictionary<string, object?>? ap = null) =>
+    cases.Add(new Case(id, [new Rule(filter, Action: action, AP: ap)], user ?? [], sys));
+void P(string id, string filter, Dictionary<string, object?> fp, Dictionary<string, object?>? user = null) =>
+    cases.Add(new Case(id, [new Rule(filter, FP: fp)], user ?? [], null));
+Dictionary<string, object?> U(params (string, object?)[] kv) => kv.ToDictionary(p => p.Item1, p => p.Item2);
+var red = U(("color", "red"));
+
+// Q1 unprefixed names
+F("q1.label-sys-only", "label = 'L'", null, m => m.Subject = "L");
+F("q1.label-user-only", "label = 'L'", U(("label", "L")), m => m.Subject = "other");
+F("q1.to-sys", "To = 'x'", null, m => m.To = "x");
+F("q1.correlationid-sys", "CorrelationId = 'c'", null, m => m.CorrelationId = "c");
+F("q1.messageid-sys", "MessageId = 'mid-1'", null, m => m.MessageId = "mid-1");
+F("q1.contenttype-sys", "ContentType = 'ct'", null, m => m.ContentType = "ct");
+F("q1.user-control", "color = 'red'", red);
+F("q1.exists-unprefixed-sys", "EXISTS(Label)", null, m => m.Subject = "L");
+// Q2 case sensitivity of names and keywords
+F("q2.sys-lower", "sys.label = 'L'", null, m => m.Subject = "L");
+F("q2.sys-upper", "sys.LABEL = 'L'", null, m => m.Subject = "L");
+F("q2.sys-scope-upper", "SYS.Label = 'L'", null, m => m.Subject = "L");
+F("q2.user-name-case", "user.Color = 'red'", red);
+F("q2.unprefixed-name-case", "COLOR = 'red'", red);
+F("q2.keywords-lower", "color in ('red') and not (color is null)", red);
+// Q3 system properties
+foreach (var p in new[] { "MessageId", "CorrelationId", "To", "ReplyTo", "Label", "Subject", "SessionId", "ReplyToSessionId", "ContentType", "PartitionKey",
+             "SequenceNumber", "EnqueuedSequenceNumber", "DeliveryCount", "EnqueuedTimeUtc", "ScheduledEnqueueTimeUtc", "ExpiresAtUtc", "TimeToLive", "Size",
+             "LockToken", "LockedUntilUtc", "DeadLetterSource", "State", "ViaPartitionKey", "ForcePersistence", "NoSuchProperty" })
+    F($"q3.sys-{p.ToLowerInvariant()}-notnull", $"sys.{p} IS NOT NULL", null,
+        m => { m.To = "t"; m.ReplyTo = "r"; m.Subject = "l"; m.SessionId = null; m.ContentType = "c"; m.CorrelationId = "c"; m.ReplyToSessionId = "rs"; m.TimeToLive = TimeSpan.FromHours(1); });
+F("q3.sys-sessionid-value", "sys.SessionId = 's1'", null, m => m.SessionId = "s1");
+F("q3.sys-deliverycount-0", "sys.DeliveryCount = 0");
+F("q3.sys-deliverycount-1", "sys.DeliveryCount = 1");
+F("q3.sys-sequencenumber-gt0", "sys.SequenceNumber > 0");
+F("q3.sys-size-gt0", "sys.Size > 0");
+F("q3.sys-ttl-eq-string", "sys.TimeToLive = '01:00:00'", null, m => m.TimeToLive = TimeSpan.FromHours(1));
+F("q3.sys-enqueued-gt-string", "sys.EnqueuedTimeUtc > '2020-01-01'");
+F("q3.sys-unknown-isnull", "sys.NoSuchProperty IS NULL");
+// Q4 strings
+F("q4.eq-case", "color = 'RED'", red);
+F("q4.like-case", "color LIKE 'RED'", red);
+F("q4.like-case-pct", "color LIKE 'R%'", red);
+F("q4.lt-strings", "color < 'z'", red);
+F("q4.gt-strings", "color > 'z'", red);
+F("q4.trailing-space-literal", "color = 'red '", red);
+F("q4.trailing-space-value", "color = 'red'", U(("color", "red ")));
+F("q4.unicode", "name = 'café'", U(("name", "café")));
+F("q4.empty-string", "color = ''", U(("color", "")));
+// Q5 types
+F("q5.string-gt-int", "color > 1", red);
+F("q5.string-eq-int", "color = 1", red);
+F("q5.numstr-eq-int", "n = 27", U(("n", "27")));
+F("q5.int-eq-numstr", "n = '27'", U(("n", 27)));
+F("q5.bool-eq-int", "b = 1", U(("b", true)));
+F("q5.bool-eq-true", "b = TRUE", U(("b", true)));
+F("q5.bool-eq-string", "b = 'true'", U(("b", true)));
+F("q5.bool-bare-true", "b", U(("b", true)));
+F("q5.bool-bare-false", "b", U(("b", false)));
+F("q5.bool-not-false", "NOT b", U(("b", false)));
+F("q5.string-bare", "color", red);
+F("q5.int-bare", "n", U(("n", 1)));
+F("q5.int-eq-double-literal", "n = 27.0", U(("n", 27)));
+F("q5.long-eq-int-literal", "n = 27", U(("n", 27L)));
+F("q5.double", "d = 1.5", U(("d", 1.5d)));
+F("q5.double-gt-int", "d > 1", U(("d", 1.5d)));
+F("q5.float", "f = 1.5", U(("f", 1.5f)));
+F("q5.decimal", "m = 1.5", U(("m", 1.5m)));
+F("q5.char", "c = 'x'", U(("c", 'x')));
+F("q5.byte", "n = 7", U(("n", (byte)7)));
+F("q5.short", "n = 7", U(("n", (short)7)));
+F("q5.uint", "n = 7", U(("n", 7u)));
+F("q5.ulong", "n = 7", U(("n", 7ul)));
+F("q5.sbyte", "n = 7", U(("n", (sbyte)7)));
+F("q5.guid-eq-string", $"g = '{guid}'", U(("g", guid)));
+F("q5.guid-notnull", "g IS NOT NULL", U(("g", guid)));
+F("q5.datetime-eq-string", "dt = '2024-01-02T03:04:05Z'", U(("dt", dt)));
+F("q5.datetime-gt-string", "dt > '2020-01-01'", U(("dt", dt)));
+F("q5.datetimeoffset-eq-string", "dt = '2024-01-02T03:04:05Z'", U(("dt", new DateTimeOffset(dt))));
+F("q5.timespan-eq-string", "ts = '01:00:00'", U(("ts", TimeSpan.FromHours(1))));
+F("q5.timespan-notnull", "ts IS NOT NULL", U(("ts", TimeSpan.FromHours(1))));
+F("q5.bytes-eq-string", "bytes = 'x'", U(("bytes", new byte[] { 120 })));
+F("q5.bytes-notnull", "bytes IS NOT NULL", U(("bytes", new byte[] { 120 })));
+F("q5.uri-eq-string", "u = 'http://a/'", U(("u", new Uri("http://a/"))));
+F("q5.literal-str-eq-int", "'1' = 1");
+F("q5.literal-int-eq-double", "1 = 1.0");
+F("q5.null-literal-bare", "NULL");
+F("q5.true-literal", "TRUE");
+F("q5.false-literal-not", "NOT FALSE");
+F("q5.null-eq-null", "NULL = NULL");
+F("q5.prop-eq-null", "color = NULL", red);
+F("q5.null-valued-prop-isnull", "p IS NULL", U(("p", null)));
+F("q5.null-valued-prop-exists", "EXISTS(p)", U(("p", null)));
+// Q6 arithmetic
+F("q6.div0-int", "n / 0 = 1", U(("n", 1)));
+F("q6.div0-double", "d / 0 = 1", U(("d", 1.5d)));
+F("q6.mod0", "n % 0 = 1", U(("n", 1)));
+F("q6.overflow", "n * 9223372036854775807 > 0", U(("n", 2L)));
+F("q6.int-division-3", "n / 2 = 3", U(("n", 7)));
+F("q6.int-division-3.5", "n / 2 = 3.5", U(("n", 7)));
+F("q6.mod", "n % 3 = 1", U(("n", 7)));
+F("q6.mod-double", "d % 2 = 1.5", U(("d", 3.5d)));
+F("q6.string-concat", "color + 'x' = 'redx'", red);
+F("q6.unary-minus", "-n = -5", U(("n", 5)));
+F("q6.precedence", "1 + 2 * 3 = 7");
+F("q6.int-plus-missing", "missing + 1 IS NULL");
+// three-valued logic
+F("tvl.missing-eq", "missing = 'x'");
+F("tvl.missing-neq", "missing <> 'x'");
+F("tvl.missing-bangeq", "missing != 'x'");
+F("tvl.not-missing-eq", "NOT (missing = 'x')");
+F("tvl.missing-or-true", "missing = 'x' OR 1 = 1");
+F("tvl.not-missing-and-false", "NOT (missing = 'x' AND 1 = 0)");
+F("tvl.missing-in", "missing IN ('x')");
+F("tvl.missing-notin", "missing NOT IN ('x')");
+F("tvl.missing-notlike", "missing NOT LIKE 'x'");
+F("tvl.missing-isnull", "missing IS NULL");
+F("tvl.missing-notexists", "NOT EXISTS(missing)");
+F("tvl.missing-lt", "missing < 1");
+// IN
+F("in.match", "color IN ('red', 'blue')", red);
+F("in.nomatch", "color IN ('green', 'blue')", red);
+F("notin.match", "color NOT IN ('green', 'blue')", red);
+F("notin.nomatch", "color NOT IN ('red', 'blue')", red);
+F("in.numbers", "n IN (1, 2, 3)", U(("n", 2)));
+F("in.mixed-types", "n IN ('2', 2)", U(("n", 2)));
+F("in.with-null-nomatch", "color IN ('x', NULL)", red);
+F("notin.with-null", "color NOT IN ('x', NULL)", red);
+F("in.expression-items", "n IN (1 + 1, 3)", U(("n", 2)));
+F("in.property-items", "n IN (m, 3)", U(("n", 2), ("m", 2)));
+F("in.empty", "color IN ()", red);
+F("in.keyword-case", "color in ('red')", red);
+// delimited identifiers (issue #192)
+var mt = U(("messageType", "Created"), ("message-type", "Created"));
+var mtu = U(("messageType", "Unrelated"), ("message-type", "Unrelated"));
+F("i192.eq-control-match", "messageType = 'Created'", mt);
+F("i192.eq-control-nomatch", "messageType = 'Created'", mtu);
+F("i192.in-match", "messageType IN ('Created', 'Updated')", mt);
+F("i192.in-nomatch", "messageType IN ('Created', 'Updated')", mtu);
+F("i192.quoted-match", "\"message-type\" = 'Created'", mt);
+F("i192.quoted-nomatch", "\"message-type\" = 'Created'", mtu);
+F("i192.bracketed-match", "[message-type] = 'Created'", mt);
+F("i192.bracketed-nomatch", "[message-type] = 'Created'", mtu);
+F("i192.quoted-in-match", "\"message-type\" IN ('Created', 'Updated')", mt);
+F("i192.quoted-in-nomatch", "\"message-type\" IN ('Created', 'Updated')", mtu);
+F("delim.user-bracketed", "user.[message-type] = 'Created'", mt);
+F("delim.user-quoted", "user.\"message-type\" = 'Created'", mt);
+F("delim.sys-bracketed", "sys.[Label] = 'L'", null, m => m.Subject = "L");
+F("delim.quoted-escape", "\"a\"\"b\" = 'x'", U(("a\"b", "x")));
+F("delim.bracket-escape", "[a]]b] = 'x'", U(("a]b", "x")));
+F("delim.reserved-word", "[in] = 'x'", U(("in", "x")));
+F("delim.space", "[my prop] = 'x'", U(("my prop", "x")));
+F("delim.dotted-bracketed", "[a.b] = 'x'", U(("a.b", "x")));
+F("delim.dotted-regular", "a.b = 'x'", U(("a.b", "x")));
+F("delim.dotted-user", "user.a.b = 'x'", U(("a.b", "x")));
+F("delim.empty-brackets", "[] = 'x'");
+F("fw.nsb", "[NServiceBus.EnclosedMessageTypes] LIKE '%Ns.MyEvent%'", U(("NServiceBus.EnclosedMessageTypes", "Ns.MyEvent, Asm, Version=1.0.0.0;Ns.IEvent, Asm")));
+F("fw.nsb-nomatch", "[NServiceBus.EnclosedMessageTypes] LIKE '%Ns.MyEvent%'", U(("NServiceBus.EnclosedMessageTypes", "Ns.Other, Asm")));
+F("fw.wolverine-missing", "NOT EXISTS(user.ignore) OR user.ignore NOT LIKE 'true'");
+F("fw.wolverine-false", "NOT EXISTS(user.ignore) OR user.ignore NOT LIKE 'true'", U(("ignore", "false")));
+F("fw.wolverine-true", "NOT EXISTS(user.ignore) OR user.ignore NOT LIKE 'true'", U(("ignore", "true")));
+// LIKE
+F("like.pct", "color LIKE 'r%'", red);
+F("like.underscore", "color LIKE 'r_d'", red);
+F("like.notlike", "color NOT LIKE 'b%'", red);
+F("like.escape", "code LIKE '50!%' ESCAPE '!'", U(("code", "50%")));
+F("like.escape-nomatch", "code LIKE '50!%' ESCAPE '!'", U(("code", "500")));
+F("like.regex-dot", "color LIKE 'r.d'", red);
+F("like.char-class", "color LIKE '[r]ed'", red);
+F("like.on-int", "n LIKE '2%'", U(("n", 27)));
+F("like.multiline", "s LIKE 'a%'", U(("s", "a\nb")));
+F("like.escape-multichar", "code LIKE '50!%' ESCAPE '!!'", U(("code", "50%")));
+F("like.pattern-property", "color LIKE pat", U(("color", "red"), ("pat", "r%")));
+// literals
+F("lit.string-escape", "name = 'O''Brien'", U(("name", "O'Brien")));
+F("lit.exponent", "n = 1e1", U(("n", 10)));
+F("lit.leading-dot", ".5 = 0.5");
+F("lit.negative", "n = -1", U(("n", -1)));
+F("lit.N-string", "color = N'red'", red);
+F("lit.double-quoted-string-as-name", "color = \"red\"", U(("color", "red"), ("red", "red")));
+// functions
+F("fn.newid-notnull", "newid() IS NOT NULL");
+F("fn.newid-eq", "newid() = newid()");
+F("fn.property", "property('color') = 'red'", red);
+F("fn.property-dynamic", "property(which) = 'red'", U(("color", "red"), ("which", "color")));
+F("fn.property-sys", "property('sys.Label') = 'L'", null, m => m.Subject = "L");
+F("fn.property-unprefixed-sys", "property('Label') = 'L'", null, m => m.Subject = "L");
+F("fn.unknown", "upper(color) = 'RED'", red);
+F("fn.newid-arg", "newid(1) IS NOT NULL");
+// parameters (HTTP admin only)
+P("p.string", "color = @p", U(("@p", "red")), red);
+P("p.long", "n = @p", U(("@p", 5L)), U(("n", 5)));
+P("p.int", "n = @p", U(("@p", 5)), U(("n", 5L)));
+P("p.double", "d = @p", U(("@p", 1.5d)), U(("d", 1.5d)));
+P("p.bool", "b = @p", U(("@p", true)), U(("b", true)));
+P("p.datetime", "dt = @p", U(("@p", dt)), U(("dt", dt)));
+P("p.timespan", "ts = @p", U(("@p", TimeSpan.FromHours(1))), U(("ts", TimeSpan.FromHours(1))));
+P("p.unbound", "color = @missing", U(("@p", "red")), red);
+P("p.unused", "color = 'red'", U(("@unused", "x")), red);
+P("p.case", "color = @P", U(("@p", "red")), red);
+P("p.no-at-key", "color = @p", U(("p", "red")), red);
+P("p.in-list", "color IN (@a, @b)", U(("@a", "blue"), ("@b", "red")), red);
+P("p.like-pattern", "color LIKE @pat", U(("@pat", "r%")), red);
+// actions
+A("a.set-user-literal", "SET user.tag = 'A'", red);
+A("a.set-unprefixed", "SET tag = 'A'", red);
+A("a.set-unprefixed-existing-sys-name", "SET Label = 'A'", null, m => m.Subject = "orig");
+A("a.set-user-expr", "SET user.b = user.n * 2", U(("n", 3)));
+A("a.remove-user", "REMOVE user.color", red);
+A("a.remove-unprefixed", "REMOVE color", red);
+A("a.remove-missing", "REMOVE user.nope", red);
+foreach (var p in new[] { "Label", "To", "CorrelationId", "MessageId", "ReplyTo", "ReplyToSessionId", "ContentType", "SessionId", "PartitionKey", "TimeToLive", "ScheduledEnqueueTimeUtc", "SequenceNumber", "DeliveryCount", "EnqueuedTimeUtc", "Size", "NoSuchProperty" })
+    A($"a.set-sys-{p.ToLowerInvariant()}", p switch
+    {
+        "TimeToLive" => "SET sys.TimeToLive = '02:00:00'",
+        "ScheduledEnqueueTimeUtc" => "SET sys.ScheduledEnqueueTimeUtc = '2020-01-01T00:00:00Z'",
+        "SequenceNumber" or "DeliveryCount" or "Size" => $"SET sys.{p} = 5",
+        _ => $"SET sys.{p} = 'v-{p}'"
+    }, red, m => { m.Subject = "orig"; m.To = "orig"; });
+A("a.remove-sys-label", "REMOVE sys.Label", red, m => m.Subject = "orig");
+A("a.remove-sys-to", "REMOVE sys.To", red, m => m.To = "orig");
+A("a.ordering", "SET user.a = 1; SET user.b = user.a + 1", red);
+A("a.ordering-overwrite", "SET user.n = 5; SET user.m = user.n", U(("n", 1)));
+A("a.set-null", "SET user.color = NULL", red);
+A("a.set-missing-ref", "SET user.x = user.missing", red);
+A("a.result-double", "SET user.x = 1.5", red);
+A("a.result-intdiv", "SET user.x = 7 / 2", red);
+A("a.result-bool", "SET user.x = 1 = 1", red);
+A("a.result-in", "SET user.x = color IN ('red')", red);
+A("a.newid", "SET user.id = newid()", red);
+A("a.trailing-semicolon", "SET user.a = 1;", red);
+A("a.overwrite-type", "SET user.n = 'text'", U(("n", 1)));
+A("a.copy-sys-to-user", "SET user.l = sys.Label", null, m => m.Subject = "L");
+A("a.invalid-no-eq", "SET user.a", red);
+A("a.invalid-update", "UPDATE user.a = 1", red);
+A("a.invalid-empty-statement", ";", red);
+A("a.param", "SET user.x = @v", red, ap: U(("@v", "pv")));
+A("a.param-unbound", "SET user.x = @nope", red, ap: U(("@v", "pv")));
+A("a.whitespace-only", " ", red);
+A("a.on-div0", "SET user.x = 1 / 0", red);
+cases.Add(new Case("a.with-correlation-filter", [new Rule(null, Action: "SET user.tag = 'corr'", Corr: true)], red, null));
+// multi-rule (Q9)
+cases.Add(new Case("m.two-action-rules", [new Rule(null, Action: "SET user.r1 = '1'"), new Rule(null, Action: "SET user.r2 = '2'")], red, null));
+cases.Add(new Case("m.action-and-plain", [new Rule(null, Action: "SET user.r1 = '1'"), new Rule(null)], red, null));
+cases.Add(new Case("m.two-plain", [new Rule(null), new Rule(null)], red, null));
+cases.Add(new Case("m.action-rule-nomatch-plain-match", [new Rule("1 = 0", Action: "SET user.r1 = '1'"), new Rule(null)], red, null));
+// Q11 empty / whitespace
+F("e.whitespace-filter", " ");
+// round 2
+var noDlq = new HashSet<string>();
+F("z.null.missing-eq-null", "missing = NULL");
+F("z.null.missing-neq-null", "missing <> NULL");
+F("z.null.prop-neq-null", "color <> NULL", red);
+F("z.null.not-prop-eq-null", "NOT (color = NULL)", red);
+F("z.null.null-neq-null", "NULL <> NULL");
+F("z.null.literal-eq-null", "'a' = NULL");
+F("z.null.missing-eq-missing", "missing1 = missing2");
+F("z.null.nullprop-eq-null", "p = NULL", U(("p", null)));
+F("z.null.nullprop-eq-x", "p = 'x'", U(("p", null)));
+F("z.null.nullprop-neq-x", "p <> 'x'", U(("p", null)));
+F("z.null.nullprop-in", "p IN ('x')", U(("p", null)));
+F("z.null.nullprop-notin", "p NOT IN ('x')", U(("p", null)));
+F("z.null.nullprop-like", "p NOT LIKE 'x'", U(("p", null)));
+F("z.null.in-with-null-match", "color IN ('red', NULL)", red);
+F("z.null.notin-null-only", "color NOT IN (NULL)", red);
+F("z.null.missing-notin-null", "missing NOT IN ('x', NULL)");
+F("z.null.missing-plus-1-eq", "missing + 1 = 1");
+F("z.null.missing-lt-or-true", "missing < 1 OR 1 = 1");
+F("z.null.not-missing-lt", "NOT (missing < 1)");
+F("z.null.missing-gt-and-true", "NOT (missing > 1 AND 1 = 1)");
+F("z.null.like-missing-pattern", "color LIKE missing", red);
+F("z.err.or-true-first", "1 = 1 OR color > 1", red);
+F("z.err.or-error-first", "color > 1 OR 1 = 1", red);
+F("z.err.and-false-first", "1 = 0 AND color > 1", red);
+F("z.err.and-error-first", "color > 1 AND 1 = 0", red);
+F("z.err.in-match-before-error", "color IN ('red', 1)", red);
+F("z.err.in-error-before-match", "color IN (1, 'red')", red);
+F("z.err.not-error", "NOT (color > 1)", red);
+F("z.err.missing-gt-string", "missing > 'a'");
+F("z.err.missing-eq-int-vs-string-literal", "missing = 1 OR missing = 'a'");
+F("z.err.no-dlq-flag", "color > 1", red); noDlq.Add("z.err.no-dlq-flag");
+A("z.err.action-no-dlq-flag", "SET user.x = 1 / 0", red); noDlq.Add("z.err.action-no-dlq-flag");
+F("z.err.literal-overflow", "9223372036854775807 + 1 > 0");
+F("z.err.literal-div0", "1 / 0 = 1");
+F("z.err.literal-type-mismatch", "'a' > 1");
+F("z.num.int-plus-double", "n + 0.5 = 7.5", U(("n", 7)));
+F("z.num.int-times-int-overflow", "n * 2147483647 > 0", U(("n", 2)));
+F("z.num.double-literal-int-prop", "n = 7.0", U(("n", 7)));
+F("z.num.float-vs-double", "f = 0.1", U(("f", 0.1f)));
+F("z.num.int-lt-double", "n < 7.5", U(("n", 7)));
+F("z.num.uint-vs-long", "n > -1", U(("n", 7u)));
+F("z.num.exp-literal-type", "n = 1E1", U(("n", 10L)));
+F("z.num.string-plus-int", "color + 1 = 'red1'", red);
+F("z.num.unary-plus", "+n = 5", U(("n", 5)));
+F("z.num.neg-mod", "n % 3 = -1", U(("n", -7)));
+F("z.num.int-div-negative", "n / 2 = -3", U(("n", -7)));
+F("z.num.guid-neq-string", $"g <> '{guid}'", U(("g", guid)));
+F("z.num.guid-eq-bad-string", "g = 'not-a-guid'", U(("g", guid)));
+F("z.num.guid-gt-string", $"g > '{guid}'", U(("g", guid)));
+P("z.num.datetime-param-lt", "sys.EnqueuedTimeUtc > @d", U(("@d", dt)));
+F("z.num.bool-lt", "b < TRUE", U(("b", false)));
+F("z.num.bool-eq-false", "b = FALSE", U(("b", false)));
+F("z.num.bool-neq", "b <> TRUE", U(("b", false)));
+F("z.misc.exists-sys", "EXISTS(sys.Label)", null, m => m.Subject = "L");
+F("z.misc.exists-sys-unset", "EXISTS(sys.To)");
+F("z.misc.newid-upper", "NEWID() = NEWID()");
+F("z.misc.property-upper", "PROPERTY('color') = 'red'", red);
+F("z.misc.property-missing", "property('missing') = 'x'");
+F("z.misc.property-name-case", "property('COLOR') = 'red'", red);
+F("z.misc.like-escape-pct-literal", "code LIKE '%!%%' ESCAPE '!'", U(("code", "50%")));
+F("z.misc.like-escape-underscore", "code LIKE 'a!_b' ESCAPE '!'", U(("code", "a_b")));
+F("z.misc.like-escape-underscore-nomatch", "code LIKE 'a!_b' ESCAPE '!'", U(("code", "axb")));
+F("z.misc.like-escape-trailing", "code LIKE 'a!' ESCAPE '!'", U(("code", "a")));
+F("z.misc.like-multichar-escape-semantics", "code LIKE '50!%' ESCAPE '!x'", U(("code", "50%")));
+F("z.misc.like-empty-escape", "code LIKE '50%' ESCAPE ''", U(("code", "50x")));
+F("z.misc.like-double", "d LIKE '1.5'", U(("d", 1.5d)));
+F("z.misc.like-bool", "b LIKE 'True'", U(("b", true)));
+F("z.misc.like-guid", "g LIKE '6f96%'", U(("g", guid)));
+F("z.misc.like-prop-escape", "code LIKE '50!%' ESCAPE esc", U(("code", "50%"), ("esc", "!")));
+F("z.misc.empty-bracket-name", "[] = 'x'", U(("", "x")));
+F("z.misc.sys-unprefixed-as-user", "sys = 1", U(("sys", 1)));
+F("z.misc.user-unprefixed-as-user", "user = 1", U(("user", 1)));
+F("z.misc.keyword-name-quoted", "\"AND\" = 1", U(("AND", 1)));
+F("z.misc.not-not", "NOT NOT color = 'red'", red);
+F("z.misc.nested-parens", "((((color = 'red'))))", red);
+F("z.misc.ne-bang", "color != 'blue'", red);
+F("z.misc.tab-newline-ws", "color\t=\n'red'", red);
+F("z.misc.comment", "color = 'red' -- comment", red);
+F("z.misc.block-comment", "color /* c */ = 'red'", red);
+F("z.misc.long-identifier", new string('a', 120) + " = 'x'", U((new string('a', 120), "x")));
+F("z.misc.unicode-identifier", "café = 'x'", U(("café", "x")));
+F("z.misc.identifier-digit-start", "1abc = 'x'", U(("1abc", "x")));
+F("z.misc.identifier-dollar", "a$b = 'x'", U(("a$b", "x")));
+F("z.misc.string-with-newline", "s = 'a\nb'", U(("s", "a\nb")));
+F("z.misc.hex-literal", "n = 0x10", U(("n", 16)));
+F("z.misc.big-int-literal", "n = 99999999999999999999", U(("n", 1)));
+F("z.misc.exp-no-digits", "n = 1e", U(("n", 1)));
+F("z.misc.decimal-trailing-dot", "n = 1.", U(("n", 1)));
+A("z.act.set-sys-to-unset", "SET sys.To = 'v'", red);
+A("z.act.set-sys-messageid", "SET sys.MessageId = 'newid'", red);
+A("z.act.set-sys-label-int", "SET sys.Label = 5", red);
+A("z.act.set-sys-ttl-int", "SET sys.TimeToLive = 5", red);
+A("z.act.set-sys-replyto-null", "SET sys.ReplyTo = NULL", red, m => m.ReplyTo = "r");
+A("z.act.set-user-int-to-double", "SET user.n = 1.5", U(("n", 1)));
+A("z.act.set-user-int-to-long", "SET user.n = 9999999999", U(("n", 1)));
+A("z.act.set-user-string-to-int", "SET user.s = 5", U(("s", "x")));
+A("z.act.set-user-bool-to-string", "SET user.b = 'false'", U(("b", true)));
+A("z.act.set-user-guid", "SET user.g = 'abc'", U(("g", guid)));
+A("z.act.set-user-double-from-int", "SET user.d = 2", U(("d", 1.5d)));
+A("z.act.set-new-bool", "SET user.x = TRUE", red);
+A("z.act.set-new-from-param-int", "SET user.x = @i", red, ap: U(("@i", 5)));
+A("z.act.set-type-from-prop", "SET user.x = user.n", U(("n", 7)));
+A("z.act.set-string-concat", "SET user.x = color + '!'", red);
+A("z.act.set-unscoped-ref", "SET user.x = color", red);
+A("z.act.set-sys-ref-unprefixed", "SET user.x = Label", null, m => m.Subject = "L");
+A("z.act.remove-then-set", "REMOVE user.color; SET user.x = user.color", red);
+A("z.act.set-then-remove", "SET user.x = 1; REMOVE user.x", red);
+A("z.act.set-twice", "SET user.x = 1; SET user.x = 'a'", red);
+A("z.act.set-rulename", "SET user.RuleName = 'mine'", red);
+A("z.act.newid-type-into-string", "SET user.color = newid()", red);
+A("z.act.property-fn", "SET user.x = property('color')", red);
+A("z.act.empty-trailing-semis", "SET user.a = 1;;", red);
+A("z.act.multiple-semis-leading", "; SET user.a = 1", red);
+A("z.act.remove-sys-unknown", "REMOVE sys.NoSuch", red);
+A("z.act.set-bracketed-target", "SET user.[a b] = 1", red);
+A("z.act.like-in-action", "SET user.x = color LIKE 'r%'", red);
+A("z.act.set-sys-label-from-user", "SET sys.Label = color", red);
+A("z.act.error-then-statements", "SET user.a = 1; SET user.b = 1/0", red);
+cases.Add(new Case("z.multi.three-actions-one-plain", [new Rule(null, Action: "SET user.r = '1'"), new Rule(null, Action: "SET user.r = '2'"), new Rule(null), new Rule(null)], red, null));
+cases.Add(new Case("z.multi.error-rule-plus-plain", [new Rule("color > 1"), new Rule(null)], red, null));
+cases.Add(new Case("z.multi.action-error-plus-plain", [new Rule(null, Action: "SET user.x = 1/0"), new Rule(null)], red, null));
+cases.Add(new Case("z.multi.action-error-plus-action", [new Rule(null, Action: "SET user.x = 1/0"), new Rule(null, Action: "SET user.y = 1")], red, null));
+cases.Add(new Case("z.multi.true-filter-and-action", [new Rule(null), new Rule("1 = 1", Action: "SET user.y = 1")], red, null));
+// round 3: SET sys.* when the sender already set the property
+Action<ServiceBusMessage> allSet = m => { m.To = "o"; m.ReplyTo = "o"; m.CorrelationId = "o"; m.ContentType = "o"; m.ReplyToSessionId = "o"; m.Subject = "o"; m.TimeToLive = TimeSpan.FromHours(1); };
+foreach (var p in new[] { "To", "ReplyTo", "CorrelationId", "ContentType", "ReplyToSessionId", "Label" })
+{
+    A($"y.set-preset-{p.ToLowerInvariant()}", $"SET sys.{p} = 'new'", red, allSet);
+    A($"y.set-null-preset-{p.ToLowerInvariant()}", $"SET sys.{p} = NULL", red, allSet);
+}
+A("y.set-preset-ttl", "SET sys.TimeToLive = '02:00:00'", red, allSet);
+A("y.set-preset-sessionid", "SET sys.SessionId = 'new'", red, m => { m.SessionId = "o"; });
+A("y.set-preset-partitionkey", "SET sys.PartitionKey = 'new'", red, m => { m.PartitionKey = "o"; });
+A("y.set-preset-messageid-explicit", "SET sys.MessageId = 'new'", red, m => { m.MessageId = "explicit"; });
+A("y.read-after-set", "SET sys.Label = 'new'; SET user.l = sys.Label", red, allSet);
+A("y.read-after-set-to", "SET sys.To = 'new'; SET user.t = sys.To", red, allSet);
+A("y.set-unset-correlation-null", "SET sys.CorrelationId = NULL", red);
+F("y.filter-sys-to-null-isnull", "sys.To IS NULL");
+F("y.filter-sys-to-eq-null", "sys.To = NULL");
+F("y.filter-sys-to-neq-x", "sys.To <> 'x'");
+F("y.filter-sys-sessionid-neq-x", "sys.SessionId <> 'x'");
+F("y.filter-sys-label-like", "sys.Label LIKE 'L%'", null, m => m.Subject = "Label");
+F("y.filter-sys-ttl-param", "sys.TimeToLive > @t", null);
+P("y.filter-sys-ttl-param2", "sys.TimeToLive > @t", U(("@t", TimeSpan.FromMinutes(1))));
+F("y.filter-sys-expiresat-gt-enqueued", "sys.ExpiresAtUtc > sys.EnqueuedTimeUtc", null, m => m.TimeToLive = TimeSpan.FromHours(1));
+F("y.filter-sys-expiresat-no-ttl", "sys.ExpiresAtUtc > sys.EnqueuedTimeUtc");
+F("y.filter-sys-size-range", "sys.Size > 100 AND sys.Size < 1000");
+F("y.filter-sys-state", "sys.State = 0");
+F("y.filter-sys-messageid-like", "sys.MessageId LIKE 'm-y.%'");
+F("y.filter-sys-scheduled-null", "sys.ScheduledEnqueueTimeUtc IS NULL");
+F("y.filter-sys-deliverycount-type", "sys.DeliveryCount + 0.5 = 1.5");
+F("y.filter-sys-seq-type", "sys.SequenceNumber % 1 = 0");
+F("y.filter-sys-enqseq-eq-seq", "sys.EnqueuedSequenceNumber = sys.SequenceNumber");
+// syntax rejections
+F("r.trailing-token", "color = 'red' blue", red);
+F("r.unterminated-string", "color = 'red", red);
+F("r.missing-rparen", "(color = 'red'", red);
+F("r.triple-eq", "color === 'red'", red);
+F("r.double-eq", "color == 'red'", red);
+F("r.keyword-as-name", "in = 1");
+F("r.sys-alone", "sys = 1");
+F("r.not-without-like", "color NOT 'red'", red);
+F("r.dangling-and", "color = 'red' AND", red);
+F("r.hash", "color = #", red);
+F("r.semicolon-in-filter", "color = 'red';", red);
+F("r.like-nonstring-pattern", "color LIKE 1", red);
+F("r.is-without-null", "color IS 'red'", red);
+F("r.exists-literal", "EXISTS('x')");
+F("r.exists-expression", "EXISTS(n + 1)", U(("n", 1)));
+
+if (only is not null) cases = cases.Where(c => c.Id.StartsWith(only)).ToList();
+var dupe = cases.GroupBy(c => c.Id).FirstOrDefault(g => g.Count() > 1);
+if (dupe is not null) throw new Exception("duplicate id " + dupe.Key);
+Console.WriteLine($"{cases.Count} cases; topic {topic}");
+
+var results = new ConcurrentDictionary<string, Result>();
+var extra = new SortedDictionary<string, object?>();
+await admin.CreateTopicAsync(topic);
+try
+{
+    // 1. create subscriptions and rules
+    var subName = new Dictionary<string, string>();
+    for (var i = 0; i < cases.Count; i++) subName[cases[i].Id] = $"c{i:D3}";
+
+    await Parallel.ForEachAsync(cases, new ParallelOptions { MaxDegreeOfParallelism = 8 }, async (c, ct) =>
+    {
+        var sub = subName[c.Id];
+        var r = new Result { Id = c.Id, Rules = c.Rules.Select(Describe).ToList() };
+        results[c.Id] = r;
+        try
+        {
+            var opts = new CreateSubscriptionOptions(topic, sub) { EnableDeadLetteringOnFilterEvaluationExceptions = !noDlq.Contains(c.Id) };
+            await admin.CreateSubscriptionAsync(opts, BuildRule(c, 0), ct);
+            for (var k = 1; k < c.Rules.Length; k++)
+                await admin.CreateRuleAsync(topic, sub, BuildRule(c, k), ct);
+            r.Created = true;
+        }
+        catch (Exception ex)
+        {
+            r.Created = false;
+            r.CreateError = Err(ex);
+            try { await admin.DeleteSubscriptionAsync(topic, sub, ct); } catch { }
+        }
+    });
+
+    // 2. send one message per created case
+    var sender = client.CreateSender(topic);
+    foreach (var c in cases.Where(c => results[c.Id].Created))
+    {
+        var m = new ServiceBusMessage("body") { MessageId = "m-" + c.Id };
+        m.ApplicationProperties["caseId"] = c.Id;
+        foreach (var (k, v) in c.User) m.ApplicationProperties[k] = v;
+        c.Sys?.Invoke(m);
+        try { await sender.SendMessageAsync(m); }
+        catch (Exception ex) { results[c.Id].SendError = Err(ex); }
+    }
+    await Task.Delay(3000);
+
+    // 3. drain
+    await Parallel.ForEachAsync(cases.Where(c => results[c.Id].Created), new ParallelOptions { MaxDegreeOfParallelism = 16 }, async (c, ct) =>
+    {
+        var r = results[c.Id];
+        var sub = subName[c.Id];
+        await using var rx = client.CreateReceiver(topic, sub, new ServiceBusReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
+        while (true)
+        {
+            var batch = await rx.ReceiveMessagesAsync(10, TimeSpan.FromSeconds(r.Copies.Count == 0 ? 4 : 2), ct);
+            if (batch.Count == 0) break;
+            r.Copies.AddRange(batch.Select(Dump));
+        }
+        await using var dlq = client.CreateReceiver(topic, sub, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
+        while (true)
+        {
+            var batch = await dlq.ReceiveMessagesAsync(10, TimeSpan.FromSeconds(1), ct);
+            if (batch.Count == 0) break;
+            r.DeadLettered.AddRange(batch.Select(m => { var d = Dump(m); d["$reason"] = m.DeadLetterReason; d["$description"] = Scrub(m.DeadLetterErrorDescription); return d; }));
+        }
+        r.Outcome = r.DeadLettered.Count > 0 ? "DeadLettered" : r.Copies.Count > 0 ? "Match" : "NoMatch";
+    });
+    foreach (var r in results.Values.Where(r => !r.Created)) r.Outcome = "Rejected";
+
+    // 4. error shapes and read-back (Q10)
+    if (only is null)
+    {
+        const string s = "shapes";
+        await admin.CreateSubscriptionAsync(topic, s);
+        async Task Capture(string key, Func<Task<object?>> f)
+        {
+            try { extra[key] = await f() ?? "ok"; }
+            catch (Exception ex) { extra[key] = Err(ex); }
+        }
+        await Capture("http.dup-rule.first", async () => { await admin.CreateRuleAsync(topic, s, new CreateRuleOptions("dup", new SqlRuleFilter("1=1"))); return null; });
+        await Capture("http.dup-rule.second", async () => { await admin.CreateRuleAsync(topic, s, new CreateRuleOptions("dup", new SqlRuleFilter("1=1"))); return null; });
+        await Capture("http.invalid-filter", async () => { await admin.CreateRuleAsync(topic, s, new CreateRuleOptions("bad", new SqlRuleFilter("color IN ('a'"))); return null; });
+        await Capture("http.invalid-action", async () => { await admin.CreateRuleAsync(topic, s, new CreateRuleOptions("bada", new SqlRuleFilter("1=1")) { Action = new SqlRuleAction("SET") }); return null; });
+        await Capture("http.get-missing-rule", async () => { await admin.GetRuleAsync(topic, s, "nope"); return null; });
+        await Capture("http.params-roundtrip", async () =>
+        {
+            var f = new SqlRuleFilter("a = @a AND b = @b AND c = @c AND d = @d AND e = @e AND g = @g AND h = @h");
+            f.Parameters["@a"] = "x"; f.Parameters["@b"] = 5; f.Parameters["@c"] = 6L; f.Parameters["@d"] = 1.5d; f.Parameters["@e"] = true; f.Parameters["@g"] = dt; f.Parameters["@h"] = TimeSpan.FromHours(1);
+            await admin.CreateRuleAsync(topic, s, new CreateRuleOptions("params", f));
+            var back = (SqlRuleFilter)(await admin.GetRuleAsync(topic, s, "params")).Value.Filter;
+            return back.Parameters.ToDictionary(kv => kv.Key, kv => $"{kv.Value} ({kv.Value?.GetType().Name})");
+        });
+        await Capture("http.true-filter-readback", async () =>
+        {
+            await admin.CreateRuleAsync(topic, s, new CreateRuleOptions("tf", new TrueRuleFilter()));
+            await admin.CreateRuleAsync(topic, s, new CreateRuleOptions("sql11", new SqlRuleFilter("1=1")));
+            await admin.CreateRuleAsync(topic, s, new CreateRuleOptions("sql11sp", new SqlRuleFilter("1 = 1")));
+            var rules = new List<string>();
+            await foreach (var r in admin.GetRulesAsync(topic, s)) rules.Add($"{r.Name}: {r.Filter.GetType().Name} '{(r.Filter as SqlRuleFilter)?.SqlExpression}' action={r.Action?.GetType().Name}");
+            return rules;
+        });
+        await Capture("http.default-rule-readback", async () =>
+        {
+            var r = (await admin.GetRuleAsync(topic, s, "$Default")).Value;
+            return $"{r.Filter.GetType().Name} '{(r.Filter as SqlRuleFilter)?.SqlExpression}' action={r.Action?.GetType().Name}";
+        });
+        await Capture("http.subscription-invalid-default-rule", async () =>
+        {
+            await admin.CreateSubscriptionAsync(new CreateSubscriptionOptions(topic, "baddefault"), new CreateRuleOptions("r", new SqlRuleFilter("color IN ('a'")));
+            return null;
+        });
+        await Capture("http.subscription-invalid-default-rule.exists-after", async () => (await admin.SubscriptionExistsAsync(topic, "baddefault")).Value);
+
+        var rm = client.CreateRuleManager(topic, s);
+        await Capture("amqp.invalid-filter", async () => { await rm.CreateRuleAsync("abad", new SqlRuleFilter("color IN ('a'")); return null; });
+        await Capture("amqp.invalid-action", async () => { await rm.CreateRuleAsync(new CreateRuleOptions("abada", new SqlRuleFilter("1=1")) { Action = new SqlRuleAction("SET") }); return null; });
+        await Capture("amqp.dup-rule", async () => { await rm.CreateRuleAsync("dup", new SqlRuleFilter("1=1")); return null; });
+        await Capture("amqp.delete-missing", async () => { await rm.DeleteRuleAsync("nope"); return null; });
+        await Capture("amqp.unbound-param-expression", async () => { await rm.CreateRuleAsync("aparam", new SqlRuleFilter("color = @p")); return null; });
+        await Capture("amqp.create-with-action-and-list", async () =>
+        {
+            await rm.CreateRuleAsync(new CreateRuleOptions("amqpact", new SqlRuleFilter("color IN ('red')")) { Action = new SqlRuleAction("SET user.x = 1") });
+            await rm.CreateRuleAsync(new CreateRuleOptions("amqptrue", new TrueRuleFilter()));
+            await rm.CreateRuleAsync(new CreateRuleOptions("amqpfalse", new FalseRuleFilter()));
+            await rm.CreateRuleAsync(new CreateRuleOptions("amqpcorr", new CorrelationRuleFilter { Subject = "s", ApplicationProperties = { ["k"] = "v" } }));
+            var list = new List<string>();
+            await foreach (var r in rm.GetRulesAsync()) list.Add($"{r.Name}: {r.Filter.GetType().Name} '{(r.Filter as SqlRuleFilter)?.SqlExpression}' action={(r.Action as SqlRuleAction)?.SqlExpression ?? r.Action?.GetType().Name}");
+            return list;
+        });
+        var bad = await admin.SubscriptionExistsAsync(topic, "baddefault");
+        if (bad.Value) await admin.DeleteSubscriptionAsync(topic, "baddefault");
+    }
+}
+finally
+{
+    try { await admin.DeleteTopicAsync(topic); } catch (Exception ex) { Console.WriteLine("cleanup failed: " + ex.Message); }
+}
+
+var outName = only is null ? "results.json" : $"results-{only}.json";
+var ordered = cases.Select(c => results[c.Id]).ToList();
+File.WriteAllText(outName, JsonSerializer.Serialize(new { cases = ordered, extra }, new JsonSerializerOptions { WriteIndented = true }));
+var md = new StringBuilder("| id | outcome | detail |\n|---|---|---|\n");
+foreach (var r in ordered)
+    md.Append($"| {r.Id} | {r.Outcome} | {Detail(r).Replace("|", "\\|").Replace("\n", " ")} |\n");
+md.Append("\n## extra\n");
+foreach (var (k, v) in extra) md.Append($"- **{k}**: {JsonSerializer.Serialize(v)}\n");
+File.WriteAllText(Path.ChangeExtension(outName, ".md"), md.ToString());
+Console.WriteLine($"wrote {outName}");
+Console.WriteLine(string.Join("\n", ordered.GroupBy(r => r.Outcome).Select(g => $"{g.Key}: {g.Count()}")));
+
+string Detail(Result r)
+{
+    if (!r.Created) return r.CreateError?["type"] + ": " + Trim(r.CreateError?["message"]);
+    var parts = new List<string>();
+    if (r.SendError is not null) parts.Add("SEND " + r.SendError["message"]);
+    if (r.Copies.Count > 1) parts.Add($"copies={r.Copies.Count}");
+    foreach (var c in r.Copies.Concat(r.DeadLettered))
+        parts.Add(string.Join(", ", c.Where(kv => kv.Key != "caseId" && kv.Value is not null).Select(kv => $"{kv.Key}={kv.Value}")));
+    return string.Join(" / ", parts);
+}
+string Trim(string? s) => s is null ? "" : Regex.Replace(s, @"\s*(TrackingId|Status:|ErrorCode:|Headers:).*", "", RegexOptions.Singleline);
+
+Dictionary<string, string?> Err(Exception ex)
+{
+    var d = new Dictionary<string, string?> { ["type"] = ex.GetType().Name, ["message"] = Scrub(ex.Message) };
+    if (ex is ServiceBusException sbe) d["reason"] = sbe.Reason.ToString();
+    if (ex is Azure.RequestFailedException rfe) { d["status"] = rfe.Status.ToString(); d["errorCode"] = rfe.ErrorCode; }
+    if (ex.InnerException is { } inner) d["inner"] = inner.GetType().Name + ": " + Scrub(inner.Message);
+    return d;
+}
+
+Dictionary<string, string?> Dump(ServiceBusReceivedMessage m)
+{
+    var d = new SortedDictionary<string, string?>
+    {
+        ["$Subject"] = m.Subject, ["$To"] = m.To, ["$CorrelationId"] = m.CorrelationId, ["$MessageId"] = m.MessageId, ["$ReplyTo"] = m.ReplyTo,
+        ["$ReplyToSessionId"] = m.ReplyToSessionId, ["$SessionId"] = m.SessionId, ["$ContentType"] = m.ContentType, ["$PartitionKey"] = m.PartitionKey,
+        ["$TimeToLive"] = m.TimeToLive == TimeSpan.MaxValue ? null : m.TimeToLive.ToString(),
+        ["$ScheduledEnqueueTime"] = m.ScheduledEnqueueTime == default ? null : m.ScheduledEnqueueTime.ToString("o"),
+    };
+    foreach (var (k, v) in m.ApplicationProperties) d[k] = v is null ? "<null>" : $"{v} ({v.GetType().Name})";
+    return new Dictionary<string, string?>(d);
+}
+
+CreateRuleOptions BuildRule(Case c, int k)
+{
+    var rule = c.Rules[k];
+    var guard = $"user.caseId = '{c.Id}'";
+    RuleFilter filter;
+    if (rule.Corr)
+        filter = new CorrelationRuleFilter { ApplicationProperties = { ["caseId"] = c.Id } };
+    else
+    {
+        var sql = new SqlRuleFilter(rule.Filter is null ? guard : $"{guard} AND ({rule.Filter})");
+        foreach (var (pk, pv) in rule.FP ?? []) sql.Parameters[pk] = pv;
+        filter = sql;
+    }
+    var opts = new CreateRuleOptions($"r{k}", filter);
+    if (rule.Action is not null)
+    {
+        var action = new SqlRuleAction(rule.Action);
+        foreach (var (pk, pv) in rule.AP ?? []) action.Parameters[pk] = pv;
+        opts.Action = action;
+    }
+    return opts;
+}
+
+static string Describe(Rule r) => $"filter={r.Filter ?? (r.Corr ? "<correlation>" : "<guard only>")}"
+    + (r.FP is { Count: > 0 } ? " params=" + string.Join(",", r.FP.Select(kv => $"{kv.Key}={kv.Value}")) : "")
+    + (r.Action is null ? "" : $" action={r.Action}")
+    + (r.AP is { Count: > 0 } ? " aparams=" + string.Join(",", r.AP.Select(kv => $"{kv.Key}={kv.Value}")) : "");
+
+record Rule(string? Filter, Dictionary<string, object?>? FP = null, string? Action = null, Dictionary<string, object?>? AP = null, bool Corr = false);
+record Case(string Id, Rule[] Rules, Dictionary<string, object?> User, Action<ServiceBusMessage>? Sys);
+class Result
+{
+    public string Id { get; set; } = "";
+    public List<string> Rules { get; set; } = [];
+    public string Outcome { get; set; } = "";
+    public bool Created { get; set; }
+    public Dictionary<string, string?>? CreateError { get; set; }
+    public Dictionary<string, string?>? SendError { get; set; }
+    public List<Dictionary<string, string?>> Copies { get; set; } = [];
+    public List<Dictionary<string, string?>> DeadLettered { get; set; } = [];
+}
