@@ -5,7 +5,9 @@ public enum MessageState
     Active,
     Consumed,
     DeadLettered,
-    Deferred
+    Deferred,
+    /// <summary>Dropped because its time-to-live passed (dashboard history only).</summary>
+    Expired
 }
 
 /// <summary>
@@ -36,7 +38,44 @@ public sealed class BrokeredMessage
 
     public DateTimeOffset? ScheduledEnqueueTimeUtc { get; set; }
 
+    /// <summary>The time-to-live the sender set. Peek reports this one, as real Service Bus does.</summary>
     public TimeSpan TimeToLive { get; set; } = TimeSpan.MaxValue;
+
+    private TimeSpan? _effectiveTimeToLive;
+
+    /// <summary>
+    /// <see cref="TimeToLive"/> capped by the default time-to-live of every entity the message has
+    /// been accepted by (topic, then subscription or queue). Received messages report this one.
+    /// </summary>
+    public TimeSpan EffectiveTimeToLive
+    {
+        get => _effectiveTimeToLive ?? TimeToLive;
+        set => _effectiveTimeToLive = value;
+    }
+
+    /// <summary>
+    /// When the broker expires the message: <see cref="EnqueuedTimeUtc"/> plus
+    /// <see cref="EffectiveTimeToLive"/>, stamped by the queue that accepts it. Never set on
+    /// dead-letter queues, whose messages don't expire.
+    /// </summary>
+    public DateTimeOffset ExpiresAtUtc { get; set; } = DateTimeOffset.MaxValue;
+
+    public bool IsExpired(DateTimeOffset now) => now >= ExpiresAtUtc;
+
+    /// <summary><paramref name="start"/> + <paramref name="ttl"/>, or <see cref="DateTimeOffset.MaxValue"/> if that overflows.</summary>
+    internal static DateTimeOffset AddSaturating(DateTimeOffset start, TimeSpan ttl) =>
+        ttl >= DateTimeOffset.MaxValue - start ? DateTimeOffset.MaxValue : start + ttl;
+
+    // The queue whose channel or session the message is waiting in, until someone takes it. A
+    // message can't be pulled out of a channel, so the expiry sweep and a receiver race for it
+    // through this field and whoever loses skips it. Naming the queue (not just a flag) keeps the
+    // sweep's leftover channel entry dead once the same object is waiting in a dead-letter queue.
+    private QueueEntity? _availableIn;
+
+    internal void MarkAvailable(QueueEntity queue) => Volatile.Write(ref _availableIn, queue);
+
+    internal bool TryClaim(QueueEntity queue) =>
+        ReferenceEquals(Interlocked.CompareExchange(ref _availableIn, null, queue), queue);
 
     public Dictionary<string, object> ApplicationProperties { get; set; } = [];
 
@@ -108,6 +147,7 @@ public sealed class BrokeredMessage
             To = To,
             ScheduledEnqueueTimeUtc = ScheduledEnqueueTimeUtc,
             TimeToLive = TimeToLive,
+            _effectiveTimeToLive = _effectiveTimeToLive,
             // LockToken intentionally NOT copied — each queue assigns a fresh one on Enqueue.
             // Copying it causes duplicate delivery tags when the same message is cloned
             // to multiple subscriptions forwarding to the same queue.

@@ -12,10 +12,12 @@ public sealed class NamespaceRegistry
 
     private readonly ConcurrentDictionary<string, NamespaceContext> _namespaces = new(KeyComparer);
     private readonly MessageEventBus? _eventBus;
+    private readonly TimeProvider _timeProvider;
 
-    public NamespaceRegistry(MessageEventBus? eventBus = null)
+    public NamespaceRegistry(MessageEventBus? eventBus = null, TimeProvider? timeProvider = null)
     {
         _eventBus = eventBus;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -28,7 +30,7 @@ public sealed class NamespaceRegistry
         var ctx = _namespaces.GetOrAdd(namespaceName, n =>
         {
             isNew = true;
-            return new NamespaceContext(n, _eventBus);
+            return new NamespaceContext(n, _eventBus, _timeProvider);
         });
         if (isNew)
         {

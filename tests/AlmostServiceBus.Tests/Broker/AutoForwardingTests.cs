@@ -197,6 +197,8 @@ public class AutoForwardingTests
         var forwarded = target.TryDequeueImmediate();
         Assert.NotNull(forwarded);
         Assert.Equal(explicitDeadLetter ? "manual" : "MaxDeliveryCountExceeded", forwarded!.DeadLetterReason);
+        // Real Service Bus names the source only on dead-letters it forwards.
+        Assert.Equal(source.Name, forwarded.DeadLetterSource);
     }
 
     [Fact]
@@ -230,7 +232,9 @@ public class AutoForwardingTests
         source.TrackPending(received);
         source.DeadLetter(received.LockToken!, "manual", null);
 
-        Assert.Equal("manual", source.DeadLetterQueue.TryDequeueImmediate()?.DeadLetterReason);
+        var kept = source.DeadLetterQueue.TryDequeueImmediate();
+        Assert.Equal("manual", kept?.DeadLetterReason);
+        Assert.Null(kept!.DeadLetterSource);
     }
 
     [Fact]

@@ -4,7 +4,7 @@ import NamespaceSelector from './NamespaceSelector.vue'
 import ConnectionStringBar from './ConnectionStringBar.vue'
 import { useEntities } from '../composables/useEntities'
 import { sseKey } from '../composables/useNamespaceSse'
-import type { EntityType } from '../types'
+import type { EntityType, QueueInfo } from '../types'
 import { ChevronRight, ChevronDown, ArrowRight } from 'lucide-vue-next'
 import EntityIcon from './EntityIcon.vue'
 
@@ -34,6 +34,11 @@ function selectEntity(name: string, type: EntityType) {
   entity.value = name
   entityType.value = type
   emit('select')
+}
+
+// Everything that arrived, less what has left: completed, dead-lettered or expired.
+function activeCount(q: QueueInfo) {
+  return q.totalMessageCount - q.consumedCount - q.deadLetterCount - q.expiredCount
 }
 
 function selectSubscription(topicName: string, subName: string) {
@@ -76,7 +81,7 @@ function shortName(fullName: string) {
       >
         <span class="entity-name"><EntityIcon type="queue" />{{ q.name }}</span>
         <span class="entity-badges">
-          <span v-if="q.totalMessageCount - q.consumedCount - q.deadLetterCount > 0" class="badge" title="Active messages">{{ q.totalMessageCount - q.consumedCount - q.deadLetterCount }}</span>
+          <span v-if="activeCount(q) > 0" class="badge" title="Active messages">{{ activeCount(q) }}</span>
           <span v-if="q.consumedCount > 0" class="badge-green" title="Completed">{{ q.consumedCount }}</span>
           <span v-if="q.deadLetterCount > 0" class="badge-red" title="Dead-lettered">{{ q.deadLetterCount }}</span>
         </span>

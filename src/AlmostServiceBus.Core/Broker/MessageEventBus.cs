@@ -9,7 +9,9 @@ public enum MessageEventType
     DeadLettered,
     Abandoned,
     Deferred,
-    NamespaceCreated
+    NamespaceCreated,
+    /// <summary>Dropped because its time-to-live passed and the entity doesn't dead-letter on expiry.</summary>
+    Expired
 }
 
 /// <summary>

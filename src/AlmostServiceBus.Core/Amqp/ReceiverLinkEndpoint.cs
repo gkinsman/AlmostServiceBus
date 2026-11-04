@@ -511,8 +511,16 @@ public class ReceiverLinkEndpoint : LinkEndpoint
         return await _queue.DequeueAsync(cancellationToken);
     }
 
-    public static Message ConvertToAmqpMessage(BrokeredMessage brokered)
+    /// <summary>
+    /// Builds the AMQP message for a delivery. A received message reports its effective
+    /// time-to-live (capped by the entity default); a <paramref name="peek"/>ed one reports the
+    /// time-to-live it was sent with, as real Service Bus does.
+    /// </summary>
+    public static Message ConvertToAmqpMessage(BrokeredMessage brokered, bool peek = false)
     {
+        var ttl = peek ? brokered.TimeToLive : brokered.EffectiveTimeToLive;
+        var hasTtl = ttl != TimeSpan.MaxValue && ttl > TimeSpan.Zero;
+
         var lockGuid = Guid.TryParse(brokered.LockToken, out var guid) ? guid : Guid.NewGuid();
 
         var header = new Header
@@ -524,9 +532,9 @@ public class ReceiverLinkEndpoint : LinkEndpoint
         };
 
         // Preserve TTL on outgoing messages so the SDK can calculate expiry.
-        if (brokered.TimeToLive != TimeSpan.MaxValue && brokered.TimeToLive > TimeSpan.Zero)
+        if (hasTtl)
         {
-            header.Ttl = (uint)brokered.TimeToLive.TotalMilliseconds;
+            header.Ttl = (uint)Math.Min(uint.MaxValue, ttl.TotalMilliseconds);
         }
 
         var properties = new Properties
@@ -543,9 +551,9 @@ public class ReceiverLinkEndpoint : LinkEndpoint
         };
 
         // Set AbsoluteExpiryTime so the Azure SDK can determine message expiry.
-        if (brokered.TimeToLive != TimeSpan.MaxValue && brokered.TimeToLive > TimeSpan.Zero)
+        if (hasTtl)
         {
-            properties.AbsoluteExpiryTime = brokered.EnqueuedTimeUtc.Add(brokered.TimeToLive).UtcDateTime;
+            properties.AbsoluteExpiryTime = BrokeredMessage.AddSaturating(brokered.EnqueuedTimeUtc, ttl).UtcDateTime;
         }
 
         var message = new Message()

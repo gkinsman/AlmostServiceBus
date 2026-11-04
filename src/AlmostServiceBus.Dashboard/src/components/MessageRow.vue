@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { MessageInfo } from '../types'
-import { Check, MailWarning } from 'lucide-vue-next'
+import { Check, MailWarning, TimerOff } from 'lucide-vue-next'
 
 defineProps<{ message: MessageInfo; selected: boolean }>()
 defineEmits<{ select: [] }>()
@@ -14,11 +14,12 @@ function timeAgo(iso: string): string {
 </script>
 
 <template>
-  <div class="row" :class="{ selected, consumed: message.state === 'Consumed', deadlettered: message.state === 'DeadLettered' }" @click="$emit('select')">
+  <div class="row" :class="{ selected, consumed: message.state === 'Consumed', deadlettered: message.state === 'DeadLettered', expired: message.state === 'Expired' }" @click="$emit('select')">
     <div class="header">
       <span class="msg-id">
         <Check v-if="message.state === 'Consumed'" class="state-icon consumed-icon" :size="12" :stroke-width="3" title="Consumed" />
         <MailWarning v-else-if="message.state === 'DeadLettered'" class="state-icon dl-icon" :size="12" title="Dead-lettered" />
+        <TimerOff v-else-if="message.state === 'Expired'" class="state-icon expired-icon" :size="12" title="Expired" />
         {{ message.messageId.substring(0, 12) }}
       </span>
       <span class="time">{{ timeAgo(message.enqueuedTimeUtc) }}</span>
@@ -43,11 +44,13 @@ function timeAgo(iso: string): string {
 .row.selected { background: var(--bg-surface); border-left: 3px solid var(--blue); }
 .row.consumed { opacity: 0.55; }
 .row.deadlettered { opacity: 0.55; }
+.row.expired { opacity: 0.55; }
 .header { display: flex; justify-content: space-between; align-items: center; }
 .msg-id { color: var(--text); font-weight: 500; font-size: 11px; display: flex; align-items: center; gap: 4px; font-family: 'Cascadia Code', 'Fira Code', monospace; }
 .state-icon { flex-shrink: 0; }
 .consumed-icon { color: var(--green); }
 .dl-icon { color: var(--red); }
+.expired-icon { color: var(--text-muted); }
 .time { color: var(--text-muted); font-size: 9px; }
 .dl-reason { margin-top: 4px; color: var(--red); font-size: 10px; font-family: 'Cascadia Code', 'Fira Code', monospace; }
 .tags { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }

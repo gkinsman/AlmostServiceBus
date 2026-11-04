@@ -24,7 +24,8 @@ public record QueueInfo(
     int TotalMessageCount,
     int ConsumedCount,
     int MaxDeliveryCount,
-    string? ForwardTo);
+    string? ForwardTo,
+    int ExpiredCount = 0);
 
 /// <summary>
 /// Configuration and runtime state of a queue as shown on the dashboard's Properties tab.

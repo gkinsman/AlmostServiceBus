@@ -120,6 +120,21 @@ public class SessionState
     }
 
     /// <summary>
+    /// Takes a specific message out of the session (an expired one), so next-available session
+    /// selection doesn't pick a session that only holds messages nobody can receive.
+    /// </summary>
+    public bool TryRemove(BrokeredMessage message)
+    {
+        lock (_lock)
+        {
+            if (!_messages.Remove(message, out _, out _, ReferenceEqualityComparer.Instance))
+                return false;
+            Interlocked.Decrement(ref _messageCount);
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Asynchronously waits until at least one message is available.
     /// </summary>
     public Task WaitToReadAsync(CancellationToken ct) => _signal.WaitAsync(ct);
@@ -201,6 +216,11 @@ public class SessionManager
             return session.RenewLock(_lockDuration);
         }
     }
+
+    public bool TryRemove(BrokeredMessage message) =>
+        message.SessionId is not null
+        && _sessions.TryGetValue(message.SessionId, out var session)
+        && session.TryRemove(message);
 
     public byte[]? GetSessionState(string sessionId)
     {

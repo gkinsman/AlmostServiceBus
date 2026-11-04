@@ -47,6 +47,9 @@ export function useMessages(
     } else if (evt.type === 'Completed') {
       const msg = messages.value.find(m => m.messageId === evt.messageId)
       if (msg) msg.state = 'Consumed'
+    } else if (evt.type === 'Expired') {
+      const msg = messages.value.find(m => m.messageId === evt.messageId)
+      if (msg) msg.state = 'Expired'
     } else if (evt.type === 'DeadLettered') {
       const msg = messages.value.find(m => m.messageId === evt.messageId)
       if (msg) msg.state = 'DeadLettered'

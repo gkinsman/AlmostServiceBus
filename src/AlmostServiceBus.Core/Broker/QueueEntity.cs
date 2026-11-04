@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using AlmostServiceBus.Core.Amqp;
+using Microsoft.Extensions.Logging;
 
 namespace AlmostServiceBus.Core.Broker;
 
@@ -10,6 +12,10 @@ namespace AlmostServiceBus.Core.Broker;
 /// </summary>
 public sealed class QueueEntity : IDisposable
 {
+    private static readonly ILogger Log = AmqpLog.CreateLogger<QueueEntity>();
+    internal const string ExpiredDeadLetterReason = "TTLExpiredException";
+    internal const string ExpiredDeadLetterDescription = "The message expired and was dead lettered.";
+
     private readonly Channel<BrokeredMessage> _channel;
     /// <summary>
     /// Priority channel for re-enqueued messages (abandon / lock expiry).
@@ -46,6 +52,7 @@ public sealed class QueueEntity : IDisposable
     private int _messageCount;
     private int _totalMessageCount;
     private int _consumedCount;
+    private int _expiredCount;
     private long _sequenceNumber;
     private MessageEventBus? _eventBus;
     private string? _namespaceName;
@@ -111,6 +118,11 @@ public sealed class QueueEntity : IDisposable
 
     public TimeSpan DefaultMessageTimeToLive { get; set; } = TimeSpan.MaxValue;
 
+    /// <summary>
+    /// Clock for message expiry. Taken from the namespace; settable so tests can move time on.
+    /// </summary>
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
     public bool EnablePartitioning { get; set; } = false;
 
     public bool EnableExpress { get; set; } = false;
@@ -160,9 +172,19 @@ public sealed class QueueEntity : IDisposable
     /// </summary>
     public int ConsumedCount => _consumedCount;
 
+    /// <summary>
+    /// Number of messages dropped on this queue because their time-to-live passed (those
+    /// dead-lettered on expiry count as dead-lettered instead).
+    /// </summary>
+    public int ExpiredCount => _expiredCount;
+
     // ForwardTo is resolved by name on every delivery, so the target can be created after this
     // entity, or deleted and recreated, without re-wiring.
-    internal void SetNamespace(NamespaceContext ns) => _namespace = ns;
+    internal void SetNamespace(NamespaceContext ns)
+    {
+        _namespace = ns;
+        TimeProvider = ns.TimeProvider;
+    }
 
     public void SetEventBus(MessageEventBus bus, string namespaceName, string entityName)
     {
@@ -201,6 +223,8 @@ public sealed class QueueEntity : IDisposable
     /// </summary>
     public void Enqueue(BrokeredMessage message)
     {
+        StampExpiry(message);
+
         // Session-enabled queues route messages to the SessionManager by SessionId.
         if (RequiresSession)
         {
@@ -220,6 +244,7 @@ public sealed class QueueEntity : IDisposable
             if (message.SequenceNumber == 0)
                 message.SequenceNumber = Interlocked.Increment(ref _sequenceNumber);
 
+            message.MarkAvailable(this);
             Sessions!.Enqueue(message);
             // Also track in _allMessages for dashboard peek
             _allMessages[message.LockToken!] = message;
@@ -254,6 +279,7 @@ public sealed class QueueEntity : IDisposable
         // to 0, so messages arriving via topic subscription forwarding need a fresh one.
         if (message.SequenceNumber == 0)
             message.SequenceNumber = Interlocked.Increment(ref _sequenceNumber);
+        message.MarkAvailable(this);
         _channel.Writer.TryWrite(message);
         _allMessages[message.LockToken!] = message;
         Interlocked.Increment(ref _messageCount);
@@ -269,6 +295,23 @@ public sealed class QueueEntity : IDisposable
     {
         if (message.SequenceNumber == 0)
             message.SequenceNumber = Interlocked.Increment(ref _sequenceNumber);
+    }
+
+    // Real Service Bus caps a message's time-to-live at the entity default (a message without one
+    // gets the default) and counts it from the enqueue time. Dead-letter queues never expire messages.
+    private void StampExpiry(BrokeredMessage message)
+    {
+        if (_isDeadLetterQueue)
+        {
+            message.ExpiresAtUtc = DateTimeOffset.MaxValue;
+            return;
+        }
+
+        var ttl = message.EffectiveTimeToLive < DefaultMessageTimeToLive
+            ? message.EffectiveTimeToLive
+            : DefaultMessageTimeToLive;
+        message.EffectiveTimeToLive = ttl;
+        message.ExpiresAtUtc = BrokeredMessage.AddSaturating(message.EnqueuedTimeUtc, ttl);
     }
 
     // For messages the broker itself refuses on the way in. Real Service Bus puts those it can't
@@ -351,6 +394,7 @@ public sealed class QueueEntity : IDisposable
 
     private void MakeAvailable(BrokeredMessage message)
     {
+        message.MarkAvailable(this);
         if (RequiresSession)
             Sessions!.Enqueue(message);
         else
@@ -376,19 +420,14 @@ public sealed class QueueEntity : IDisposable
     /// </summary>
     public async ValueTask<BrokeredMessage> DequeueAsync(CancellationToken cancellationToken = default)
     {
-        // Check redelivery channel first (priority), then normal channel
-        if (_redeliveryChannel.Reader.TryRead(out var message))
+        while (true)
         {
-            // got a redelivery synchronously
+            if (TryDequeueImmediate() is { } message)
+                return message;
+
+            if (!await WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+                cancellationToken.ThrowIfCancellationRequested();
         }
-        else
-        {
-            await WaitToReadAsync(cancellationToken).ConfigureAwait(false);
-            if (!_redeliveryChannel.Reader.TryRead(out message))
-                message = await _channel.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-        }
-        BeginDelivery(message);
-        return message;
     }
 
     /// <summary>
@@ -398,11 +437,106 @@ public sealed class QueueEntity : IDisposable
     /// </summary>
     public bool TryDequeueFromSession(SessionState session, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out BrokeredMessage? message)
     {
-        if (!session.TryDequeue(out message) || message is null)
+        while (session.TryDequeue(out message) && message is not null)
+        {
+            if (!TryTakeForDelivery(message))
+                continue;
+
+            BeginDelivery(message);
+            return true;
+        }
+
+        message = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Claims a message just read from the channel or a session. Returns <see langword="false"/>
+    /// when the expiry sweep already took it, or when it has expired, in which case it is expired
+    /// here: real Service Bus never hands an expired message to a receiver.
+    /// </summary>
+    private bool TryTakeForDelivery(BrokeredMessage message)
+    {
+        if (!message.TryClaim(this))
             return false;
 
-        BeginDelivery(message);
+        if (message.IsExpired(TimeProvider.GetUtcNow()))
+        {
+            Expire(message);
+            return false;
+        }
+
         return true;
+    }
+
+    /// <summary>
+    /// Expires a claimed message that was waiting in the queue: dead-letters it with the reason
+    /// real Service Bus uses when <see cref="DeadLetteringOnMessageExpiration"/> is set, otherwise
+    /// drops it. Dead-lettering goes through <see cref="MoveToDeadLetterQueue"/>, so
+    /// <see cref="ForwardDeadLetteredMessagesTo"/> applies.
+    /// </summary>
+    private void Expire(BrokeredMessage message)
+    {
+        Interlocked.Decrement(ref _messageCount);
+        SettleExpired(message);
+    }
+
+    private void SettleExpired(BrokeredMessage message)
+    {
+        var lockToken = message.LockToken!;
+
+        if (DeadLetteringOnMessageExpiration)
+        {
+            MoveToDeadLetterQueue(lockToken, message, ExpiredDeadLetterReason, ExpiredDeadLetterDescription);
+            return;
+        }
+
+        RecordSettled(lockToken, message, MessageState.Expired);
+        Interlocked.Increment(ref _expiredCount);
+        _eventBus?.Publish(new MessageEvent(
+            MessageEventType.Expired, _namespaceName ?? "", _entityName ?? "",
+            message.MessageId, message.SequenceNumber, message.ContentType,
+            null, null, DateTimeOffset.UtcNow));
+    }
+
+    /// <summary>
+    /// Expires every waiting message whose time-to-live has passed and returns how many it
+    /// expired. Locked messages are left alone, as in real Service Bus: they expire once they're
+    /// abandoned or released or their lock lapses. Dead-letter queues never expire messages.
+    /// </summary>
+    public int ExpireMessages()
+    {
+        if (_isDeadLetterQueue)
+            return 0;
+
+        var now = TimeProvider.GetUtcNow();
+        var expired = 0;
+        foreach (var message in _allMessages.Values)
+        {
+            if (!message.IsExpired(now))
+                continue;
+
+            try
+            {
+                // Locked messages and those waiting out a redelivery delay aren't available,
+                // so the claim fails for them.
+                if (!message.TryClaim(this))
+                    continue;
+
+                if (RequiresSession)
+                    Sessions!.TryRemove(message);
+
+                Expire(message);
+                expired++;
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning(ex, "Could not expire message {MessageId} (seq {SequenceNumber}) on '{Queue}'.",
+                    message.MessageId, message.SequenceNumber, Name);
+            }
+        }
+
+        return expired;
     }
 
     /// <summary>
@@ -424,8 +558,11 @@ public sealed class QueueEntity : IDisposable
     /// </summary>
     public BrokeredMessage? TryDequeueImmediate()
     {
-        if (_redeliveryChannel.Reader.TryRead(out var message) || _channel.Reader.TryRead(out message))
+        while (_redeliveryChannel.Reader.TryRead(out var message) || _channel.Reader.TryRead(out message))
         {
+            if (!TryTakeForDelivery(message))
+                continue;
+
             BeginDelivery(message);
             return message;
         }
@@ -751,6 +888,15 @@ public sealed class QueueEntity : IDisposable
     {
         if (!_deferredBySequence.TryGetValue(sequenceNumber, out var msg))
             return null;
+
+        // Real Service Bus doesn't sweep expired deferred messages, but the attempt to receive one
+        // expires it and reports it as not found.
+        if (msg.IsExpired(TimeProvider.GetUtcNow()))
+        {
+            if (_deferredBySequence.TryRemove(sequenceNumber, out var expired))
+                SettleExpired(expired);
+            return null;
+        }
 
         // Stamp a fresh lock token and add to pending so the consumer can settle it.
         msg.LockToken = Guid.NewGuid().ToString();

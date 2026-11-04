@@ -2158,4 +2158,213 @@ public abstract class ConformanceTestBase : IAsyncLifetime
         Assert.Equal(source, dead.DeadLetterSource);
         Assert.Equal(0, (await AdminClient.GetQueueRuntimePropertiesAsync(chain[4])).Value.ActiveMessageCount);
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Message time-to-live
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private const string TtlExpiredReason = "TTLExpiredException";
+    private const string TtlExpiredDescription = "The message expired and was dead lettered.";
+
+    [Fact]
+    public async Task Ttl_ReceivedMessageIsCappedAtEntityDefault_PeekShowsSentTtl()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateTestQueueAsync(new CreateQueueOptions("_") { DefaultMessageTimeToLive = TimeSpan.FromSeconds(30) });
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "long", TimeToLive = TimeSpan.FromHours(1) });
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "none" });
+
+        await using var receiver = Client.CreateReceiver(queue);
+        var peeked = await receiver.PeekMessagesAsync(10);
+        var received = await ReceiveAllAsync(receiver, 2);
+
+        Assert.Equal([TimeSpan.FromHours(1), TimeSpan.MaxValue], peeked.OrderBy(m => m.SequenceNumber).Select(m => m.TimeToLive));
+        Assert.All(received, m => Assert.Equal(TimeSpan.FromSeconds(30), m.TimeToLive));
+    }
+
+    [Fact]
+    public async Task Ttl_ExpiredMessageIsDeadLetteredAndNotDelivered()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateTestQueueAsync(new CreateQueueOptions("_") { DeadLetteringOnMessageExpiration = true });
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "expires", TimeToLive = TimeSpan.FromSeconds(3) });
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "stays" });
+        await Task.Delay(TimeSpan.FromSeconds(4));
+
+        await using var receiver = Client.CreateReceiver(queue);
+        var received = await ReceiveAllAsync(receiver, 2, TimeSpan.FromSeconds(5));
+        Assert.Equal(["stays"], received.Select(m => m.MessageId));
+
+        await using var dlq = Client.CreateReceiver(queue, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+        var dead = await dlq.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("expires", dead?.MessageId);
+        Assert.Equal(TtlExpiredReason, dead!.DeadLetterReason);
+        Assert.Equal(TtlExpiredDescription, dead.DeadLetterErrorDescription);
+        // Only dead-letters forwarded elsewhere carry a source.
+        Assert.Null(dead.DeadLetterSource);
+    }
+
+    [Fact]
+    public async Task Ttl_ExpiredMessageIsForwardedToForwardDeadLetteredMessagesTo()
+    {
+        ThrowIfSkipped();
+        var target = await CreateTestQueueAsync();
+        var source = await CreateTestQueueAsync(new CreateQueueOptions("_")
+        {
+            DeadLetteringOnMessageExpiration = true,
+            ForwardDeadLetteredMessagesTo = target,
+        });
+
+        await using var sender = Client.CreateSender(source);
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "expires", TimeToLive = TimeSpan.FromSeconds(3) });
+        await Task.Delay(TimeSpan.FromSeconds(4));
+
+        // A receive on the source makes real Service Bus act on the expiry. The TTL restarts at the
+        // destination, so read it there straight away.
+        await using var sourceReceiver = Client.CreateReceiver(source);
+        Assert.Null(await sourceReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(1)));
+        await using var targetReceiver = Client.CreateReceiver(target);
+        var forwarded = await targetReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("expires", forwarded?.MessageId);
+        Assert.Equal(TtlExpiredReason, forwarded!.DeadLetterReason);
+        Assert.Equal(TtlExpiredDescription, forwarded.DeadLetterErrorDescription);
+        Assert.Equal(source, forwarded.DeadLetterSource);
+    }
+
+    [Fact]
+    public async Task Ttl_ExpiredDeferredMessageIsNotFoundThenDeadLettered()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateTestQueueAsync(new CreateQueueOptions("_") { DeadLetteringOnMessageExpiration = true });
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "deferred", TimeToLive = TimeSpan.FromSeconds(3) });
+        await using var receiver = Client.CreateReceiver(queue);
+        var message = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(message);
+        await receiver.DeferMessageAsync(message);
+        await Task.Delay(TimeSpan.FromSeconds(4));
+
+        // Not swept: peek still shows it until someone tries to receive it.
+        Assert.Equal("deferred", (await receiver.PeekMessageAsync(0))?.MessageId);
+        var ex = await Assert.ThrowsAsync<ServiceBusException>(() => receiver.ReceiveDeferredMessageAsync(message.SequenceNumber));
+        Assert.Equal(ServiceBusFailureReason.MessageNotFound, ex.Reason);
+
+        await using var dlq = Client.CreateReceiver(queue, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+        var dead = await dlq.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("deferred", dead?.MessageId);
+        Assert.Equal(TtlExpiredReason, dead!.DeadLetterReason);
+    }
+
+    [Fact]
+    public async Task Scheduled_EnqueuedTimeIsActivationTime()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateTestQueueAsync();
+        var scheduledFor = DateTimeOffset.UtcNow.AddSeconds(5);
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.ScheduleMessageAsync(new ServiceBusMessage("x") { MessageId = "scheduled" }, scheduledFor);
+        await using var receiver = Client.CreateReceiver(queue);
+        var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Equal("scheduled", received?.MessageId);
+        // Allow for clock skew against the service; the send was five seconds earlier.
+        Assert.True(received!.EnqueuedTime >= scheduledFor.AddSeconds(-2),
+            $"enqueued {received.EnqueuedTime:O}, scheduled for {scheduledFor:O}");
+    }
+
+    [Fact]
+    public async Task Ttl_ExpiredMessageIsDroppedWithoutDeadLettering()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateTestQueueAsync();
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { TimeToLive = TimeSpan.FromSeconds(3) });
+        await Task.Delay(TimeSpan.FromSeconds(4));
+
+        await using var receiver = Client.CreateReceiver(queue);
+        Assert.Null(await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(3)));
+        await using var dlq = Client.CreateReceiver(queue, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+        Assert.Null(await dlq.ReceiveMessageAsync(TimeSpan.FromSeconds(3)));
+    }
+
+    [Fact]
+    public async Task Ttl_ExpiredSessionMessageIsDeadLetteredAndNotDelivered()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateTestQueueAsync(new CreateQueueOptions("_") { RequiresSession = true, DeadLetteringOnMessageExpiration = true });
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "expires", SessionId = "s1", TimeToLive = TimeSpan.FromSeconds(3) });
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "stays", SessionId = "s1" });
+        await Task.Delay(TimeSpan.FromSeconds(4));
+
+        await using (var session = await Client.AcceptSessionAsync(queue, "s1"))
+        {
+            var first = await session.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("stays", first?.MessageId);
+            await session.CompleteMessageAsync(first!);
+        }
+
+        await using var dlq = Client.CreateReceiver(queue, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+        var dead = await dlq.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("expires", dead?.MessageId);
+        Assert.Equal(TtlExpiredReason, dead!.DeadLetterReason);
+    }
+
+    [Fact]
+    public async Task Ttl_ScheduledMessageClockStartsAtActivation()
+    {
+        // The TTL counts from activation, not from the send: a message whose TTL is shorter than
+        // its scheduling delay is still delivered once it activates.
+        ThrowIfSkipped();
+        var queue = await CreateTestQueueAsync(new CreateQueueOptions("_") { DeadLetteringOnMessageExpiration = true });
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.ScheduleMessageAsync(
+            new ServiceBusMessage("x") { MessageId = "scheduled", TimeToLive = TimeSpan.FromSeconds(4) },
+            DateTimeOffset.UtcNow.AddSeconds(6));
+
+        await using var receiver = Client.CreateReceiver(queue);
+        var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal("scheduled", received?.MessageId);
+    }
+
+    [Fact]
+    public async Task Ttl_LockedMessageCanBeCompletedAfterItsTtl()
+    {
+        ThrowIfSkipped();
+        var queue = await CreateTestQueueAsync(new CreateQueueOptions("_") { LockDuration = TimeSpan.FromSeconds(30) });
+
+        await using var sender = Client.CreateSender(queue);
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { TimeToLive = TimeSpan.FromSeconds(3) });
+        await using var receiver = Client.CreateReceiver(queue);
+        var locked = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(locked);
+        await Task.Delay(TimeSpan.FromSeconds(4));
+
+        await receiver.CompleteMessageAsync(locked);
+    }
+
+    // ReceiveMessagesAsync may return fewer than asked for in one call, so keep asking until the
+    // count is reached or a call comes back empty.
+    private static async Task<List<ServiceBusReceivedMessage>> ReceiveAllAsync(ServiceBusReceiver receiver, int max, TimeSpan? wait = null)
+    {
+        var all = new List<ServiceBusReceivedMessage>();
+        while (all.Count < max)
+        {
+            var batch = await receiver.ReceiveMessagesAsync(max - all.Count, wait ?? TimeSpan.FromSeconds(5));
+            if (batch.Count == 0)
+                break;
+            all.AddRange(batch);
+        }
+        return all;
+    }
 }
