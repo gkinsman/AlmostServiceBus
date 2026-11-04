@@ -43,6 +43,12 @@ public sealed class SubscriptionEntity
         set => Queue.ForwardTo = value;
     }
 
+    public string? ForwardDeadLetteredMessagesTo
+    {
+        get => Queue.ForwardDeadLetteredMessagesTo;
+        set => Queue.ForwardDeadLetteredMessagesTo = value;
+    }
+
     public int MaxDeliveryCount
     {
         get => Queue.MaxDeliveryCount;

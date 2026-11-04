@@ -20,7 +20,8 @@ public record QueueProperties(
     string? UserMetadata,
     TimeSpan? AutoDeleteOnIdle = null,
     bool RequiresDuplicateDetection = false,
-    TimeSpan? DuplicateDetectionHistoryTimeWindow = null);
+    TimeSpan? DuplicateDetectionHistoryTimeWindow = null,
+    string? ForwardDeadLetteredMessagesTo = null);
 
 public record TopicProperties(
     TimeSpan DefaultMessageTimeToLive,
@@ -46,7 +47,8 @@ public record SubscriptionProperties(
     string? UserMetadata,
     bool DeadLetteringOnFilterEvaluationExceptions = true,
     TimeSpan? AutoDeleteOnIdle = null,
-    RuleProperties? DefaultRule = null);
+    RuleProperties? DefaultRule = null,
+    string? ForwardDeadLetteredMessagesTo = null);
 
 public record RuleProperties(
     string Name,
@@ -91,7 +93,8 @@ public static class AtomXmlReader
             UserMetadata: ParseOptionalString(desc, "UserMetadata"),
             AutoDeleteOnIdle: ParseOptionalTimeSpan(desc, "AutoDeleteOnIdle"),
             RequiresDuplicateDetection: ParseOptionalBool(desc, "RequiresDuplicateDetection") ?? false,
-            DuplicateDetectionHistoryTimeWindow: ParseOptionalTimeSpan(desc, "DuplicateDetectionHistoryTimeWindow"));
+            DuplicateDetectionHistoryTimeWindow: ParseOptionalTimeSpan(desc, "DuplicateDetectionHistoryTimeWindow"),
+            ForwardDeadLetteredMessagesTo: NormalizeForwardTo(ParseOptionalString(desc, "ForwardDeadLetteredMessagesTo")));
     }
 
     public static TopicProperties ReadTopicProperties(string xml)
@@ -134,7 +137,8 @@ public static class AtomXmlReader
             UserMetadata: ParseOptionalString(desc, "UserMetadata"),
             DeadLetteringOnFilterEvaluationExceptions: ParseOptionalBool(desc, "DeadLetteringOnFilterEvaluationExceptions") ?? true,
             AutoDeleteOnIdle: ParseOptionalTimeSpan(desc, "AutoDeleteOnIdle"),
-            DefaultRule: defaultRule);
+            DefaultRule: defaultRule,
+            ForwardDeadLetteredMessagesTo: NormalizeForwardTo(ParseOptionalString(desc, "ForwardDeadLetteredMessagesTo")));
     }
 
     public static RuleProperties ReadRuleProperties(string xml)

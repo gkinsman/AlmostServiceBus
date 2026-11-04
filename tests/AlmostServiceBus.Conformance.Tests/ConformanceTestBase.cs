@@ -2008,4 +2008,154 @@ public abstract class ConformanceTestBase : IAsyncLifetime
         Assert.Equal("Session id is null.", dead!.DeadLetterReason);
         Assert.Equal("Session enabled entity doesn't allow a message whose session identifier is null.", dead.DeadLetterErrorDescription);
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ForwardDeadLetteredMessagesTo (gkinsman/AlmostServiceBus#193)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private async Task DeadLetterOneAsync(string queue, string messageId)
+    {
+        await using var sender = Client.CreateSender(queue);
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = messageId });
+        await using var receiver = Client.CreateReceiver(queue);
+        var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+        Assert.NotNull(received);
+        await receiver.DeadLetterMessageAsync(received!, "manual", "explicit dead-letter");
+    }
+
+    [Fact]
+    public async Task ForwardDeadLetteredMessagesTo_Queue_ExplicitDeadLetterArrivesAtTarget()
+    {
+        ThrowIfSkipped();
+        var target = await CreateTestQueueAsync();
+        var source = await CreateTestQueueAsync(new CreateQueueOptions("placeholder") { ForwardDeadLetteredMessagesTo = target });
+
+        await DeadLetterOneAsync(source, "dl-queue");
+
+        await using var receiver = Client.CreateReceiver(target);
+        var forwarded = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("dl-queue", forwarded?.MessageId);
+        Assert.Equal("manual", forwarded!.DeadLetterReason);
+        Assert.Equal("explicit dead-letter", forwarded.DeadLetterErrorDescription);
+        Assert.Equal(source, forwarded.DeadLetterSource);
+        Assert.Equal(0, (await AdminClient.GetQueueRuntimePropertiesAsync(source)).Value.DeadLetterMessageCount);
+    }
+
+    [Fact]
+    public async Task ForwardDeadLetteredMessagesTo_Subscription_MaxDeliveryArrivesAtTarget()
+    {
+        ThrowIfSkipped();
+        var target = await CreateTestQueueAsync();
+        var topic = await CreateTestTopicAsync();
+        await AdminClient.CreateSubscriptionAsync(new CreateSubscriptionOptions(topic, "sub")
+        {
+            ForwardDeadLetteredMessagesTo = target,
+            MaxDeliveryCount = 1,
+        });
+
+        await using var sender = Client.CreateSender(topic);
+        await sender.SendMessageAsync(new ServiceBusMessage("x") { MessageId = "dl-sub" });
+        await using (var subReceiver = Client.CreateReceiver(topic, "sub"))
+        {
+            var received = await subReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+            Assert.NotNull(received);
+            await subReceiver.AbandonMessageAsync(received!);
+        }
+
+        await using var receiver = Client.CreateReceiver(target);
+        var forwarded = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("dl-sub", forwarded?.MessageId);
+        Assert.Equal("MaxDeliveryCountExceeded", forwarded!.DeadLetterReason);
+        Assert.Equal("Message could not be consumed after 1 delivery attempts.", forwarded.DeadLetterErrorDescription);
+        Assert.Equal($"{topic}/Subscriptions/sub", forwarded.DeadLetterSource);
+    }
+
+    [Fact]
+    public async Task DeadLetter_WithoutForwarding_HasNoDeadLetterSource()
+    {
+        ThrowIfSkipped();
+        // DeadLetterSource is only set once a dead-lettered message is forwarded on.
+        var queue = await CreateTestQueueAsync();
+
+        await DeadLetterOneAsync(queue, "dl-plain");
+
+        await using var dlq = Client.CreateReceiver(queue, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+        var dead = await dlq.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("dl-plain", dead?.MessageId);
+        Assert.Null(dead!.DeadLetterSource);
+    }
+
+    [Fact]
+    public async Task ForwardDeadLetteredMessagesTo_Topic_PublishesToSubscriptions()
+    {
+        ThrowIfSkipped();
+        var topic = await CreateTestTopicAsync();
+        await CreateTestSubscriptionAsync(topic, "all");
+        var source = await CreateTestQueueAsync(new CreateQueueOptions("placeholder") { ForwardDeadLetteredMessagesTo = topic });
+
+        await DeadLetterOneAsync(source, "dl-topic");
+
+        await using var receiver = Client.CreateReceiver(topic, "all");
+        var forwarded = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("dl-topic", forwarded?.MessageId);
+        Assert.Equal("manual", forwarded!.DeadLetterReason);
+    }
+
+    [Fact]
+    public async Task ForwardDeadLetteredMessagesTo_MissingDestination_IsRefused()
+    {
+        ThrowIfSkipped();
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => CreateTestQueueAsync(
+            new CreateQueueOptions("placeholder") { ForwardDeadLetteredMessagesTo = $"ct-{Guid.NewGuid():N}" }));
+        Assert.Contains("The auto forwarding destination entity", ex.Message);
+    }
+
+    [Fact]
+    public async Task ForwardDeadLetteredMessagesTo_SourceDeadLetterQueue_RefusesReceivers()
+    {
+        ThrowIfSkipped();
+        var target = await CreateTestQueueAsync();
+        var source = await CreateTestQueueAsync(new CreateQueueOptions("placeholder") { ForwardDeadLetteredMessagesTo = target });
+
+        await using var dlq = Client.CreateReceiver(source, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => dlq.ReceiveMessageAsync(TimeSpan.FromSeconds(2)));
+        Assert.Contains("auto-forwarding enabled", ex.Message);
+    }
+
+    [Fact]
+    public async Task ForwardDeadLetteredMessagesTo_DeletedDestination_KeepsMessageInSourceDeadLetterQueue()
+    {
+        ThrowIfSkipped();
+        var target = await CreateTestQueueAsync();
+        var source = await CreateTestQueueAsync(new CreateQueueOptions("placeholder") { ForwardDeadLetteredMessagesTo = target });
+        await AdminClient.DeleteQueueAsync(target);
+
+        await DeadLetterOneAsync(source, "dl-orphan");
+
+        Assert.True(await EventuallyAsync(async () =>
+            (await AdminClient.GetQueueRuntimePropertiesAsync(source)).Value.DeadLetterMessageCount == 1));
+    }
+
+    [Fact]
+    public async Task ForwardDeadLetteredMessagesTo_CountsTowardsTheHopLimit()
+    {
+        ThrowIfSkipped();
+        // source -dead-letters-> q0 -> q1 -> q2 -> q3 -> q4. The dead-letter transfer is hop 1,
+        // so q3's forward would be hop 5 and the message dead-letters on q3 instead.
+        var chain = new string[5];
+        chain[4] = await CreateTestQueueAsync();
+        for (var i = 3; i >= 0; i--)
+            chain[i] = await CreateTestQueueAsync(new CreateQueueOptions("placeholder") { ForwardTo = chain[i + 1] });
+        var source = await CreateTestQueueAsync(new CreateQueueOptions("placeholder") { ForwardDeadLetteredMessagesTo = chain[0] });
+
+        await DeadLetterOneAsync(source, "dl-hops");
+
+        await using var dlq = Client.CreateReceiver(chain[3], new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+        var dead = await dlq.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("dl-hops", dead?.MessageId);
+        Assert.Equal("Maximum transfer hop count is exceeded.", dead!.DeadLetterReason);
+        Assert.Equal("explicit dead-letter", dead.DeadLetterErrorDescription);
+        Assert.Equal(source, dead.DeadLetterSource);
+        Assert.Equal(0, (await AdminClient.GetQueueRuntimePropertiesAsync(chain[4])).Value.ActiveMessageCount);
+    }
 }

@@ -524,7 +524,7 @@ public class ManagementLinkEndpoint : IRequestProcessor
             return;
         }
 
-        if (queue?.ForwardTo is not null)
+        if (queue?.AutoForwards == true)
         {
             SendErrorResponse(requestContext, 400,
                 "Cannot create a message browser on an entity with auto-forwarding enabled.", "amqp:not-allowed");

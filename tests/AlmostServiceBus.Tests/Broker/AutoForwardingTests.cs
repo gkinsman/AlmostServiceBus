@@ -168,4 +168,106 @@ public class AutoForwardingTests
         Assert.Equal(1, sub.Queue.MessageCount);
         Assert.Equal(0, target.MessageCount);
     }
+
+    // gkinsman/AlmostServiceBus#193
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public void ForwardDeadLetteredMessagesTo_SendsDeadLettersToTheTarget(bool subscription, bool explicitDeadLetter)
+    {
+        var ns = new NamespaceContext("ns");
+        var target = ns.CreateQueue("destination");
+        var source = subscription
+            ? ns.CreateSubscription("events", "consumer").Queue
+            : ns.CreateQueue("source");
+        source.ForwardDeadLetteredMessagesTo = "destination";
+        source.MaxDeliveryCount = 1;
+
+        source.Enqueue(Message());
+        var received = source.TryDequeueImmediate()!;
+        source.TrackPending(received);
+        if (explicitDeadLetter)
+            source.DeadLetter(received.LockToken!, "manual", "explicit dead-letter");
+        else
+            source.Abandon(received.LockToken!);
+
+        Assert.Equal(0, source.DeadLetterQueue.MessageCount);
+        var forwarded = target.TryDequeueImmediate();
+        Assert.NotNull(forwarded);
+        Assert.Equal(explicitDeadLetter ? "manual" : "MaxDeliveryCountExceeded", forwarded!.DeadLetterReason);
+    }
+
+    [Fact]
+    public void ForwardDeadLetteredMessagesTo_Topic_PublishesToItsSubscriptions()
+    {
+        var ns = new NamespaceContext("ns");
+        var sub = ns.CreateSubscription("dead-letters", "sub");
+        var source = ns.CreateQueue("source");
+        source.ForwardDeadLetteredMessagesTo = "dead-letters";
+
+        source.Enqueue(Message());
+        var received = source.TryDequeueImmediate()!;
+        source.TrackPending(received);
+        source.DeadLetter(received.LockToken!, "manual", null);
+
+        Assert.Equal(1, sub.Queue.MessageCount);
+        Assert.Equal(0, source.DeadLetterQueue.MessageCount);
+    }
+
+    [Fact]
+    public void ForwardDeadLetteredMessagesTo_DeletedTarget_KeepsTheMessageInTheSourceDeadLetterQueue()
+    {
+        var ns = new NamespaceContext("ns");
+        ns.CreateQueue("destination");
+        var source = ns.CreateQueue("source");
+        source.ForwardDeadLetteredMessagesTo = "destination";
+        ns.DeleteQueue("destination");
+
+        source.Enqueue(Message());
+        var received = source.TryDequeueImmediate()!;
+        source.TrackPending(received);
+        source.DeadLetter(received.LockToken!, "manual", null);
+
+        Assert.Equal("manual", source.DeadLetterQueue.TryDequeueImmediate()?.DeadLetterReason);
+    }
+
+    [Fact]
+    public void ForwardDeadLetteredMessagesTo_CountsTowardsTheHopLimit()
+    {
+        // The dead-letter transfer is hop 1, so the ForwardTo chain after it runs out one queue early.
+        var ns = new NamespaceContext("ns");
+        var end = ns.CreateQueue("q4");
+        for (var i = 3; i >= 0; i--)
+            ns.CreateQueue($"q{i}").ForwardTo = $"q{i + 1}";
+        var source = ns.CreateQueue("source");
+        source.ForwardDeadLetteredMessagesTo = "q0";
+
+        source.Enqueue(Message());
+        var received = source.TryDequeueImmediate()!;
+        source.TrackPending(received);
+        source.DeadLetter(received.LockToken!, "manual", "explicit dead-letter");
+
+        // Real Service Bus replaces the reason but keeps the original description and source.
+        Assert.Equal(0, end.MessageCount);
+        var dead = ns.GetQueue("q3")!.DeadLetterQueue.TryDequeueImmediate();
+        Assert.Equal("Maximum transfer hop count is exceeded.", dead?.DeadLetterReason);
+        Assert.Equal("explicit dead-letter", dead!.DeadLetterErrorDescription);
+        Assert.Equal("source", dead.DeadLetterSource);
+    }
+
+    [Fact]
+    public void ForwardDeadLetteredMessagesTo_DoesNotAffectOrdinaryDelivery()
+    {
+        var ns = new NamespaceContext("ns");
+        var target = ns.CreateQueue("destination");
+        var source = ns.CreateQueue("source");
+        source.ForwardDeadLetteredMessagesTo = "destination";
+
+        source.Enqueue(Message());
+
+        Assert.Equal(1, source.MessageCount);
+        Assert.Equal(0, target.MessageCount);
+    }
 }

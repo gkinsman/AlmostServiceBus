@@ -90,7 +90,11 @@ public static class ManagementApiEndpoints
                 if (topic is null)
                     return ManagementApiErrors.EntityNotFound(topicName);
 
-                if (MissingForwardTarget(ns, () => AtomXmlReader.ReadSubscriptionProperties(body).ForwardTo) is { } badSub)
+                if (MissingForwardTarget(ns, () =>
+                {
+                    var p = AtomXmlReader.ReadSubscriptionProperties(body);
+                    return [p.ForwardTo, p.ForwardDeadLetteredMessagesTo];
+                }) is { } badSub)
                     return badSub;
 
                 SubscriptionEntity sub;
@@ -140,7 +144,11 @@ public static class ManagementApiEndpoints
             }
             else
             {
-                if (MissingForwardTarget(ns, () => AtomXmlReader.ReadQueueProperties(body).ForwardTo) is { } badQueue)
+                if (MissingForwardTarget(ns, () =>
+                {
+                    var p = AtomXmlReader.ReadQueueProperties(body);
+                    return [p.ForwardTo, p.ForwardDeadLetteredMessagesTo];
+                }) is { } badQueue)
                     return badQueue;
 
                 QueueEntity entity;
@@ -460,6 +468,7 @@ public static class ManagementApiEndpoints
             entity.EnableExpress = props.EnableExpress;
             entity.EnableBatchedOperations = props.EnableBatchedOperations;
             entity.ForwardTo = props.ForwardTo;
+            entity.ForwardDeadLetteredMessagesTo = props.ForwardDeadLetteredMessagesTo;
             entity.UserMetadata = props.UserMetadata;
             entity.AutoDeleteOnIdle = props.AutoDeleteOnIdle;
             entity.RequiresDuplicateDetection = props.RequiresDuplicateDetection;
@@ -498,16 +507,20 @@ public static class ManagementApiEndpoints
 
     // Real Service Bus refuses to create or update an entity whose ForwardTo names nothing,
     // and the admin client surfaces the 400 as ArgumentException.
-    private static IResult? MissingForwardTarget(NamespaceContext ns, Func<string?> readForwardTo)
+    // The same goes for ForwardDeadLetteredMessagesTo.
+    private static IResult? MissingForwardTarget(NamespaceContext ns, Func<string?[]> readForwardTargets)
     {
-        string? forwardTo;
-        try { forwardTo = readForwardTo(); }
+        string?[] targets;
+        try { targets = readForwardTargets(); }
         catch { return null; }
 
-        if (forwardTo is null || ns.ResolveSendTarget(forwardTo) is not (null, null))
-            return null;
+        foreach (var forwardTo in targets)
+        {
+            if (forwardTo is not null && ns.ResolveSendTarget(forwardTo) is (null, null))
+                return ManagementApiErrors.BadRequest($"The auto forwarding destination entity {forwardTo} does not exist.");
+        }
 
-        return ManagementApiErrors.BadRequest($"The auto forwarding destination entity {forwardTo} does not exist.");
+        return null;
     }
 
     private static void ApplySubscriptionProperties(SubscriptionEntity entity, string body)
@@ -526,6 +539,7 @@ public static class ManagementApiEndpoints
             entity.AutoDeleteOnIdle = props.AutoDeleteOnIdle;
 
             entity.ForwardTo = props.ForwardTo;
+            entity.ForwardDeadLetteredMessagesTo = props.ForwardDeadLetteredMessagesTo;
 
             // If the request embeds a DefaultRuleDescription, replace the $Default rule
             // with the specified rule.  This is how the Azure SDK implements

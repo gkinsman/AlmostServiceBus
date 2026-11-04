@@ -111,4 +111,58 @@ public class AutoForwardingTests : IAsyncLifetime
         var kept = await _client.CreateReceiver("unfwd-source", "fwd").ReceiveMessageAsync(TimeSpan.FromSeconds(5));
         Assert.NotNull(kept);
     }
+
+    // gkinsman/AlmostServiceBus#193
+    [Fact]
+    public async Task QueueForwardDeadLetteredMessagesTo_DeliversDeadLettersToTheTarget()
+    {
+        await _admin.CreateQueueAsync("dlfwd-target");
+        var created = await _admin.CreateQueueAsync(
+            new CreateQueueOptions("dlfwd-source") { ForwardDeadLetteredMessagesTo = "dlfwd-target" });
+        Assert.EndsWith("dlfwd-target", created.Value.ForwardDeadLetteredMessagesTo);
+
+        await _client.CreateSender("dlfwd-source").SendMessageAsync(new ServiceBusMessage("x") { MessageId = "dead" });
+        var receiver = _client.CreateReceiver("dlfwd-source");
+        var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(received);
+        await receiver.DeadLetterMessageAsync(received!, "manual", "explicit dead-letter");
+
+        var forwarded = await _client.CreateReceiver("dlfwd-target").ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(forwarded);
+        Assert.Equal("dead", forwarded!.MessageId);
+        Assert.Equal("manual", forwarded.DeadLetterReason);
+
+        var source = await _admin.GetQueueRuntimePropertiesAsync("dlfwd-source");
+        Assert.Equal(0, source.Value.DeadLetterMessageCount);
+    }
+
+    [Fact]
+    public async Task SubscriptionForwardDeadLetteredMessagesTo_DeliversDeadLettersToTheTarget()
+    {
+        await _admin.CreateQueueAsync("sub-dlfwd-target");
+        await _admin.CreateTopicAsync("sub-dlfwd-source");
+        await _admin.CreateSubscriptionAsync(new CreateSubscriptionOptions("sub-dlfwd-source", "consumer")
+        {
+            ForwardDeadLetteredMessagesTo = "sub-dlfwd-target",
+            MaxDeliveryCount = 1,
+        });
+
+        await _client.CreateSender("sub-dlfwd-source").SendMessageAsync(new ServiceBusMessage("x") { MessageId = "exhausted" });
+        var receiver = _client.CreateReceiver("sub-dlfwd-source", "consumer");
+        var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(received);
+        await receiver.AbandonMessageAsync(received!);
+
+        var forwarded = await _client.CreateReceiver("sub-dlfwd-target").ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(forwarded);
+        Assert.Equal("exhausted", forwarded!.MessageId);
+        Assert.Equal("MaxDeliveryCountExceeded", forwarded.DeadLetterReason);
+    }
+
+    [Fact]
+    public async Task MissingDeadLetterForwardTarget_IsRefused()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => _admin.CreateQueueAsync(
+            new CreateQueueOptions("dlfwd-orphan") { ForwardDeadLetteredMessagesTo = "dlfwd-nowhere" }));
+    }
 }

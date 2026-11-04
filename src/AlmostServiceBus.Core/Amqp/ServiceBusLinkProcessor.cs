@@ -177,7 +177,7 @@ public class ServiceBusLinkProcessor : ILinkProcessor
                 return;
             }
 
-            if (queue.ForwardTo is not null)
+            if (queue.AutoForwards)
             {
                 attachContext.Complete(new Error(new Symbol("amqp:not-allowed"))
                 {

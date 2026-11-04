@@ -120,34 +120,47 @@ public sealed class NamespaceContext
 
     internal void Forward(QueueEntity source, BrokeredMessage message)
     {
-        var target = source.ForwardTo!;
+        if (TryTransfer(source.ForwardTo!, message) is { } failure)
+            source.DeadLetterOnArrival(message, failure);
+    }
+
+    /// <summary>
+    /// Sends a message the source just dead-lettered to its ForwardDeadLetteredMessagesTo
+    /// entity. Returns <see langword="false"/> when it can't be delivered there; the caller then
+    /// keeps it in the source's own dead-letter queue with the reason it was dead-lettered for.
+    /// Real Service Bus sets DeadLetterSource only on a message forwarded this way.
+    /// </summary>
+    internal bool ForwardDeadLetter(QueueEntity source, BrokeredMessage message)
+    {
+        var previousSource = message.DeadLetterSource;
+        message.DeadLetterSource = source.Name;
+        if (TryTransfer(source.ForwardDeadLetteredMessagesTo!, message) is null)
+            return true;
+
+        message.DeadLetterSource = previousSource;
+        return false;
+    }
+
+    // Delivers the message to the named queue or topic, or returns why it can't.
+    private string? TryTransfer(string target, BrokeredMessage message)
+    {
         var (queue, topic) = ResolveSendTarget(target);
 
         if (queue is null && topic is null)
-        {
-            source.DeadLetterOnArrival(message,
-                $"The transfer destination entity does not exist. Transfer Destination Entity Details:- Name: {target}");
-            return;
-        }
+            return $"The transfer destination entity does not exist. Transfer Destination Entity Details:- Name: {target}";
 
         if (message.ForwardHopCount >= MaxForwardHops)
-        {
-            source.DeadLetterOnArrival(message, "Maximum transfer hop count is exceeded.");
-            return;
-        }
+            return "Maximum transfer hop count is exceeded.";
 
         if (queue is { RequiresSession: true } && string.IsNullOrEmpty(message.SessionId))
-        {
-            source.DeadLetterOnArrival(message,
-                "The SessionId was not set on a message, and it cannot be sent to the entity. Entities that have session support enabled can only receive messages that have the SessionId set to a valid value.");
-            return;
-        }
+            return "The SessionId was not set on a message, and it cannot be sent to the entity. Entities that have session support enabled can only receive messages that have the SessionId set to a valid value.";
 
         message.ForwardHopCount++;
         if (queue is not null)
             queue.Enqueue(message);
         else
             topic!.Publish(message);
+        return null;
     }
 
     public SubscriptionEntity? GetSubscription(string topicName, string subName) =>
