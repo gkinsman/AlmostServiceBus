@@ -70,6 +70,11 @@ These match real Azure, but may change routing for existing rules.
 - **Creating a rule that already exists answers 409**
   (`MessagingEntityAlreadyExists`) instead of overwriting it. Updates with
   `If-Match` still replace it.
+- **Dependency updates.** AMQPNetLite 2.5.5 (#188), Aspire.Hosting 13.6.4
+  (#185), the .NET 10.0.14 packages (#186) and the dashboard's vue-tsc 3.3.14
+  (#189). Test and sample only: the Java SDK 7.19.1 and JDK 21.0.13 for the
+  client smoke tests (#194, #182), the NServiceBus transport submodule (#187,
+  #191) and the OrderFlowDemo sample (#190). No behaviour changes.
 
 ### Fixed
 - **A scheduled message's enqueued time is when it activated**, not when it was
