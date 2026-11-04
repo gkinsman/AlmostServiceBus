@@ -163,6 +163,9 @@ public sealed class NamespaceContext
         // The source assigned its own sequence number (subscriptions do so before filtering); the target
         // numbers the message itself, so it never collides with the target's own sequence.
         message.SequenceNumber = 0;
+        // The destination enqueues it afresh: real Service Bus gives it a new enqueued time there,
+        // and its time-to-live counts from that.
+        message.EnqueuedTimeUtc = TimeProvider.GetUtcNow();
         if (queue is not null)
             queue.Enqueue(message);
         else

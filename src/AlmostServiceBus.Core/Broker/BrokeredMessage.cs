@@ -60,6 +60,17 @@ public sealed class BrokeredMessage
 
     public bool IsExpired(DateTimeOffset now) => now >= ExpiresAtUtc;
 
+    // The queue whose channel or session the message is waiting in, until someone takes it. A
+    // message can't be pulled out of a channel, so the expiry sweep and a receiver race for it
+    // through this field and whoever loses skips it. Naming the queue (not just a flag) keeps the
+    // sweep's leftover channel entry dead once the same object is waiting in a dead-letter queue.
+    private QueueEntity? _availableIn;
+
+    internal void MarkAvailable(QueueEntity queue) => Volatile.Write(ref _availableIn, queue);
+
+    internal bool TryClaim(QueueEntity queue) =>
+        ReferenceEquals(Interlocked.CompareExchange(ref _availableIn, null, queue), queue);
+
     public Dictionary<string, object> ApplicationProperties { get; set; } = [];
 
     public long SequenceNumber { get; set; }

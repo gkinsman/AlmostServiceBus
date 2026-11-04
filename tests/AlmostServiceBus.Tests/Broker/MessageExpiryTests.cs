@@ -122,4 +122,221 @@ public class MessageExpiryTests
         Assert.Equal(new global::Amqp.Framing.Header().Ttl, peeked.Header.Ttl); // unset
         Assert.Equal(default, peeked.Properties.AbsoluteExpiryTime);
     }
+
+    // ── Never deliver an expired message ─────────────────────────────────────
+
+    [Fact]
+    public void TryDequeueImmediate_SkipsExpired_DeadLettersWhenEnabled()
+    {
+        var queue = Queue(deadLetterOnExpiry: true);
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5), id: "short"));
+        queue.Enqueue(Message(id: "forever"));
+        _time.Advance(TimeSpan.FromSeconds(6));
+
+        Assert.Equal("forever", queue.TryDequeueImmediate()?.MessageId);
+        var dead = queue.DeadLetterQueue.TryDequeueImmediate();
+        Assert.Equal("short", dead?.MessageId);
+        Assert.Equal(ExpiredReason, dead!.DeadLetterReason);
+        Assert.Equal(ExpiredDescription, dead.DeadLetterErrorDescription);
+        Assert.Equal(0, queue.MessageCount);
+    }
+
+    [Fact]
+    public void TryDequeueImmediate_SkipsExpired_DropsWhenDisabled()
+    {
+        var queue = Queue();
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5)));
+        _time.Advance(TimeSpan.FromSeconds(5));
+
+        Assert.Null(queue.TryDequeueImmediate());
+        Assert.Equal(0, queue.DeadLetterQueue.MessageCount);
+        Assert.Equal(0, queue.ActiveMessageCount);
+        Assert.Empty(queue.PeekFromSequence(0, 10));
+    }
+
+    [Fact]
+    public async Task DequeueAsync_SkipsExpired()
+    {
+        var queue = Queue();
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5), id: "short"));
+        queue.Enqueue(Message(id: "forever"));
+        _time.Advance(TimeSpan.FromSeconds(6));
+
+        var message = await queue.DequeueAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+
+        Assert.Equal("forever", message.MessageId);
+    }
+
+    [Fact]
+    public void NotYetExpired_IsDelivered()
+    {
+        var queue = Queue();
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5)));
+        _time.Advance(TimeSpan.FromSeconds(4));
+
+        Assert.NotNull(queue.TryDequeueImmediate());
+    }
+
+    // ── Sweep ────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ExpireMessages_SweepsWithoutReceiver()
+    {
+        var queue = Queue(deadLetterOnExpiry: true);
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5)));
+        queue.Enqueue(Message(id: "forever"));
+        _time.Advance(TimeSpan.FromSeconds(6));
+
+        Assert.Equal(1, queue.ExpireMessages());
+
+        Assert.Equal(1, queue.MessageCount);
+        Assert.Equal(1, queue.DeadLetterQueue.MessageCount);
+        Assert.Equal("forever", queue.TryDequeueImmediate()?.MessageId);
+        // The swept message's stale channel entry is skipped, so a purge loop terminates.
+        Assert.Null(queue.TryDequeueImmediate());
+    }
+
+    [Fact]
+    public void ExpireMessages_LeavesLockedMessage_ThenExpiresAfterRelease()
+    {
+        var queue = Queue(deadLetterOnExpiry: true);
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5)));
+        var locked = queue.TryDequeueImmediate()!;
+        _time.Advance(TimeSpan.FromSeconds(6));
+
+        Assert.Equal(0, queue.ExpireMessages());
+        Assert.Equal(0, queue.DeadLetterQueue.MessageCount);
+
+        queue.Release(locked.LockToken!);
+
+        Assert.Equal(1, queue.ExpireMessages());
+        Assert.Equal(1, queue.DeadLetterQueue.MessageCount);
+    }
+
+    [Fact]
+    public async Task Abandon_AfterTtl_ExpiresInsteadOfRedelivering()
+    {
+        var queue = Queue(deadLetterOnExpiry: true);
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5)));
+        var locked = queue.TryDequeueImmediate()!;
+        _time.Advance(TimeSpan.FromSeconds(6));
+
+        queue.Abandon(locked.LockToken!);
+
+        // Abandon makes the message available again after a real one-second delay.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (queue.DeadLetterQueue.MessageCount == 0 && DateTime.UtcNow < deadline)
+        {
+            Assert.Null(queue.TryDequeueImmediate());
+            await Task.Delay(50);
+        }
+        Assert.Equal(1, queue.DeadLetterQueue.MessageCount);
+        Assert.Equal(0, queue.ActiveMessageCount);
+    }
+
+    [Fact]
+    public void Complete_AfterTtl_WhileLocked_Succeeds()
+    {
+        var queue = Queue();
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5)));
+        var locked = queue.TryDequeueImmediate()!;
+        _time.Advance(TimeSpan.FromSeconds(6));
+
+        queue.Complete(locked.LockToken!);
+
+        Assert.Equal(1, queue.ConsumedCount);
+    }
+
+    [Fact]
+    public void DeadLetterQueue_NeverExpires()
+    {
+        var queue = Queue();
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5)));
+        var locked = queue.TryDequeueImmediate()!;
+        queue.DeadLetter(locked.LockToken!, "reason", "description");
+        _time.Advance(TimeSpan.FromDays(1));
+
+        Assert.Equal(0, queue.DeadLetterQueue.ExpireMessages());
+        Assert.NotNull(queue.DeadLetterQueue.TryDequeueImmediate());
+    }
+
+    [Fact]
+    public void Expired_ForwardsToForwardDeadLetteredMessagesTo()
+    {
+        var ns = new NamespaceContext("ns", timeProvider: _time);
+        var target = ns.CreateQueue("target");
+        var source = ns.CreateQueue("source");
+        source.DeadLetteringOnMessageExpiration = true;
+        source.ForwardDeadLetteredMessagesTo = "target";
+        source.Enqueue(Message(TimeSpan.FromSeconds(5)));
+        _time.Advance(TimeSpan.FromSeconds(6));
+
+        Assert.Equal(1, source.ExpireMessages());
+
+        // Real Service Bus restarts the clock at the destination, so it is still deliverable there.
+        var forwarded = target.TryDequeueImmediate();
+        Assert.NotNull(forwarded);
+        Assert.Equal(ExpiredReason, forwarded.DeadLetterReason);
+        Assert.Equal(ExpiredDescription, forwarded.DeadLetterErrorDescription);
+        Assert.Equal(0, source.DeadLetterQueue.MessageCount);
+    }
+
+    [Fact]
+    public async Task ConcurrentSweepAndDequeue_EachMessageTakenOnce()
+    {
+        var queue = Queue(deadLetterOnExpiry: true);
+        for (var i = 0; i < 2000; i++)
+            queue.Enqueue(Message(i % 2 == 0 ? TimeSpan.FromSeconds(1) : null, id: i.ToString()));
+        _time.Advance(TimeSpan.FromSeconds(2));
+
+        var delivered = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var dequeuers = Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
+        {
+            while (queue.TryDequeueImmediate() is { } m)
+                delivered.Add(m.MessageId);
+        }));
+        var sweepers = Enumerable.Range(0, 2).Select(_ => Task.Run(() => queue.ExpireMessages()));
+        await Task.WhenAll(dequeuers.Concat(sweepers));
+
+        Assert.Equal(1000, delivered.Count);
+        Assert.Equal(1000, delivered.Distinct().Count());
+        Assert.All(delivered, id => Assert.True(int.Parse(id) % 2 == 1));
+        Assert.Equal(1000, queue.DeadLetterQueue.MessageCount);
+        Assert.Equal(0, queue.MessageCount);
+    }
+
+    // ── Sessions ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void TryDequeueFromSession_SkipsExpired()
+    {
+        var queue = Queue(deadLetterOnExpiry: true);
+        queue.RequiresSession = true;
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5), sessionId: "s1", id: "short"));
+        queue.Enqueue(Message(sessionId: "s1", id: "forever"));
+        _time.Advance(TimeSpan.FromSeconds(6));
+
+        var session = queue.Sessions!.TryAcceptSession("s1", "receiver")!;
+
+        Assert.True(queue.TryDequeueFromSession(session, out var message));
+        Assert.Equal("forever", message.MessageId);
+        Assert.False(queue.TryDequeueFromSession(session, out _));
+        Assert.Equal("short", queue.DeadLetterQueue.TryDequeueImmediate()?.MessageId);
+    }
+
+    [Fact]
+    public void ExpireMessages_RemovesFromSession_SoNextAvailableSkipsIt()
+    {
+        var queue = Queue();
+        queue.RequiresSession = true;
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5), sessionId: "expired"));
+        queue.Enqueue(Message(sessionId: "live"));
+        _time.Advance(TimeSpan.FromSeconds(6));
+
+        Assert.Equal(1, queue.ExpireMessages());
+
+        Assert.Equal("live", queue.Sessions!.TryAcceptSession(null, "receiver")?.SessionId);
+        Assert.Null(queue.Sessions.TryAcceptSession(null, "other"));
+        Assert.Equal(1, queue.MessageCount);
+    }
 }
