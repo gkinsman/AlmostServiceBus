@@ -100,8 +100,12 @@ cd src/AlmostServiceBus.Host && dotnet run
 # Run all tests
 dotnet test AlmostServiceBus.sln --filter "FullyQualifiedName!~RealAsbConformanceTests" --verbosity quiet
 
-# Run against real ASB for comparison
-ASB_CONNECTION_STRING="Endpoint=sb://..." dotnet test tests/AlmostServiceBus.Conformance.Tests --filter "FullyQualifiedName~RealAsbConformanceTests"
+# Run against real ASB for comparison. The connection string comes from the ASB_CONNECTION_STRING
+# environment variable, else user secrets (set once; never commit it):
+dotnet user-secrets set ASB_CONNECTION_STRING "Endpoint=sb://..." --id almostservicebus-conformance
+dotnet test tests/AlmostServiceBus.Conformance.Tests --filter "FullyQualifiedName~RealAsbConformanceTests"
+# SQL filter/action table against the emulator and Azure; ASB_COMPAT_RECORD=1 writes Azure's answers back
+dotnet test tests/AlmostServiceBus.Conformance.Tests --filter "FullyQualifiedName~SqlCompatTests"
 
 # Run external framework tests (emulator must be running)
 cd external/wolverine && dotnet test src/Transports/Azure/Wolverine.AzureServiceBus.Tests --no-build -f net9.0

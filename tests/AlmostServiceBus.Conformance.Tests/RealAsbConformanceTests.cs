@@ -5,19 +5,18 @@ namespace AlmostServiceBus.Conformance.Tests;
 
 /// <summary>
 /// Runs all conformance tests against real Azure Service Bus.
-/// Only runs when the ASB_CONNECTION_STRING environment variable is set.
+/// Only runs when a connection string is configured (see <see cref="RealAsbConnection"/>).
 /// When the env var is not set, all tests in this class are skipped.
 /// </summary>
 public class RealAsbConformanceTests : ConformanceTestBase
 {
-    private static readonly string? RealConnectionString =
-        Environment.GetEnvironmentVariable("ASB_CONNECTION_STRING");
+    private static readonly string? RealConnectionString = RealAsbConnection.ConnectionString;
 
     protected override Task<(ServiceBusClient? client, ServiceBusAdministrationClient? admin)> CreateClientsAsync()
     {
         if (string.IsNullOrEmpty(RealConnectionString))
         {
-            SkipReason = "ASB_CONNECTION_STRING environment variable not set — skipping real ASB tests";
+            SkipReason = RealAsbConnection.NotConfigured + " — skipping real ASB tests";
             return Task.FromResult<(ServiceBusClient?, ServiceBusAdministrationClient?)>((null, null));
         }
 

@@ -280,6 +280,24 @@ public class SqlValuesTests
         Assert.Equal(27, SqlValues.FromMessage(27));
     }
 
+    // decimal128 bytes exactly as Microsoft.Azure.Amqp (the .NET SDK's AMQP stack) encodes them.
+    [Theory]
+    [InlineData("1.5", "0C-3E-00-00-00-00-00-00-00-00-00-00-00-00-00-0F")]
+    [InlineData("-1.5", "8C-3E-00-00-00-00-00-00-00-00-00-00-00-00-00-0F")]
+    [InlineData("0", "0C-40-00-00-00-00-00-00-00-00-00-00-00-00-00-00")]
+    [InlineData("123.456", "0C-3A-00-00-00-00-00-00-00-00-00-00-00-01-E2-40")]
+    [InlineData("0.0000001", "0C-32-00-00-00-00-00-00-00-00-00-00-00-00-00-01")]
+    [InlineData("79228162514264337593543950335", "0C-40-00-00-FF-FF-FF-FF-FF-FF-FF-FF-FF-FF-FF-FF")]
+    [InlineData("-79228162514264337593543950335", "8C-40-00-00-FF-FF-FF-FF-FF-FF-FF-FF-FF-FF-FF-FF")]
+    public void Decimal128_RoundTripsWithTheSdksEncoding(string value, string hex)
+    {
+        var expected = decimal.Parse(value, CultureInfo.InvariantCulture);
+        var bytes = hex.Split('-').Select(h => Convert.ToByte(h, 16)).ToArray();
+
+        Assert.Equal(expected, SqlValues.FromMessage(new global::Amqp.Types.Decimal(bytes)));
+        Assert.Equal(bytes, Assert.IsType<global::Amqp.Types.Decimal>(SqlValues.ToMessage(expected)).Bytes);
+    }
+
     [Fact]
     public void ToMessage_EncodesSdkDescribedTypes()
     {

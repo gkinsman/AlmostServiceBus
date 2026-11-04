@@ -5,10 +5,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- The real Azure connection string lives in these user secrets (key ASB_CONNECTION_STRING); see RealAsbConnection. -->
+    <UserSecretsId>almostservicebus-conformance</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="..\shared\SqlCompatCases.cs" Link="Shared\SqlCompatCases.cs" />
+    <None Include="..\shared\sql-compat-cases.json" Link="sql-compat-cases.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

@@ -165,6 +165,15 @@ public class ManagementApiRuleTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CreateRule_MultiLineAzureMessage_KeepsItsCarriageReturn()
+    {
+        var response = await PutRule(new RuleEntity { Name = "sys", FilterType = FilterType.SqlFilter, SqlExpression = "sys.Subject IS NULL" });
+
+        var detail = System.Xml.Linq.XDocument.Parse(await response.Content.ReadAsStringAsync()).Root!.Element("Detail")!.Value;
+        Assert.EndsWith("BrokeredMessage class.\r\nParameter name: qualifiedPropertyName", detail);
+    }
+
+    [Fact]
     public async Task CreateRule_InvalidAction_Returns400()
     {
         var response = await PutRule(new RuleEntity { Name = "bad-action", FilterType = FilterType.TrueFilter, ActionExpression = "SET" });

@@ -37,6 +37,7 @@ internal static class SqlValues
         DescribedValue { Descriptor: var d, Value: string uri } when Is(d, UriDescriptor) => new Uri(uri, UriKind.RelativeOrAbsolute),
         DescribedValue { Descriptor: var d, Value: long ticks } when Is(d, DateTimeOffsetDescriptor) => new DateTimeOffset(ticks, TimeSpan.Zero),
         Symbol symbol => (string)symbol,
+        global::Amqp.Types.Decimal d when TryDecodeDecimal(d.Bytes, out var m) => m,
         DateTime { Kind: not DateTimeKind.Utc } dt => dt.ToUniversalTime(),
         _ => raw
     };
@@ -47,8 +48,48 @@ internal static class SqlValues
         TimeSpan ts => new DescribedValue(new Symbol(TimeSpanDescriptor), ts.Ticks),
         Uri uri => new DescribedValue(new Symbol(UriDescriptor), uri.OriginalString),
         DateTimeOffset dto => new DescribedValue(new Symbol(DateTimeOffsetDescriptor), dto.UtcTicks),
+        decimal m => new global::Amqp.Types.Decimal(EncodeDecimal(m)),
         _ => value
     };
+
+    // AMQP decimal128 as Microsoft.Azure.Amqp (the .NET SDK's AMQP stack) writes System.Decimal: sign in the top
+    // bit, a 14-bit exponent biased by 1568, then the 96-bit coefficient big-endian in the last 12 bytes.
+    private const int Decimal128ExponentBias = 1568;
+
+    private static bool TryDecodeDecimal(byte[] bytes, out decimal value)
+    {
+        value = 0;
+        if (bytes.Length != 16 || bytes[1] % 2 != 0 || bytes[2] != 0 || bytes[3] != 0)
+            return false;
+
+        var exponent = (((bytes[0] & 0x7F) << 7) | (bytes[1] >> 1)) - Decimal128ExponentBias;
+        if (exponent is > 0 or < -28)
+            return false;
+
+        int Word(int at) => (bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at + 2] << 8) | bytes[at + 3];
+        value = new decimal(Word(12), Word(8), Word(4), (bytes[0] & 0x80) != 0, (byte)-exponent);
+        return true;
+    }
+
+    private static byte[] EncodeDecimal(decimal value)
+    {
+        var bits = decimal.GetBits(value);
+        var scale = (bits[3] >> 16) & 0xFF;
+        var exponent = Decimal128ExponentBias - scale;
+        var bytes = new byte[16];
+        bytes[0] = (byte)((bits[3] < 0 ? 0x80 : 0) | (exponent >> 7));
+        bytes[1] = (byte)((exponent & 0x7F) << 1);
+        for (var word = 0; word < 3; word++)
+        {
+            var at = 12 - word * 4;
+            bytes[at] = (byte)(bits[word] >> 24);
+            bytes[at + 1] = (byte)(bits[word] >> 16);
+            bytes[at + 2] = (byte)(bits[word] >> 8);
+            bytes[at + 3] = (byte)bits[word];
+        }
+
+        return bytes;
+    }
 
     private static bool Is(object descriptor, string name) => descriptor is Symbol s && (string)s == name;
 

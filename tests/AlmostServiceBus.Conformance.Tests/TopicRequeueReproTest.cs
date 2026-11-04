@@ -368,13 +368,12 @@ public class EmulatorTopicRequeueReproTest : TopicRequeueReproTestBase
 
 public class RealAsbTopicRequeueReproTest : TopicRequeueReproTestBase
 {
-    private static readonly string? ConnectionString =
-        Environment.GetEnvironmentVariable("ASB_CONNECTION_STRING");
+    private static readonly string? ConnectionString = RealAsbConnection.ConnectionString;
 
     public RealAsbTopicRequeueReproTest(ITestOutputHelper output) : base(output)
     {
         SkipReason = string.IsNullOrEmpty(ConnectionString)
-            ? "ASB_CONNECTION_STRING not set"
+            ? RealAsbConnection.NotConfigured
             : null;
     }
 

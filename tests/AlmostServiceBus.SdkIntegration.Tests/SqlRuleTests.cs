@@ -176,6 +176,32 @@ public class SqlRuleTests : IAsyncLifetime
         Assert.Equal("FilteringEngine", dead.ApplicationProperties["DeadLetterSource"]);
     }
 
+    [Fact]
+    public async Task DecimalProperty_ComparedWithDouble_DeadLettersAsOnAzure()
+    {
+        var topic = await CreateTopicAsync();
+        await CreateSubscriptionAsync(topic, new CreateRuleOptions("r", new SqlRuleFilter("m = 1.5")));
+
+        await SendAsync(topic, P(("m", 1.5m)));
+
+        var dead = Assert.Single(await ReceiveAllAsync(topic, SubQueue.DeadLetter));
+        Assert.Equal("Operator '==' cannot be applied to operands of type 'decimal' and 'double'", dead.DeadLetterErrorDescription);
+        Assert.Equal(1.5m, dead.ApplicationProperties["m"]);
+    }
+
+    [Fact]
+    public async Task SessionMessage_PartitionKeyDefaultsToSessionId()
+    {
+        var topic = await CreateTopicAsync();
+        await CreateSubscriptionAsync(topic, new CreateRuleOptions("r", new SqlRuleFilter("sys.PartitionKey = 's1'")));
+
+        await using (var sender = _client.CreateSender(topic))
+            await sender.SendMessageAsync(new ServiceBusMessage("body") { SessionId = "s1" });
+
+        var received = Assert.Single(await ReceiveAllAsync(topic));
+        Assert.Equal("s1", received.PartitionKey);
+    }
+
     // ── Rule manager (AMQP) ──────────────────────────────────────────────────
 
     [Fact]

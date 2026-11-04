@@ -220,3 +220,55 @@ public static class SqlCompatCases
         File.WriteAllText(path ?? SourcePath(),
             JsonSerializer.Serialize(new SqlCompatTable { Cases = [.. cases] }, JsonOptions).ReplaceLineEndings("\n") + "\n");
 }
+
+/// <summary>Compares an observed outcome with a recorded one; returns the differences (empty when they agree).</summary>
+public static class SqlCompatComparer
+{
+    public static List<string> Compare(SqlCompatExpected expected, SqlCompatExpected actual)
+    {
+        var problems = new List<string>();
+        if (expected.Outcome != actual.Outcome)
+            problems.Add($"outcome: expected {expected.Outcome}, got {actual.Outcome}");
+
+        if (expected.Outcome == "Rejected" || actual.Outcome == "Rejected")
+        {
+            if (expected.Error?.Message is { } message && actual.Error?.Message != message)
+                problems.Add($"error message: expected «{message}», got «{actual.Error?.Message}»");
+            return problems;
+        }
+
+        MatchAll("copy", expected.Copies, actual.Copies, CopyMatches, problems);
+        MatchAll("dead-letter", expected.DeadLettered, actual.DeadLettered, DeadLetterMatches, problems);
+        return problems;
+    }
+
+    private static void MatchAll<T>(string what, List<T> expected, List<T> actual, Func<T, T, bool> matches, List<string> problems)
+    {
+        if (expected.Count != actual.Count)
+        {
+            problems.Add($"{what} count: expected {expected.Count}, got {actual.Count}");
+            return;
+        }
+
+        var unmatched = actual.ToList();
+        foreach (var e in expected)
+        {
+            var hit = unmatched.FindIndex(a => matches(e, a));
+            if (hit < 0)
+                problems.Add($"no {what} matching {JsonSerializer.Serialize(e, SqlCompatCases.JsonOptions)}");
+            else
+                unmatched.RemoveAt(hit);
+        }
+    }
+
+    private static bool CopyMatches(SqlCompatCopy e, SqlCompatCopy a) =>
+        UserMatches(e.User, a.User) && e.Sys.Count == a.Sys.Count && e.Sys.All(kv => a.Sys.GetValueOrDefault(kv.Key) == kv.Value);
+
+    private static bool DeadLetterMatches(SqlCompatDeadLetter e, SqlCompatDeadLetter a) =>
+        e.Reason == a.Reason && e.Description == a.Description && UserMatches(e.User, a.User);
+
+    // A typed value without a Value (a newid() result) matches any value of that type.
+    private static bool UserMatches(Dictionary<string, TypedValue> e, Dictionary<string, TypedValue> a) =>
+        e.Count == a.Count && e.All(kv => a.TryGetValue(kv.Key, out var v)
+            && (kv.Value.Value is null && kv.Value.Type != "null" ? v.Type == kv.Value.Type : v.Equals(kv.Value)));
+}
