@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Messages now expire.** `TimeToLive`, `DefaultMessageTimeToLive` and
+  `DeadLetteringOnMessageExpiration` used to be stored but ignored. They now
+  behave as they do on a real namespace (checked against Azure):
+  - A message's TTL is capped at the entity's `DefaultMessageTimeToLive`, and a
+    message without a TTL gets the default. On a topic, the topic's default and
+    then the subscription's both apply. Received messages report the capped TTL
+    and the matching `ExpiresAt`. Peek reports the TTL the message was sent with.
+  - An expired message is never delivered, in PeekLock, ReceiveAndDelete or
+    session receives. A background sweep also expires messages that nobody
+    receives.
+  - With `DeadLetteringOnMessageExpiration`, the message is dead-lettered with
+    reason `TTLExpiredException` and description `The message expired and was
+    dead lettered.`, and `ForwardDeadLetteredMessagesTo` applies. Without it,
+    the message is dropped. Messages in a dead-letter queue never expire.
+  - A locked message isn't expired until its lock is released or lapses.
+    Completing it after its TTL still succeeds.
+  - A scheduled message's TTL counts from when it was sent, not when it
+    activates, so one that expires while scheduled is dead-lettered (or
+    dropped) as soon as it activates.
+  - An auto-forwarded message (`ForwardTo` or `ForwardDeadLetteredMessagesTo`)
+    gets a new enqueued time at its destination, and its TTL counts from there.
+
 ### Fixed
 - **`ForwardDeadLetteredMessagesTo` is honoured on queues and subscriptions.**
   (#193)
