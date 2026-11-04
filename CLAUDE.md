@@ -38,7 +38,8 @@ privileged port binding.
 - **SessionReceiverLinkEndpoint** (`src/.../Amqp/SessionReceiverLinkEndpoint.cs`) — session-aware variant
 - **GuidDeliveryTagHandler** (`src/.../Amqp/GuidDeliveryTagHandler.cs`) — `IHandler` that rewrites 4-byte delivery tags to 16-byte GUIDs (Azure SDK requires this for PeekLock)
 - **SessionManager** (`src/.../Broker/SessionManager.cs`) — per-queue session partitioning
-- **ManagementLinkEndpoint** (`src/.../Amqp/ManagementLinkEndpoint.cs`) — handles `$management` AMQP operations
+- **ManagementLinkEndpoint** (`src/.../Amqp/ManagementLinkEndpoint.cs`) — handles `$management` AMQP operations; rule operations (`add-rule`/`remove-rule`/`enumerate-rules`) live in `RuleManagementHandler`
+- **SQL filters and actions** (`src/.../Broker/Sql/`) — Superpower tokenizer + grammars → AST; `SqlBinder` applies Azure's creation-time checks; `SqlEvaluator`/`SqlValues` evaluate lazily with Azure's semantics (missing property = unknown, C# `null` and operator rules, `SqlEvaluationException` → `FilterException`/`RuleActionException` dead-letters). `RuleEntity` compiles once; `SubscriptionEntity.DeliverMessage` makes one copy per matching action rule plus one plain copy
 - **ManagementApiEndpoints** (`src/.../Management/ManagementApiEndpoints.cs`) — Atom XML REST API with catch-all routes for slashed entity names
 - **Dashboard** (`src/AlmostServiceBus.Dashboard/`) — Vue 3 app on port 15672
 
@@ -46,15 +47,18 @@ privileged port binding.
 
 Namespace is extracted from `SharedAccessKeyName` in the connection string (NOT the hostname). `RootManageSharedAccessKey` maps to `"default"` namespace. Any other key name becomes the namespace. This allows GUIDs as namespace identifiers for test isolation.
 
-## Test Results (224 internal + frameworks)
+## Test Results (1355 in-repo + frameworks, 2026-11-04)
 
 | Suite | Passed | Total |
 |-------|--------|-------|
-| Emulator internal | 154 | 154 |
-| SDK integration | 36 | 36 |
-| Conformance (emulator) | 34 | 34 |
+| Emulator internal (incl. the 420-case SQL table) | 1096 | 1096 |
+| SDK integration | 81 | 81 |
+| SDK live | 84 | 84 |
+| Conformance (emulator; Azure-gated cases run when a connection string is configured) | 54 | 54 |
+| MassTransit integration (in-repo) | 29 | 29 |
+| Aspire | 11 | 11 |
 | MassTransit own ASB tests (CI filter) | 101 | 101 |
-| Wolverine ASB tests (CI filter) | 103 | 103 |
+| Wolverine ASB tests (CI filter) | 104 | 104 |
 | NServiceBus emulator acceptance tests | 3 | 3 |
 
 NServiceBus `Emulator.AcceptanceTests` need the emulator to own port 5300 as well as the AMQP port: the transport rewrites any `UseDevelopmentEmulator=true` connection string to admin port 5300 (`InjectEmulatorAdminPort`). If 5300 belongs to another process, the installers create the topology there and the publish test fails with `MessagingEntityNotFound`.
@@ -130,3 +134,4 @@ See [RELEASING.md](RELEASING.md). In short: versions come from `v*` git tags via
 10. **Only the .NET and Node (7.10.0+) admin clients can reach a plaintext management endpoint** — both honour `UseDevelopmentEmulator=true` and speak plain HTTP to port 5300. The Python and Java admin clients hard-code HTTPS and need the opt-in TLS endpoint (5301 / 443). Corollary: a Node admin connection string with `UseDevelopmentEmulator=true` can never reach 5301 — it gets `socket hang up`.
 11. **The proxy gates the server's AMQP header on the client's** — `TcpMultiplexer.ProxyAmqpBidirectional` withholds the backend's `AMQP\0\1\0\0` header (and everything after it) until the client's header has been forwarded. AMQPNetLite pipelines header + `open` right after `sasl-outcome`; rhea (Node) stops parsing at the outcome frame and parks the remainder of the chunk until the next data event, so coalesced bytes deadlock the handshake (`tests/client-sdk-smoke/node/concurrent-connections.mjs` reproduces it). Prefer fixes in our proxy/container layer over vendoring a patched AMQPNetLite: everything the emulator ships — NuGet, dotnet tool, TestHost, Docker — goes through the multiplexer.
 12. **A client-sent `released` is not an abandon** — `QueueEntity.Release` re-enqueues at once and un-counts the delivery; only `Abandon` (the SDK's `modified`) waits the 1s redelivery delay and moves towards `MaxDeliveryCount`. The .NET SDK releases messages that land on an idle receiver link (one whose `ReceiveMessagesAsync` returned empty but was never disposed — Wolverine's queue purge leaves one per purged queue). Treating those as abandons made a Wolverine request/reply bounce for seconds and miss its 5s timeout (`correct_scheme_on_reply_uri`). Session links still use `Abandon` for `released`: switching them stalls `MassTransitSessionLoadTests`.
+13. **SQL semantics follow the Azure-recorded table** — `tests/shared/sql-compat-cases.json` holds real Azure's answer for 420 filter/action cases (`SqlCaseTableTests` runs it at broker level, `SqlCompatTests` through the SDK and, with a connection string, against Azure; `ASB_COMPAT_RECORD=1` re-records). Change SQL behaviour only with a recorded Azure case: the docs are wrong in places (bare `TRUE` is a syntax error, `NULL = NULL` is true, unprefixed names are user properties, `SET sys.To` loses to a sender-set `To`). The probe that recorded it is in `docs/superpowers/specs/sql-azure-probe/`.

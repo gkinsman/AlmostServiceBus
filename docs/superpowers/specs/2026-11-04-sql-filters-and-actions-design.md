@@ -357,6 +357,10 @@ unconfirmed.
 
 ## Decisions log — confirmed against real Azure (2026-11-04)
 
+> **Re-verified after implementation (2026-11-04):** `SqlCompatTests` ran all 420 recorded cases through the SDK
+> against the same Azure namespace and against the emulator — Azure reproduced every recorded answer (no drift) and
+> the emulator matched all 420.
+
 These are the results of a probe run against a real Standard-tier namespace on 2026-11-04: 420 cases over three rounds. Raw results are in `docs/superpowers/specs/sql-azure-probe/` (`round1.md`–`round3.md`). The probe program is kept as `probe-program.cs.txt`.
 
 **This section overrides "Semantics", "Actions", "Parameters" and "Questions the compat run settles" above wherever they disagree.** Every row below becomes a case in the shared table, marked `"verified": "azure"`.
