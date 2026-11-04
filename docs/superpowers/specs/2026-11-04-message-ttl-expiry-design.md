@@ -22,7 +22,9 @@ request assumed, the measured behaviour wins.
 | `DeadLetteringOnMessageExpiration = false` | Message is dropped; the DLQ stays empty. |
 | Locked past expiry | `Complete` succeeds. `Abandon` succeeds, and the message then expires (dead-lettered, delivery count 2 as seen by the SDK). |
 | Sessions | Expired session message isn't delivered on accept; it's dead-lettered. |
-| **Scheduled** | The clock starts at **send time**, not activation: a message with a 4s TTL scheduled 6s ahead goes straight to the DLQ when it activates. After activation, `EnqueuedTime` becomes the activation time. |
+| **Scheduled** | After activation, `EnqueuedTime` becomes the activation time, and the TTL counts from **activation**: twelve probes delivered a message whose TTL was shorter than its delay when received within TTL of activating, and dead-lettered it otherwise. The SDK's `ExpiresAt` misleads here: it's computed from the client's send time. (An early probe read this as "counts from send"; its receive came after activation + TTL.) |
+| **Deferred** | An expired deferred message isn't swept and peek still shows it. `ReceiveDeferredMessagesAsync` fails with `MessageNotFound`, and that attempt dead-letters it (or drops it). |
+| Dead-letter source | Empty for every local dead-letter (explicit, max-delivery, subscription, failed forward, expiry). Set to the source entity only when `ForwardDeadLetteredMessagesTo` forwards it. The SDK reads `x-opt-deadletter-source`. |
 | `ForwardDeadLetteredMessagesTo` | Expired message is forwarded with reason/description. At the destination, `EnqueuedTime` is reset to the arrival time and the TTL clock **restarts** (it expired there 3s after arriving). |
 | `ForwardTo` | Destination `EnqueuedTime` is the arrival time; the message expires there by its TTL. |
 | Wire format | SDK sends `CreationTime` and `AbsoluteExpiryTime` (client clock) when TTL is set; Azure passes `CreationTime` through and recomputes `AbsoluteExpiryTime = CreationTime + effective TTL`. |
@@ -44,16 +46,14 @@ request assumed, the measured behaviour wins.
 
 ## Non-goals
 
-- Deferred messages: Microsoft documents that they don't move to the DLQ on expiry; left as is.
-- Updating `EnqueuedTime` to activation time for scheduled messages (an `EnqueuedTime` fidelity
-  issue, not TTL). Expiry already starts from the send time, which is what Azure does.
+- Sweeping expired deferred messages: Azure doesn't. They expire when a receive by sequence number is attempted.
+- Giving a scheduled message a new sequence number on activation (Azure does).
 - Passing through the client's `CreationTime`. `ExpiresAt` is server enqueue time + TTL, which
   differs from Azure only by client/server clock skew.
 - Moving lock expiry onto `TimeProvider` (#135's wider ask).
 - Keeping expired messages peekable until a receiver pulls. The emulator's sweep removes them
   within about a second, which falls within Azure's documented "eventually".
-- Dropping `x-opt-dead-letter-source` for local DLQ messages (an existing difference, shared with
-  explicit dead-lettering).
+- Reporting `State = Scheduled` on a received, activated scheduled message (Azure does).
 
 ## Design
 

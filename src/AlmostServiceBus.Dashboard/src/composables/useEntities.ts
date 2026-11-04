@@ -55,6 +55,8 @@ export function useEntities(selectedNamespace: () => string, sse: NamespaceSse) 
         queue.consumedCount++
       } else if (evt.type === 'DeadLettered') {
         queue.deadLetterCount++
+      } else if (evt.type === 'Expired') {
+        queue.expiredCount++
       }
 
       // Update subscription badges for any subscription forwarding to this queue
@@ -81,6 +83,8 @@ export function useEntities(selectedNamespace: () => string, sse: NamespaceSse) 
       } else if (evt.type === 'DeadLettered') {
         sub.messageCount = Math.max(0, sub.messageCount - 1)
         sub.deadLetterCount++
+      } else if (evt.type === 'Expired') {
+        sub.messageCount = Math.max(0, sub.messageCount - 1)
       }
       entities.value = { ...entities.value }
       return

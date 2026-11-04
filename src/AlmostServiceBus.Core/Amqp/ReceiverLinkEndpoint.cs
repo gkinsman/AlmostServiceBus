@@ -553,9 +553,7 @@ public class ReceiverLinkEndpoint : LinkEndpoint
         // Set AbsoluteExpiryTime so the Azure SDK can determine message expiry.
         if (hasTtl)
         {
-            properties.AbsoluteExpiryTime = ttl >= DateTimeOffset.MaxValue - brokered.EnqueuedTimeUtc
-                ? DateTime.MaxValue
-                : brokered.EnqueuedTimeUtc.Add(ttl).UtcDateTime;
+            properties.AbsoluteExpiryTime = BrokeredMessage.AddSaturating(brokered.EnqueuedTimeUtc, ttl).UtcDateTime;
         }
 
         var message = new Message()

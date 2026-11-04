@@ -78,6 +78,7 @@ public class MessageExpiryTests : IAsyncLifetime
         Assert.Equal("expires", dead!.Body.ToString());
         Assert.Equal("TTLExpiredException", dead.DeadLetterReason);
         Assert.Equal("The message expired and was dead lettered.", dead.DeadLetterErrorDescription);
+        Assert.Null(dead.DeadLetterSource);
     }
 
     [Fact]
@@ -150,5 +151,40 @@ public class MessageExpiryTests : IAsyncLifetime
         Assert.NotNull(forwarded);
         Assert.Equal("TTLExpiredException", forwarded.DeadLetterReason);
         Assert.Equal("The message expired and was dead lettered.", forwarded.DeadLetterErrorDescription);
+        Assert.Equal("ttl-fwd-source", forwarded.DeadLetterSource);
+    }
+
+    [Fact]
+    public async Task ExpiredDeferredMessage_IsNotFound_ThenDeadLettered()
+    {
+        await _admin.CreateQueueAsync(new CreateQueueOptions("ttl-deferred") { DeadLetteringOnMessageExpiration = true });
+        await _client.CreateSender("ttl-deferred").SendMessageAsync(new ServiceBusMessage("x") { TimeToLive = TimeSpan.FromSeconds(1) });
+        var receiver = _client.CreateReceiver("ttl-deferred");
+        var message = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        await receiver.DeferMessageAsync(message!);
+        await Task.Delay(TimeSpan.FromSeconds(1.5));
+
+        var ex = await Assert.ThrowsAsync<ServiceBusException>(() => receiver.ReceiveDeferredMessageAsync(message!.SequenceNumber));
+
+        Assert.Equal(ServiceBusFailureReason.MessageNotFound, ex.Reason);
+        var dead = await _client.CreateReceiver("ttl-deferred", new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter })
+            .ReceiveMessageAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("TTLExpiredException", dead?.DeadLetterReason);
+    }
+
+    [Fact]
+    public async Task ScheduledMessage_EnqueuedTimeIsActivationTime()
+    {
+        await _admin.CreateQueueAsync("ttl-scheduled");
+        var sentAt = DateTimeOffset.UtcNow;
+        var scheduledFor = sentAt.AddSeconds(2);
+        await _client.CreateSender("ttl-scheduled").ScheduleMessageAsync(
+            new ServiceBusMessage("x") { TimeToLive = TimeSpan.FromMinutes(1) }, scheduledFor);
+
+        var received = await _client.CreateReceiver("ttl-scheduled").ReceiveMessageAsync(TimeSpan.FromSeconds(10));
+
+        Assert.NotNull(received);
+        Assert.True(received.EnqueuedTime >= scheduledFor.AddMilliseconds(-50), $"enqueued {received.EnqueuedTime:O}, scheduled {scheduledFor:O}");
+        Assert.Equal(received.EnqueuedTime + TimeSpan.FromMinutes(1), received.ExpiresAt);
     }
 }

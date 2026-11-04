@@ -52,6 +52,7 @@ public sealed class QueueEntity : IDisposable
     private int _messageCount;
     private int _totalMessageCount;
     private int _consumedCount;
+    private int _expiredCount;
     private long _sequenceNumber;
     private MessageEventBus? _eventBus;
     private string? _namespaceName;
@@ -170,6 +171,12 @@ public sealed class QueueEntity : IDisposable
     /// Number of messages completed on this queue.
     /// </summary>
     public int ConsumedCount => _consumedCount;
+
+    /// <summary>
+    /// Number of messages dropped on this queue because their time-to-live passed (those
+    /// dead-lettered on expiry count as dead-lettered instead).
+    /// </summary>
+    public int ExpiredCount => _expiredCount;
 
     // ForwardTo is resolved by name on every delivery, so the target can be created after this
     // entity, or deleted and recreated, without re-wiring.
@@ -304,9 +311,7 @@ public sealed class QueueEntity : IDisposable
             ? message.EffectiveTimeToLive
             : DefaultMessageTimeToLive;
         message.EffectiveTimeToLive = ttl;
-        message.ExpiresAtUtc = ttl >= DateTimeOffset.MaxValue - message.EnqueuedTimeUtc
-            ? DateTimeOffset.MaxValue
-            : message.EnqueuedTimeUtc + ttl;
+        message.ExpiresAtUtc = BrokeredMessage.AddSaturating(message.EnqueuedTimeUtc, ttl);
     }
 
     // For messages the broker itself refuses on the way in. Real Service Bus puts those it can't
@@ -473,12 +478,25 @@ public sealed class QueueEntity : IDisposable
     private void Expire(BrokeredMessage message)
     {
         Interlocked.Decrement(ref _messageCount);
+        SettleExpired(message);
+    }
+
+    private void SettleExpired(BrokeredMessage message)
+    {
         var lockToken = message.LockToken!;
 
         if (DeadLetteringOnMessageExpiration)
+        {
             MoveToDeadLetterQueue(lockToken, message, ExpiredDeadLetterReason, ExpiredDeadLetterDescription);
-        else
-            _allMessages.TryRemove(lockToken, out _);
+            return;
+        }
+
+        RecordSettled(lockToken, message, MessageState.Expired);
+        Interlocked.Increment(ref _expiredCount);
+        _eventBus?.Publish(new MessageEvent(
+            MessageEventType.Expired, _namespaceName ?? "", _entityName ?? "",
+            message.MessageId, message.SequenceNumber, message.ContentType,
+            null, null, DateTimeOffset.UtcNow));
     }
 
     /// <summary>
@@ -822,10 +840,16 @@ public sealed class QueueEntity : IDisposable
         message.LockToken = null;
         message.State = MessageState.Active;
 
-        if (ForwardDeadLetteredMessagesTo is not null && _namespace is not null
-            && _namespace.ForwardDeadLetter(this, message))
-            return;
+        // Real Service Bus names the source only on dead-letters it forwards elsewhere; a message
+        // in the entity's own dead-letter queue has none.
+        if (ForwardDeadLetteredMessagesTo is not null && _namespace is not null)
+        {
+            message.DeadLetterSource = Name;
+            if (_namespace.ForwardDeadLetter(this, message))
+                return;
+        }
 
+        message.DeadLetterSource = null;
         DeadLetterQueue.Enqueue(message);
     }
 
@@ -870,6 +894,15 @@ public sealed class QueueEntity : IDisposable
     {
         if (!_deferredBySequence.TryGetValue(sequenceNumber, out var msg))
             return null;
+
+        // Real Service Bus doesn't sweep expired deferred messages, but the attempt to receive one
+        // expires it and reports it as not found.
+        if (msg.IsExpired(TimeProvider.GetUtcNow()))
+        {
+            if (_deferredBySequence.TryRemove(sequenceNumber, out var expired))
+                SettleExpired(expired);
+            return null;
+        }
 
         // Stamp a fresh lock token and add to pending so the consumer can settle it.
         msg.LockToken = Guid.NewGuid().ToString();

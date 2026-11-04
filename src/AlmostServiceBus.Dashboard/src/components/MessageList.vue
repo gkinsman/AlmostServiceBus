@@ -65,7 +65,7 @@ const propertyRows = computed<{ label: string; value: string }[]>(() => {
 })
 const hideConsumed = ref(false)
 const visibleMessages = computed(() =>
-  hideConsumed.value ? messages.value.filter(m => m.state !== 'Consumed' && m.state !== 'DeadLettered') : messages.value
+  hideConsumed.value ? messages.value.filter(m => m.state !== 'Consumed' && m.state !== 'DeadLettered' && m.state !== 'Expired') : messages.value
 )
 
 // When viewing a topic, fetch its subscriptions

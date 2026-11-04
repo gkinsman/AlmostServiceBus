@@ -359,27 +359,137 @@ public class MessageExpiryTests
     }
 
     [Fact]
-    public void ScheduledMessage_ClockStartsAtSend()
+    public void ScheduledMessage_EnqueuedTimeAndClockStartAtActivation()
     {
-        // Real Service Bus counts a scheduled message's time-to-live from when it was sent, so one
-        // that outlives its TTL before activating goes straight to the dead-letter queue.
+        // Measured on a real namespace: a message with a 2s TTL scheduled 3s ahead is still
+        // delivered after activation; it expires 2s after activating.
         var ns = new NamespaceContext("ns", timeProvider: _time);
         var queue = ns.CreateQueue("q");
         queue.DeadLetteringOnMessageExpiration = true;
         using var scheduler = new ScheduledMessageProcessor(ns);
         var message = Message(TimeSpan.FromSeconds(2));
+        var sentAt = message.EnqueuedTimeUtc;
+        message.ScheduledEnqueueTimeUtc = sentAt.AddSeconds(3);
+        scheduler.Schedule("q", message, ns);
+
+        _time.Advance(TimeSpan.FromSeconds(4));
+        scheduler.ProcessDueMessages();
+
+        Assert.Equal(sentAt.AddSeconds(4), message.EnqueuedTimeUtc);
+        Assert.Equal(sentAt.AddSeconds(6), message.ExpiresAtUtc);
+        Assert.Equal(sentAt.AddSeconds(6).UtcDateTime,
+            ReceiverLinkEndpoint.ConvertToAmqpMessage(message).Properties.AbsoluteExpiryTime);
+
+        _time.Advance(TimeSpan.FromSeconds(2));
+        Assert.Null(queue.TryDequeueImmediate());
+        Assert.Equal(ExpiredReason, queue.DeadLetterQueue.TryDequeueImmediate()?.DeadLetterReason);
+    }
+
+    [Fact]
+    public void ScheduledMessage_ActivatedBeforeExpiry_IsDelivered()
+    {
+        var ns = new NamespaceContext("ns", timeProvider: _time);
+        var queue = ns.CreateQueue("q");
+        using var scheduler = new ScheduledMessageProcessor(ns);
+        var message = Message(TimeSpan.FromSeconds(2));
         message.ScheduledEnqueueTimeUtc = _time.GetUtcNow().AddSeconds(3);
         scheduler.Schedule("q", message, ns);
 
-        _time.Advance(TimeSpan.FromSeconds(2.5));
+        _time.Advance(TimeSpan.FromSeconds(4));
         scheduler.ProcessDueMessages();
-        Assert.Equal(0, queue.MessageCount);
-
         _time.Advance(TimeSpan.FromSeconds(1));
-        scheduler.ProcessDueMessages();
 
-        Assert.Null(queue.TryDequeueImmediate());
-        Assert.Equal(ExpiredReason, queue.DeadLetterQueue.TryDequeueImmediate()?.DeadLetterReason);
+        Assert.NotNull(queue.TryDequeueImmediate());
+    }
+
+    // ── Deferred messages ────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ReceiveDeferred_Expired_IsNotFound_AndExpires(bool deadLetterOnExpiry)
+    {
+        var queue = Queue(deadLetterOnExpiry: deadLetterOnExpiry);
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5)));
+        var locked = queue.TryDequeueImmediate()!;
+        queue.Defer(locked.LockToken!);
+        _time.Advance(TimeSpan.FromSeconds(6));
+
+        // Real Service Bus doesn't sweep expired deferred messages; peek still shows them.
+        Assert.Equal(0, queue.ExpireMessages());
+        Assert.Single(queue.PeekFromSequence(0, 10));
+
+        Assert.Null(queue.ReceiveDeferred(locked.SequenceNumber));
+
+        Assert.Empty(queue.PeekFromSequence(0, 10));
+        Assert.Equal(deadLetterOnExpiry ? 1 : 0, queue.DeadLetterQueue.MessageCount);
+        Assert.Null(queue.ReceiveDeferred(locked.SequenceNumber));
+    }
+
+    [Fact]
+    public void ReceiveDeferred_NotYetExpired_IsReturned()
+    {
+        var queue = Queue();
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5)));
+        var locked = queue.TryDequeueImmediate()!;
+        queue.Defer(locked.LockToken!);
+        _time.Advance(TimeSpan.FromSeconds(4));
+
+        Assert.NotNull(queue.ReceiveDeferred(locked.SequenceNumber));
+    }
+
+    // ── Dashboard ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void DroppedOnExpiry_PublishesExpiredEvent_CountsIt_AndKeepsItInHistory()
+    {
+        var bus = new MessageEventBus();
+        var reader = bus.Subscribe();
+        var queue = Queue();
+        queue.SetEventBus(bus, "ns", "q");
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5), id: "gone"));
+        Assert.True(reader.TryRead(out _)); // Enqueued
+        _time.Advance(TimeSpan.FromSeconds(6));
+
+        queue.ExpireMessages();
+
+        Assert.True(reader.TryRead(out var evt));
+        Assert.Equal(MessageEventType.Expired, evt.Type);
+        Assert.Equal("gone", evt.MessageId);
+        Assert.Equal(1, queue.ExpiredCount);
+        var history = Assert.Single(queue.PeekMessages());
+        Assert.Equal(MessageState.Expired, history.State);
+    }
+
+    [Fact]
+    public void DeadLetteredOnExpiry_PublishesDeadLetteredEvent_NotExpired()
+    {
+        var bus = new MessageEventBus();
+        var reader = bus.Subscribe();
+        var queue = Queue(deadLetterOnExpiry: true);
+        queue.SetEventBus(bus, "ns", "q");
+        queue.Enqueue(Message(TimeSpan.FromSeconds(5)));
+        Assert.True(reader.TryRead(out _)); // Enqueued
+        _time.Advance(TimeSpan.FromSeconds(6));
+
+        queue.ExpireMessages();
+
+        Assert.True(reader.TryRead(out var evt));
+        Assert.Equal(MessageEventType.DeadLettered, evt.Type);
+        Assert.Equal(0, queue.ExpiredCount);
+    }
+
+    // ── Dead-letter source ───────────────────────────────────────────────────
+
+    [Fact]
+    public void ConvertToAmqpMessage_WritesDeadLetterSourceUnderTheSdkAnnotation()
+    {
+        var message = Message();
+        message.DeadLetterSource = "orders";
+
+        var amqp = ReceiverLinkEndpoint.ConvertToAmqpMessage(message);
+
+        Assert.Equal("orders", amqp.MessageAnnotations[new global::Amqp.Types.Symbol("x-opt-deadletter-source")]);
     }
 
     // ── Background processor ─────────────────────────────────────────────────

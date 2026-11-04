@@ -23,13 +23,24 @@ All notable changes to this project are documented here. The format is based on
     the message is dropped. Messages in a dead-letter queue never expire.
   - A locked message isn't expired until its lock is released or lapses.
     Completing it after its TTL still succeeds.
-  - A scheduled message's TTL counts from when it was sent, not when it
-    activates, so one that expires while scheduled is dead-lettered (or
-    dropped) as soon as it activates.
-  - An auto-forwarded message (`ForwardTo` or `ForwardDeadLetteredMessagesTo`)
-    gets a new enqueued time at its destination, and its TTL counts from there.
+  - An expired deferred message isn't swept and still shows in peek. Receiving
+    it fails with `MessageNotFound`, and that attempt expires it.
+  - A scheduled message's TTL counts from when it activates. An
+    auto-forwarded message's TTL (`ForwardTo` or
+    `ForwardDeadLetteredMessagesTo`) counts from its arrival at the
+    destination.
+  - The dashboard marks dropped messages as expired and leaves them out of the
+    active count.
 
 ### Fixed
+- **A scheduled message's enqueued time is when it activated**, not when it was
+  sent, as on a real namespace.
+- **`DeadLetterSource` reaches the SDK, and only on forwarded dead-letters.**
+  The emulator wrote it under `x-opt-dead-letter-source`, which no client
+  reads; the annotation is `x-opt-deadletter-source`. Like real Service Bus, it
+  is now set only on a dead-letter forwarded by `ForwardDeadLetteredMessagesTo`
+  (it names the source entity). A message in an entity's own dead-letter queue
+  has none.
 - **`ForwardDeadLetteredMessagesTo` is honoured on queues and subscriptions.**
   (#193)
   - The emulator used to ignore the setting: the management API did not read

@@ -23,6 +23,8 @@ export interface QueueInfo {
   deadLetterCount: number
   totalMessageCount: number
   consumedCount: number
+  /** Dropped because their time-to-live passed. */
+  expiredCount: number
   maxDeliveryCount: number
   forwardTo: string | null
 }
@@ -53,7 +55,7 @@ export interface MessageInfo {
   applicationProperties: Record<string, unknown> | null
   bodyText: string | null
   scalarProperties: Record<string, unknown> | null
-  state: 'Active' | 'Consumed' | 'DeadLettered' | 'Deferred'
+  state: 'Active' | 'Consumed' | 'DeadLettered' | 'Deferred' | 'Expired'
   deadLetterReason?: string | null
   deadLetterErrorDescription?: string | null
   deadLetterSource?: string | null
@@ -85,7 +87,7 @@ export interface QueueProperties {
 }
 
 export interface MessageEvent {
-  type: 'Enqueued' | 'Completed' | 'DeadLettered' | 'Abandoned' | 'Deferred' | 'NamespaceCreated'
+  type: 'Enqueued' | 'Completed' | 'DeadLettered' | 'Abandoned' | 'Deferred' | 'NamespaceCreated' | 'Expired'
   namespace: string
   entity: string
   messageId: string

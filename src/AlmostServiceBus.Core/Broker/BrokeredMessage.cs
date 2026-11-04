@@ -5,7 +5,9 @@ public enum MessageState
     Active,
     Consumed,
     DeadLettered,
-    Deferred
+    Deferred,
+    /// <summary>Dropped because its time-to-live passed (dashboard history only).</summary>
+    Expired
 }
 
 /// <summary>
@@ -59,6 +61,10 @@ public sealed class BrokeredMessage
     public DateTimeOffset ExpiresAtUtc { get; set; } = DateTimeOffset.MaxValue;
 
     public bool IsExpired(DateTimeOffset now) => now >= ExpiresAtUtc;
+
+    /// <summary><paramref name="start"/> + <paramref name="ttl"/>, or <see cref="DateTimeOffset.MaxValue"/> if that overflows.</summary>
+    internal static DateTimeOffset AddSaturating(DateTimeOffset start, TimeSpan ttl) =>
+        ttl >= DateTimeOffset.MaxValue - start ? DateTimeOffset.MaxValue : start + ttl;
 
     // The queue whose channel or session the message is waiting in, until someone takes it. A
     // message can't be pulled out of a channel, so the expiry sweep and a receiver race for it
