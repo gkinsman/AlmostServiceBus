@@ -538,6 +538,8 @@ public static class ManagementApiEndpoints
         ReplyTo = props.ReplyTo,
         SessionId = props.SessionId,
         ContentType = props.ContentType,
+        MessageId = props.MessageId,
+        ReplyToSessionId = props.ReplyToSessionId,
         CorrelationFilterProperties = props.CorrelationFilterProperties,
         ActionExpression = props.ActionExpression,
         ActionParameters = props.ActionParameters,

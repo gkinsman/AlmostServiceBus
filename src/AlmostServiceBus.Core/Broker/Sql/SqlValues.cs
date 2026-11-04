@@ -34,7 +34,8 @@ internal static class SqlValues
     public static object? FromMessage(object? raw) => raw switch
     {
         DescribedValue { Descriptor: var d, Value: long ticks } when Is(d, TimeSpanDescriptor) => new TimeSpan(ticks),
-        DescribedValue { Descriptor: var d, Value: string uri } when Is(d, UriDescriptor) => new Uri(uri, UriKind.RelativeOrAbsolute),
+        DescribedValue { Descriptor: var d, Value: string uri } when Is(d, UriDescriptor) =>
+            Uri.TryCreate(uri, UriKind.RelativeOrAbsolute, out var parsed) ? parsed : uri,
         DescribedValue { Descriptor: var d, Value: long ticks } when Is(d, DateTimeOffsetDescriptor) => new DateTimeOffset(ticks, TimeSpan.Zero),
         Symbol symbol => (string)symbol,
         global::Amqp.Types.Decimal d when TryDecodeDecimal(d.Bytes, out var m) => m,
@@ -49,6 +50,7 @@ internal static class SqlValues
         Uri uri => new DescribedValue(new Symbol(UriDescriptor), uri.OriginalString),
         DateTimeOffset dto => new DescribedValue(new Symbol(DateTimeOffsetDescriptor), dto.UtcTicks),
         decimal m => new global::Amqp.Types.Decimal(EncodeDecimal(m)),
+        Enum e => Convert.ChangeType(e, Enum.GetUnderlyingType(e.GetType()), CultureInfo.InvariantCulture),
         _ => value
     };
 
@@ -357,7 +359,8 @@ internal static class SqlValues
             else sb.Append(Regex.Escape(c.ToString()));
         }
 
-        return new Regex(sb.Append(@"\z").ToString(), RegexOptions.CultureInvariant);
+        // Filters run on the publish path, so matching must stay linear in the value's length.
+        return new Regex(sb.Append(@"\z").ToString(), RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
     }
 
     // ── Text and type names ──────────────────────────────────────────────────

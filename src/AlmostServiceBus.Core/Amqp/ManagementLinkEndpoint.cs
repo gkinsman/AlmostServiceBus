@@ -821,14 +821,24 @@ public class ManagementLinkEndpoint : IRequestProcessor
 
     private static Map RequestBody(RequestContext requestContext) => requestContext.Message.Body as Map ?? new Map();
 
-    // A subscription's $management node is scoped to "{topic}/Subscriptions/{subscription}".
-    private SubscriptionEntity? FindScopedSubscription(RequestContext requestContext)
+    /// <summary>
+    /// Splits "{topic}/Subscriptions/{subscription}" — the scope of a subscription's $management node — at the last
+    /// "/Subscriptions/", since topic names may themselves contain '/'.
+    /// </summary>
+    internal static (string Topic, string Subscription)? ParseSubscriptionAddress(string address)
     {
-        var parts = _scopedAddress?.Split('/');
-        if (parts is not { Length: 3 } || !parts[1].Equals("Subscriptions", StringComparison.OrdinalIgnoreCase))
+        const string separator = "/Subscriptions/";
+        var at = address.LastIndexOf(separator, StringComparison.OrdinalIgnoreCase);
+        if (at <= 0)
             return null;
-        return ResolveNamespace(requestContext).GetSubscription(parts[0], parts[2]);
+        var subscription = address[(at + separator.Length)..];
+        return subscription.Length == 0 || subscription.Contains('/') ? null : (address[..at], subscription);
     }
+
+    private SubscriptionEntity? FindScopedSubscription(RequestContext requestContext) =>
+        _scopedAddress is not null && ParseSubscriptionAddress(_scopedAddress) is var (topic, subscription)
+            ? ResolveNamespace(requestContext).GetSubscription(topic, subscription)
+            : null;
 
     private static void SendReply(RequestContext requestContext, ManagementReply reply)
     {

@@ -45,6 +45,8 @@ internal static class SqlEvaluator
 {
     public static object? Evaluate(SqlExpr expr, SqlEvaluationContext ctx)
     {
+        // An expression can nest about a thousand deep; fail the evaluation rather than overflow the stack.
+        System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
         switch (expr)
         {
             case SqlLiteral literal:
@@ -59,14 +61,8 @@ internal static class SqlEvaluator
             case SqlParameterRef parameter:
                 return ctx.GetParameter(parameter.Name);
 
-            case SqlUnary { Op: SqlUnaryOp.Not } not:
-                return Evaluate(not.Operand, ctx) is bool b ? !b : SqlValues.Missing;
-
-            case SqlUnary { Op: SqlUnaryOp.Negate } negate:
-                return SqlValues.Negate(Evaluate(negate.Operand, ctx));
-
-            case SqlUnary plus:
-                return Evaluate(plus.Operand, ctx);
+            case SqlUnary unary:
+                return EvaluateUnaryChain(unary, ctx);
 
             case SqlBinary { Op: SqlBinaryOp.And } and:
             {
@@ -126,6 +122,32 @@ internal static class SqlEvaluator
             default:
                 throw new ArgumentOutOfRangeException(nameof(expr), expr.GetType().Name);
         }
+    }
+
+    // A run of unary operators (e.g. a thousand '-' or NOTs) is walked iteratively, innermost operator first, so it
+    // costs no stack depth.
+    private static object? EvaluateUnaryChain(SqlUnary outermost, SqlEvaluationContext ctx)
+    {
+        var operators = new List<SqlUnaryOp>();
+        SqlExpr operand = outermost;
+        while (operand is SqlUnary unary)
+        {
+            operators.Add(unary.Op);
+            operand = unary.Operand;
+        }
+
+        var value = Evaluate(operand, ctx);
+        for (var i = operators.Count - 1; i >= 0; i--)
+        {
+            value = operators[i] switch
+            {
+                SqlUnaryOp.Not => value is bool b ? !b : SqlValues.Missing,
+                SqlUnaryOp.Negate => SqlValues.Negate(value),
+                _ => value
+            };
+        }
+
+        return value;
     }
 
     // True at the first equal item; otherwise unknown if anything was unknown, else false.

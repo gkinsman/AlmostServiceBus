@@ -16,8 +16,21 @@ internal static class SqlBinder
     public static void BindFilter(SqlExpr expr, IReadOnlyDictionary<string, object?> parameters)
     {
         var referenced = new List<string>();
-        Walk(expr, referenced);
+        Guarded(() => Walk(expr, referenced));
         BindParameters(referenced, parameters);
+    }
+
+    // A very deep expression is rejected rather than allowed to overflow the stack.
+    private static void Guarded(Action walk)
+    {
+        try
+        {
+            walk();
+        }
+        catch (InsufficientExecutionStackException)
+        {
+            throw SqlSyntaxException.Semantic("The SQL expression is too deeply nested.");
+        }
     }
 
     public static void BindAction(IReadOnlyList<SqlStatement> statements, IReadOnlyDictionary<string, object?> parameters)
@@ -30,7 +43,7 @@ internal static class SqlBinder
                 case SqlSet { Target: var target, Value: var value }:
                     if (target.Scope == SqlScope.System && !SqlSystemProperties.IsSettable(target.Name))
                         throw SqlSyntaxException.Semantic(SqlErrorText.UnknownSettable(target.Name));
-                    Walk(value, referenced);
+                    Guarded(() => Walk(value, referenced));
                     break;
                 case SqlRemove:
                     // REMOVE sys.X is accepted here and fails when the action runs, as on Azure.
@@ -43,6 +56,7 @@ internal static class SqlBinder
 
     private static void Walk(SqlExpr expr, List<string> parameters)
     {
+        System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();
         switch (expr)
         {
             case SqlLiteral:

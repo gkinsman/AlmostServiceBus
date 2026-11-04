@@ -63,7 +63,9 @@ public record RuleProperties(
     string? ContentType = null,
     Dictionary<string, object>? CorrelationFilterProperties = null,
     Dictionary<string, object?>? FilterParameters = null,
-    Dictionary<string, object?>? ActionParameters = null);
+    Dictionary<string, object?>? ActionParameters = null,
+    string? MessageId = null,
+    string? ReplyToSessionId = null);
 
 // ── Reader ───────────────────────────────────────────────────────────────────
 
@@ -174,6 +176,8 @@ public static class AtomXmlReader
         string? replyTo = null;
         string? sessionId = null;
         string? contentType = null;
+        string? messageId = null;
+        string? replyToSessionId = null;
         Dictionary<string, object>? correlationFilterProperties = null;
 
         Dictionary<string, object?>? filterParameters = null;
@@ -190,6 +194,8 @@ public static class AtomXmlReader
             replyTo = ParseOptionalString(filterEl, "ReplyTo");
             sessionId = ParseOptionalString(filterEl, "SessionId");
             contentType = ParseOptionalString(filterEl, "ContentType");
+            messageId = ParseOptionalString(filterEl, "MessageId");
+            replyToSessionId = ParseOptionalString(filterEl, "ReplyToSessionId");
 
             var propsEl = filterEl.Element(Sb + "Properties");
             if (propsEl is not null)
@@ -219,7 +225,8 @@ public static class AtomXmlReader
         }
 
         return new RuleProperties(name, filterType, sqlExpression, correlationId, actionExpression,
-            subject, to, replyTo, sessionId, contentType, correlationFilterProperties, filterParameters, actionParameters);
+            subject, to, replyTo, sessionId, contentType, correlationFilterProperties, filterParameters, actionParameters,
+            messageId, replyToSessionId);
     }
 
     // <Parameters><KeyValueOfstringanyType><Key>@a</Key><Value i:type="xs:long">5</Value>… as the SDK writes

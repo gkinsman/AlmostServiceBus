@@ -185,6 +185,10 @@ public static class AtomXmlWriter
                 filterElement.Add(new XElement(Sb + "SessionId", rule.SessionId));
             if (rule.ContentType is not null)
                 filterElement.Add(new XElement(Sb + "ContentType", rule.ContentType));
+            if (rule.MessageId is not null)
+                filterElement.Add(new XElement(Sb + "MessageId", rule.MessageId));
+            if (rule.ReplyToSessionId is not null)
+                filterElement.Add(new XElement(Sb + "ReplyToSessionId", rule.ReplyToSessionId));
 
             if (rule.CorrelationFilterProperties is { Count: > 0 })
             {

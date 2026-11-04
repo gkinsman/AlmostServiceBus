@@ -91,22 +91,16 @@ public static class SqlGrammar
         return statements;
     }
 
-    // Superpower spends a dozen or so frames per nesting level; a 1024-character expression can nest about 500
-    // deep, which overflows a thread-pool stack. Deeply nested input is parsed on a thread with a larger stack.
-    private const int InlineNestingLimit = 64;
+    // Superpower spends a dozen or so frames per nesting level, and every token can add a level (parentheses,
+    // unary '-'/'+', NOT), so a 1024-character expression can recurse about a thousand deep — enough to overflow a
+    // thread-pool stack and kill the process. Anything beyond a short expression is parsed on a thread with a
+    // larger stack.
+    private const int InlineTokenLimit = 64;
     private const int LargeStackBytes = 64 * 1024 * 1024;
 
     private static T WithStackFor<T>(TokenList<SqlToken> tokens, Func<T> parse)
     {
-        var depth = 0;
-        var maxDepth = 0;
-        foreach (var token in tokens)
-        {
-            if (token.Kind == SqlToken.LParen) maxDepth = Math.Max(maxDepth, ++depth);
-            else if (token.Kind == SqlToken.RParen) depth--;
-        }
-
-        if (maxDepth <= InlineNestingLimit)
+        if (tokens.Count() <= InlineTokenLimit)
             return parse();
 
         T result = default!;

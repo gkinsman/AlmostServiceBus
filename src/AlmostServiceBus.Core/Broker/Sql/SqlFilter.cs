@@ -27,8 +27,19 @@ public sealed class SqlFilter
 
     /// <summary>True only when the filter is definitely true for the message.</summary>
     /// <exception cref="SqlEvaluationException">Evaluation failed; Azure dead-letters such messages.</exception>
-    public bool Matches(BrokeredMessage message) =>
-        SqlEvaluator.Evaluate(_expression, new SqlEvaluationContext(message, Parameters)) is true;
+    public bool Matches(BrokeredMessage message)
+    {
+        try
+        {
+            return SqlEvaluator.Evaluate(_expression, new SqlEvaluationContext(message, Parameters)) is true;
+        }
+        catch (InsufficientExecutionStackException)
+        {
+            throw new SqlEvaluationException(TooDeeplyNested);
+        }
+    }
+
+    internal const string TooDeeplyNested = "The expression is too deeply nested to evaluate.";
 
     internal static IReadOnlyDictionary<string, object?> BindParameters(IReadOnlyDictionary<string, object?>? parameters)
     {

@@ -36,6 +36,18 @@ public sealed class SqlRuleAction
     /// <exception cref="SqlEvaluationException">A statement failed.</exception>
     public void Apply(BrokeredMessage copy, string ruleName)
     {
+        try
+        {
+            ApplyStatements(copy, ruleName);
+        }
+        catch (InsufficientExecutionStackException)
+        {
+            throw new SqlEvaluationException(SqlFilter.TooDeeplyNested);
+        }
+    }
+
+    private void ApplyStatements(BrokeredMessage copy, string ruleName)
+    {
         copy.ApplicationProperties["RuleName"] = ruleName;
 
         var senderSet = SqlSystemProperties.SenderPresetWins
