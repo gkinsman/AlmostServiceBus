@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **`ForwardDeadLetteredMessagesTo` is honoured on queues and subscriptions.**
+  (#193)
+  - The emulator used to ignore the setting: the management API did not read
+    or return it, and messages always stayed in the source's dead-letter queue.
+  - A message dead-lettered explicitly, or after `MaxDeliveryCount` (on
+    abandon or lock expiry), now goes to the configured queue or topic. It
+    keeps its `DeadLetterReason` and description.
+  - As with `ForwardTo`, creating or updating an entity whose dead-letter
+    destination doesn't exist is refused. If the destination is deleted later,
+    the message stays in the source's dead-letter queue. The transfer counts
+    towards the same four-hop limit as `ForwardTo`.
+
 ## [0.7.3] - 2026-10-23
 
 ### Fixed

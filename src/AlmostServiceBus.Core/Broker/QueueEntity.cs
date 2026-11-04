@@ -654,7 +654,8 @@ public sealed class QueueEntity : IDisposable
     /// Single exit for every path that dead-letters a pending message (explicit dead-letter,
     /// abandon past <see cref="MaxDeliveryCount"/>, lock-expiry sweep past the limit): stamps
     /// the reason, records the message in this queue's history, and enqueues it — still
-    /// <see cref="MessageState.Active"/> — in the dead-letter queue.
+    /// <see cref="MessageState.Active"/> — in the dead-letter queue, or in
+    /// <see cref="ForwardDeadLetteredMessagesTo"/> when that is set and can take it.
     /// </summary>
     private void MoveToDeadLetterQueue(string lockToken, BrokeredMessage message, string? reason, string? description)
     {
@@ -675,6 +676,11 @@ public sealed class QueueEntity : IDisposable
         // identifier already exists"), so force the DLQ enqueue to assign a fresh token.
         message.LockToken = null;
         message.State = MessageState.Active;
+
+        if (ForwardDeadLetteredMessagesTo is not null && _namespace is not null
+            && _namespace.ForwardDeadLetter(this, message))
+            return;
+
         DeadLetterQueue.Enqueue(message);
     }
 

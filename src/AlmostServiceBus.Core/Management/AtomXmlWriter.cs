@@ -59,6 +59,7 @@ public static class AtomXmlWriter
             Elem("EnableExpress", queue.EnableExpress),
             Elem("EnableBatchedOperations", queue.EnableBatchedOperations),
             OptElem("ForwardTo", queue.ForwardTo),
+            OptElem("ForwardDeadLetteredMessagesTo", queue.ForwardDeadLetteredMessagesTo),
             OptElem("UserMetadata", queue.UserMetadata),
             queue.AutoDeleteOnIdle.HasValue ? Elem("AutoDeleteOnIdle", FormatTimeSpan(queue.AutoDeleteOnIdle.Value)) : null,
             Elem("RequiresDuplicateDetection", queue.RequiresDuplicateDetection),
@@ -124,6 +125,7 @@ public static class AtomXmlWriter
             Elem("EnableBatchedOperations", sub.EnableBatchedOperations),
             Elem("Status", "Active"),
             OptElem("ForwardTo", sub.ForwardTo),
+            OptElem("ForwardDeadLetteredMessagesTo", sub.ForwardDeadLetteredMessagesTo),
             OptElem("UserMetadata", sub.UserMetadata),
             // Emitted with a max-value default when unset so the SDK admin clients, which require
             // these fields to be present, can deserialize the entry.

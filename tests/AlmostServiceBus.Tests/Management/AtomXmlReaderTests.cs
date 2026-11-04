@@ -39,6 +39,7 @@ public class AtomXmlReaderTests
         var queue = new QueueEntity("queue-with-opts")
         {
             ForwardTo = "other-queue",
+            ForwardDeadLetteredMessagesTo = "dead-letters",
             UserMetadata = "my-metadata",
         };
 
@@ -46,6 +47,7 @@ public class AtomXmlReaderTests
         var props = AtomXmlReader.ReadQueueProperties(xml);
 
         Assert.Equal("other-queue", props.ForwardTo);
+        Assert.Equal("dead-letters", props.ForwardDeadLetteredMessagesTo);
         Assert.Equal("my-metadata", props.UserMetadata);
     }
 
@@ -115,6 +117,7 @@ public class AtomXmlReaderTests
         var sub = new SubscriptionEntity("my-sub", "my-topic")
         {
             ForwardTo = "forward-target",
+            ForwardDeadLetteredMessagesTo = "dead-letters",
             MaxDeliveryCount = 5,
             LockDuration = TimeSpan.FromSeconds(60),
             RequiresSession = true,
@@ -127,6 +130,7 @@ public class AtomXmlReaderTests
         var props = AtomXmlReader.ReadSubscriptionProperties(xml);
 
         Assert.Equal("forward-target", props.ForwardTo);
+        Assert.Equal("dead-letters", props.ForwardDeadLetteredMessagesTo);
         Assert.Equal(5, props.MaxDeliveryCount);
         Assert.Equal(TimeSpan.FromSeconds(60), props.LockDuration);
         Assert.True(props.RequiresSession);
