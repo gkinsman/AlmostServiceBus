@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
-## [0.9.0] - Unreleased
+## [0.8.1] - Unreleased
 
 ### Changed
 - **The emulator runs on newer .NET runtimes.** The Host (the dll the Aspire
