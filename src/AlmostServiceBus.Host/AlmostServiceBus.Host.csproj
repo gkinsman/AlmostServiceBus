@@ -12,6 +12,11 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Run on the newest installed runtime, including later major versions. The Host is
+         launched with `dotnet exec` by the Aspire package and as a dotnet tool, both on
+         machines that may only have a newer .NET (e.g. a net11-only CI image). Without
+         this the default (Minor) refuses to start unless a 10.x runtime is present. -->
+    <RollForward>Major</RollForward>
     <!-- Dashboard Vue app lives in a sibling directory -->
     <DashboardDir>$(MSBuildThisFileDirectory)..\AlmostServiceBus.Dashboard</DashboardDir>
     <!-- dotnet tool packaging -->

@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - Unreleased
+
+### Changed
+- **The emulator runs on newer .NET runtimes.** The Host (the dll the Aspire
+  package launches, and the `almost-servicebus` tool) now rolls forward to the
+  newest installed runtime, including later major versions. It used to need a
+  .NET 10 runtime, so an AppHost on a machine with only .NET 11 couldn't start
+  it: `dotnet exec` exited at once and clients saw `Connection refused` on
+  5672. It still targets `net10.0`, and runs on .NET 10 as before.
+- **Dependency updates.** Aspire.Hosting 13.6.5 (#204), the .NET 10.0.15
+  packages (#209) and the dashboard's vite 8.3.8 and vue 3.5.45 (#199, #202,
+  #210, #200). Test and sample only: Microsoft.NET.Test.Sdk 18.12.0 (#205,
+  #211), exec-maven-plugin 3.7.0 (#203), the NServiceBus transport submodule
+  (#201) and the OrderFlowDemo sample (#208). No behaviour changes.
+
+### Security
+- The OrderFlowDemo sample's Aspire.Hosting.AppHost is 13.6.5, for
+  CVE-2026-120006 (#208). Sample only; not shipped in any package.
+
 ## [0.8.0] - 2026-11-04
 
 ### Added
