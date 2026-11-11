@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>AlmostServiceBus</PackageId>
@@ -11,6 +11,13 @@
   <ItemGroup>
     <PackageReference Include="AMQPNetLite" Version="2.5.5" />
     <PackageReference Include="Superpower" Version="3.2.1" />
+  </ItemGroup>
+  <!-- One version per target so net10 consumers keep the 10.x line. Renovate holds 10.x
+       references below 11 (see renovate.json); bump each line within its major. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net11.0'">
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="11.0.0" />
   </ItemGroup>
   <ItemGroup>
