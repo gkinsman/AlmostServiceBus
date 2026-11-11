@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.4" />
+    <PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.5" />
     <!-- The emulator's Aspire integration, referenced from source -->
     <ProjectReference Include="..\..\..\src\AlmostServiceBus.Aspire.Hosting\AlmostServiceBus.Aspire.Hosting.csproj"
                       IsAspireProjectResource="false" />
