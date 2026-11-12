@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- Path where Host publish output lands before being packed -->
@@ -14,6 +14,7 @@
     <ProjectReference Include="..\AlmostServiceBus.Host\AlmostServiceBus.Host.csproj"
                       ReferenceOutputAssembly="false"
                       SkipGetTargetFrameworkProperties="true"
+                      UndefineProperties="TargetFramework"
                       Private="false" />
   </ItemGroup>
 
@@ -27,10 +28,17 @@
 
   <!-- Publish the Host project, then include its output in the NuGet package.
        The Content glob must be inside a target so it runs AFTER publish populates the directory. -->
-  <Target Name="PublishHostAndInclude" BeforeTargets="Build;GenerateNuspec">
+  <!-- The Host is a single net10.0 build (it rolls forward to newer runtimes). Publish it from
+       the outer build that packs and from the net10.0 inner build only; the net11.0 inner build
+       would publish into the same folder at the same time. The Host is built without our
+       TargetFramework (UndefineProperties/RemoveProperties) so MSBuild sees one Host build,
+       not one per target framework racing on the same obj folder. -->
+  <Target Name="PublishHostAndInclude" BeforeTargets="Build;GenerateNuspec"
+          Condition="'$(TargetFramework)' == '' OR '$(TargetFramework)' == 'net10.0'">
     <MSBuild Projects="..\AlmostServiceBus.Host\AlmostServiceBus.Host.csproj"
              Targets="Publish"
-             Properties="PublishDir=$(HostPublishDir);Configuration=$(Configuration);PublishTrimmed=false;SelfContained=false" />
+             Properties="PublishDir=$(HostPublishDir);Configuration=$(Configuration);PublishTrimmed=false;SelfContained=false"
+             RemoveProperties="TargetFramework" />
     <ItemGroup>
       <Content Include="$(HostPublishDir)**\*"
                Pack="true"

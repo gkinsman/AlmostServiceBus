@@ -62,6 +62,20 @@
       "groupName": ".NET test tooling"
     },
     {
+      "description": "We build for net10.0 and net11.0, with one version of each .NET package per target (Condition on TargetFramework). Keep the net10.0 references on 10.x so Renovate updates each line within its major instead of replacing .NET 10 support. Add a rule like this for 11.x when net12.0 is added.",
+      "matchFileNames": [
+        "src/**",
+        "tests/**"
+      ],
+      "matchCurrentVersion": "/^10\\./",
+      "matchPackageNames": [
+        "Microsoft.AspNetCore.*",
+        "Microsoft.Extensions.*",
+        "System.*"
+      ],
+      "allowedVersions": "<11"
+    },
+    {
       "description": "MassTransit 9 moved from Apache-2.0 to a proprietary licence (massient.com/license). Stay on the open-source 8.x line.",
       "allowedVersions": "<9",
       "matchPackageNames": [

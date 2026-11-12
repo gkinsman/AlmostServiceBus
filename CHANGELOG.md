@@ -4,7 +4,25 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
-## [0.8.1] - Unreleased
+## [0.8.2] - Unreleased
+
+### Added
+- **.NET 11 builds.** The `AlmostServiceBus`, `AlmostServiceBus.TestHost` and
+  `AlmostServiceBus.Aspire.Hosting` packages now target `net11.0` as well as
+  `net10.0`, so a .NET 11 project gets a build made for it. Nothing changes
+  for .NET 10 projects: they get the same `net10.0` build, and the `net10.0`
+  build still depends on the 10.x `System.Security.Cryptography.Pkcs`.
+- The emulator Host (bundled in the Aspire package, and the
+  `almost-servicebus` tool) stays a single `net10.0` build. Since 0.8.1 it runs
+  on .NET 10 or any newer runtime.
+- The unit and Aspire test suites run on both .NET 10 and .NET 11 in CI.
+
+### Changed
+- **The Docker image runs on .NET 11** (`mcr.microsoft.com/dotnet/aspnet:11.0`).
+- **Building the repo needs the .NET 11 SDK.** You also need the .NET 10
+  runtime to run the `net10.0` tests.
+
+## [0.8.1] - 2026-11-11
 
 ### Changed
 - **The emulator runs on newer .NET runtimes.** The Host (the dll the Aspire
