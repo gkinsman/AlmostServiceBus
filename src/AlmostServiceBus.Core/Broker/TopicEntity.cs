@@ -15,6 +15,8 @@ public sealed class TopicEntity
     private MessageEventBus? _eventBus;
     private string? _namespaceName;
     private NamespaceContext? _namespace;
+    private readonly DuplicateDetectionHistory _duplicateHistory = new();
+    private TimeProvider _timeProvider = TimeProvider.System;
 
     public TopicEntity(string name)
     {
@@ -38,6 +40,7 @@ public sealed class TopicEntity
     internal void SetNamespace(NamespaceContext ns)
     {
         _namespace = ns;
+        _timeProvider = ns.TimeProvider;
         foreach (var sub in _subscriptions.Values)
             Wire(sub);
     }
@@ -106,6 +109,9 @@ public sealed class TopicEntity
     /// </summary>
     public void Publish(BrokeredMessage message)
     {
+        if (IsDuplicate(message))
+            return;
+
         foreach (var subscription in _subscriptions.Values)
         {
             var copy = message.Clone();
@@ -114,4 +120,8 @@ public sealed class TopicEntity
             subscription.DeliverMessage(copy);
         }
     }
+
+    private bool IsDuplicate(BrokeredMessage message) =>
+        RequiresDuplicateDetection &&
+        !_duplicateHistory.TryRecord(message.MessageId, DuplicateDetectionHistoryTimeWindow, _timeProvider.GetUtcNow());
 }

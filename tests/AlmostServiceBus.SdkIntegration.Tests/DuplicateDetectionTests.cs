@@ -72,4 +72,50 @@ public class DuplicateDetectionTests : IAsyncLifetime
         await receiver.CompleteMessageAsync(next!);
         Assert.Null(await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(2)));
     }
+
+    [Fact]
+    public async Task TopicWithDuplicateDetection_DropsSeenMessageIdForEverySubscription()
+    {
+        await _admin.CreateTopicAsync(new CreateTopicOptions("dedup-fanout")
+        {
+            RequiresDuplicateDetection = true,
+            DuplicateDetectionHistoryTimeWindow = TimeSpan.FromSeconds(30),
+        });
+        await _admin.CreateSubscriptionAsync("dedup-fanout", "s1");
+        await _admin.CreateSubscriptionAsync("dedup-fanout", "s2");
+
+        var sender = _client.CreateSender("dedup-fanout");
+        await sender.SendMessageAsync(new ServiceBusMessage("first") { MessageId = "m1" });
+        await sender.SendMessageAsync(new ServiceBusMessage("duplicate") { MessageId = "m1" });
+        await sender.SendMessageAsync(new ServiceBusMessage("other") { MessageId = "m2" });
+
+        foreach (var sub in new[] { "s1", "s2" })
+        {
+            var receiver = _client.CreateReceiver("dedup-fanout", sub, new ServiceBusReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
+            Assert.Equal("first", (await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5)))?.Body.ToString());
+            Assert.Equal("other", (await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5)))?.Body.ToString());
+            Assert.Null(await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(1)));
+        }
+    }
+
+    [Fact]
+    public async Task SessionQueueWithDuplicateDetection_DropsSeenMessageId()
+    {
+        await _admin.CreateQueueAsync(new CreateQueueOptions("dedup-sessions")
+        {
+            RequiresSession = true,
+            RequiresDuplicateDetection = true,
+            DuplicateDetectionHistoryTimeWindow = TimeSpan.FromSeconds(30),
+        });
+
+        var sender = _client.CreateSender("dedup-sessions");
+        await sender.SendMessageAsync(new ServiceBusMessage("first") { MessageId = "m1", SessionId = "s" });
+        await sender.SendMessageAsync(new ServiceBusMessage("duplicate") { MessageId = "m1", SessionId = "s" });
+        await sender.SendMessageAsync(new ServiceBusMessage("other") { MessageId = "m2", SessionId = "s" });
+
+        var receiver = await _client.AcceptSessionAsync("dedup-sessions", "s", new ServiceBusSessionReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
+        Assert.Equal("first", (await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5)))?.Body.ToString());
+        Assert.Equal("other", (await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5)))?.Body.ToString());
+        Assert.Null(await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(1)));
+    }
 }

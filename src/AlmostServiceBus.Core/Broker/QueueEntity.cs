@@ -37,7 +37,7 @@ public sealed class QueueEntity : IDisposable
     private readonly ConcurrentQueue<BrokeredMessage> _recentSettled = new();
     private const int RecentSettledCapacity = 200;
     private readonly ConcurrentDictionary<long, BrokeredMessage> _deferredBySequence = new();
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _recentMessageIds = new();
+    private readonly DuplicateDetectionHistory _duplicateHistory = new();
     /// <summary>
     /// Lock tokens removed by <see cref="SweepExpiredLocks"/>. When a consumer calls
     /// <see cref="Complete"/> after the sweep already re-enqueued the message, we need
@@ -225,17 +225,14 @@ public sealed class QueueEntity : IDisposable
     {
         StampExpiry(message);
 
-        // Session-enabled queues route messages to the SessionManager by SessionId.
+        if (RequiresSession && string.IsNullOrEmpty(message.SessionId))
+            throw new SessionRequiredException(Name);
+
+        if (IsDuplicate(message))
+            return;
+
         if (RequiresSession)
         {
-            if (string.IsNullOrEmpty(message.SessionId))
-            {
-                // Real Service Bus rejects with InvalidOperationException when sending
-                // a non-session message to a session-required entity. The SDK propagates
-                // this back to the caller; previously we silently dropped, which masked
-                // application bugs.
-                throw new SessionRequiredException(Name);
-            }
             // Assign sequence number and lock token BEFORE enqueuing to the
             // SessionManager so the PriorityQueue can order by SequenceNumber.
             // Clone() resets SequenceNumber to 0, so messages arriving via
@@ -252,19 +249,6 @@ public sealed class QueueEntity : IDisposable
             Interlocked.Increment(ref _totalMessageCount);
             PublishEnqueued(message);
             return;
-        }
-
-        // Duplicate detection: silently ignore messages with recently-seen MessageIds.
-        if (RequiresDuplicateDetection && !string.IsNullOrEmpty(message.MessageId))
-        {
-            PurgeExpiredDuplicateEntries();
-
-            var now = DateTimeOffset.UtcNow;
-            if (!_recentMessageIds.TryAdd(message.MessageId, now))
-            {
-                // MessageId already seen within the window — silently drop
-                return;
-            }
         }
 
         if (ForwardTo is not null && _namespace is not null)
@@ -401,18 +385,9 @@ public sealed class QueueEntity : IDisposable
             _redeliveryChannel.Writer.TryWrite(message);
     }
 
-    /// <summary>
-    /// Removes expired entries from the duplicate detection history.
-    /// </summary>
-    private void PurgeExpiredDuplicateEntries()
-    {
-        var cutoff = DateTimeOffset.UtcNow - DuplicateDetectionHistoryTimeWindow;
-        foreach (var (messageId, timestamp) in _recentMessageIds)
-        {
-            if (timestamp < cutoff)
-                _recentMessageIds.TryRemove(messageId, out _);
-        }
-    }
+    private bool IsDuplicate(BrokeredMessage message) =>
+        RequiresDuplicateDetection &&
+        !_duplicateHistory.TryRecord(message.MessageId, DuplicateDetectionHistoryTimeWindow, TimeProvider.GetUtcNow());
 
     /// <summary>
     /// Asynchronously dequeues the next message, incrementing its delivery count

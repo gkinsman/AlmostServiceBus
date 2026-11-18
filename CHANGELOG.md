@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Duplicate detection on topics and session queues.** A topic with
+  `RequiresDuplicateDetection` now drops a message whose `MessageId` it has seen
+  within `DuplicateDetectionHistoryTimeWindow`, for every subscription; it used
+  to deliver every copy. Session queues now check for duplicates too. A send
+  rejected for a missing `SessionId` doesn't record its id, so a corrected retry
+  still goes through.
+
 ## [0.8.1] - Unreleased
 
 ### Changed
