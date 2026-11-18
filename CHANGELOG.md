@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.8.2] - 2026-11-18
 
 ### Fixed
 - **Duplicate detection on topics and session queues.** A topic with
@@ -12,9 +12,16 @@ All notable changes to this project are documented here. The format is based on
   within `DuplicateDetectionHistoryTimeWindow`, for every subscription; it used
   to deliver every copy. Session queues now check for duplicates too. A send
   rejected for a missing `SessionId` doesn't record its id, so a corrected retry
-  still goes through.
+  still goes through. If you publish the same `MessageId` twice to such a topic
+  or session queue, the second copy is now dropped, as on real Service Bus.
+  Contributed by @mfazekas (#216).
 
-## [0.8.1] - Unreleased
+### Changed
+- **Dependency updates.** The dashboard's `@vitejs/plugin-vue` 6.0.11 (#213).
+  Test only: coverlet.collector 10.1.1 (#215) and the NServiceBus transport
+  submodule (#214). No behaviour changes.
+
+## [0.8.1] - 2026-11-11
 
 ### Changed
 - **The emulator runs on newer .NET runtimes.** The Host (the dll the Aspire
